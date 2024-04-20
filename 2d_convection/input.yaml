@@ -1,0 +1,24 @@
+isSteady: False
+heat_source : {
+  type : 0,
+  initial_position : [0, 0, 0],
+  initial_speed : [0.0, 0.0, 0],
+  radius : 1,
+  power : 0,
+}
+dt : 0.1
+# PROPS
+density : 1
+conductivity : 1
+specific_heat : 1
+convection_coeff : 1.0E-00
+#
+environment_temperature : 0
+timeIntegration : 1
+sourceTerm : 0
+isAdvection : 0
+advectionSpeed : [0.0, 0.0, 0.0]
+speedDomain : [0.0, 0.0, 0.0]
+SUPG : 1
+#path: "Path.gcode"
+point_density: 2

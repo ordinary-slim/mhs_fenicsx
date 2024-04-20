@@ -1,0 +1,38 @@
+isSteady: False
+heat_source : {
+  type : 0,
+  initial_position : [2, 2, 0],
+  initial_speed : [200.0, 0.0, 0],
+  radius : 0.5,
+  power : 300,
+}
+dt : 0.0025
+cooling_dt : 0.25
+# PROPS
+density : 4.3E-06
+conductivity : 10.0E-03
+specific_heat : 700
+convection_coeff : 0.0
+#
+environment_temperature : 25
+timeIntegration : 1
+sourceTerm : 0
+isAdvection : 0
+advectionSpeed : [0.0, 0.0, 0.0]
+speedDomain : [0.0, 0.0, 0.0]
+path: "Path.gcode"
+interLayerDelay : 1
+idxSolver: 1
+idxSolverUncoupledIter: 2
+idxSolverCoupledIter: 2
+maxAdimSize: 50
+elSizeFactor: 1.0
+frfTstepFactor: 1.0
+idxSolver: 1
+idxSolverUncoupledIter: 2
+idxSolverCoupledIter: 2
+
+layerThickness : &id001
+  0.1
+substrate : [6, 0.5]
+part: [4, 0.3]

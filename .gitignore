@@ -1,0 +1,10 @@
+*.msh
+*.h5
+*.xdmf
+*.vtk
+*.vtu
+*.pvtu
+*.pvd
+*.bp
+__pycache__
+nohup.out

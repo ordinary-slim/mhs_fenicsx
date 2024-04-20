@@ -45,8 +45,6 @@ def locate_active_boundary(domain, active_els):
                 incident_active_els += 1
         if (incident_active_els==1) and (ifacet < num_facets_local):
             bfacets.append(ifacet)
-    import pdb
-    pdb.set_trace()
     return bfacets
 
 def get_mask(size, indices, dtype=np.int32, true_val=1):

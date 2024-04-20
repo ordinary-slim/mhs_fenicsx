@@ -2,6 +2,7 @@ import numpy as np
 import gmsh
 import yaml
 from dolfinx.io.gmshio import model_to_mesh
+from dolfinx.mesh import GhostMode, create_cell_partitioner
 from mpi4py import MPI
 
 comm = MPI.COMM_WORLD
@@ -101,9 +102,9 @@ def get_mesh(popup=False):
         gmsh.model.addPhysicalGroup(2, volumeTags, tag=1, name="Domain")
 
     model = MPI.COMM_WORLD.bcast(gmsh.model, root=0)
-    msh, _, _ = model_to_mesh(model, MPI.COMM_WORLD, 0, gdim=2)
+    partitioner = create_cell_partitioner(GhostMode.shared_facet)
+    msh, _, _ = model_to_mesh(model, MPI.COMM_WORLD, 0, gdim=2,partitioner=partitioner)
 
-    gmsh.write("test.msh")
     gmsh.finalize()
     MPI.COMM_WORLD.barrier()
     return msh

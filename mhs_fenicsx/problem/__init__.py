@@ -67,9 +67,11 @@ class Problem:
         # Time
         self.isSteady = parameters["isSteady"]
         self.time     = 0.0
-        self.dt       = parameters["dt"]
+        self.dt       = fem.Constant(self.domain, parameters["dt"])
         # Material parameters
         self.T_env = parameters["environment_temperature"]
+        if "deposition_temperature" in parameters:
+            self.T_dep = parameters["deposition_temperature"]
         self.k   = fem.Constant(self.domain,
                 PETSc.ScalarType(parameters["conductivity"]))
         self.cp  = fem.Constant(
@@ -98,9 +100,9 @@ class Problem:
 
     def pre_iterate(self):
         # Pre-iterate source first, current track is tn's
-        self.source.pre_iterate(self.time,self.dt)
+        self.source.pre_iterate(self.time,self.dt.value)
         self.source_rhs.interpolate(self.source)
-        self.time += self.dt
+        self.time += self.dt.value
         self.u_prev.x.array[:] = self.u.x.array[:]
         if rank==0:
             print(f"Problem {self.name} about to solve for time {self.time}.")
@@ -109,6 +111,10 @@ class Problem:
         pass
 
     def set_activation(self, active_els=None):
+        '''
+        TODO: Refactor so that if arg None, do nothing.
+        bfacets should be somewhere else possibly
+        '''
         if active_els is None:
             active_els = np.arange(self.num_cells,dtype=np.int32)
         self.active_els_tag = mesh.meshtags(self.domain, self.dim,
@@ -116,7 +122,14 @@ class Problem:
                                             get_mask(self.num_cells, active_els),)
         self.domain.topology.create_connectivity(self.dim,self.dim)
         self.active_els_func= indices_to_function(self.dg0_bg,active_els,self.dim,name="active_els")
+        try:
+            old_active_dofs  = self.active_dofs.copy()
+            self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,)
+            self.just_activated_nodes = [item for item in self.active_dofs if item not in old_active_dofs]
+        except AttributeError:
+            self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,)
         self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,)
+
         self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
         self.bfacets_tag  = mesh.meshtags(self.domain, self.dim-1,
                                          np.arange(self.num_facets, dtype=np.int32),
@@ -234,6 +247,7 @@ class Problem:
         def set_neumann_interface(self):
             (p, p_ext) = (self.p_neumann,self.p_dirichlet)
             p_ext.compute_gradient()
+
             gammaIntegralEntities = p.compute_gamma_integration_ents()
             # Custom measure
             dS = ufl.Measure('ds', domain=p.domain, subdomain_data=[
@@ -272,7 +286,6 @@ class Problem:
         pass
 
     def assemble(self):
-        #self.compile_forms()
         self.A = multiphenicsx.fem.petsc.assemble_matrix(self.a_compiled,
                                                     bcs=self.dirichlet_bcs,
                                                     restriction=(self.restriction, self.restriction))
@@ -314,6 +327,7 @@ class Problem:
 
     def writepos(self,extra_funcs=[]):
         funcs = [self.u,
+                 self.u_prev,
                  self.active_els_func,
                  self.source_rhs]
         if self.gammaNodes is not None:
@@ -323,8 +337,15 @@ class Problem:
         if self.is_dirichlet_gamma:
             funcs.append(self.dirichlet_gamma)
         # DEBUG
-        bnodes = indices_to_function(self.v,self.bfacets_tag.find(1),self.dim-1,name="bnodes")
-        funcs.append(bnodes)
+        #bnodes = indices_to_function(self.v,self.bfacets_tag.find(1),self.dim-1,name="bnodes")
+        #funcs.append(bnodes)
+        try:
+            self.domain.topology.create_connectivity(0, self.domain.topology.dim)
+            just_activated_nodes = indices_to_function(self.v,self.just_activated_nodes,0,name="jnodes")
+            funcs.append(just_activated_nodes)
+        except AttributeError:
+            import pdb
+            pdb.set_trace()
         # EDEBUG
         funcs.extend(extra_funcs)
         self.writer.write_function(funcs,t=np.round(self.time,7))

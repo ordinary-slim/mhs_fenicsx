@@ -4,6 +4,7 @@ import yaml
 from mhs_fenicsx.drivers import SingleProblemDriver
 from mpi4py import MPI
 from write_gcode import write_gcode
+from line_profiler import LineProfiler
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -23,4 +24,12 @@ def main():
         p.writepos()
 
 if __name__=="__main__":
-    main()
+    profiling = True
+    if profiling:
+        lp = LineProfiler()
+        lp.add_module(SingleProblemDriver)
+        lp_wrapper = lp(main)
+        lp_wrapper()
+        lp.print_stats()
+    else:
+        main()

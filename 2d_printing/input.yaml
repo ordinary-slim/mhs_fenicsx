@@ -4,17 +4,18 @@ heat_source : {
   initial_position : [2, 2, 0],
   initial_speed : [200.0, 0.0, 0],
   radius : 0.5,
-  power : 300,
+  power : 300.0,
 }
-dt : 0.0025
-cooling_dt : 0.25
+dt : 0.00125
+cooling_dt : 0.5
 # PROPS
 density : 4.3E-06
 conductivity : 10.0E-03
 specific_heat : 700
-convection_coeff : 0.0
+convection_coeff : 1.0E-05
 #
 environment_temperature : 25
+deposition_temperature : 25
 timeIntegration : 1
 sourceTerm : 0
 isAdvection : 0

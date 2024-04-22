@@ -9,10 +9,17 @@ heat_source : {
 dt : 0.00125
 cooling_dt : 0.5
 # PROPS
-density : 4.3E-06
-conductivity : 10.0E-03
-specific_heat : 700
-convection_coeff : 1.0E-05
+material_1 : {
+  density : 4.43E-06,
+  conductivity : 8.0E-03,
+  specific_heat : 500,
+}
+material_2 : {
+  density : 4.43E-06,
+  conductivity : 8.0E-05,
+  specific_heat : 500,
+}
+convection_coeff : 1
 #
 environment_temperature : 25
 deposition_temperature : 25
@@ -35,5 +42,11 @@ idxSolverCoupledIter: 2
 
 layerThickness : &id001
   0.1
+print: {
+  "type" : "LPBF",
+  "width" : 1.0E-06,
+  "height" : 0.0,
+  "depth" : *id001,
+}
 substrate : [6, 0.5]
 part: [4, 0.3]

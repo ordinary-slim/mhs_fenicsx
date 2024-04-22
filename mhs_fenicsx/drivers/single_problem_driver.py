@@ -1,6 +1,7 @@
 import typing
 from mhs_fenicsx.problem import Problem, HeatSource
 from mhs_fenicsx.gcode import TrackType
+from mhs_fenicsx.geometry import OBB, mesh_collision
 from dolfinx import fem, mesh
 import numpy as np
 
@@ -10,6 +11,11 @@ class SingleProblemDriver:
     '''
     def __init__(self,p:Problem,params:dict):
         self.p = p
+        # PRINT SETTINGS
+        self.print_type = params["print"]["type"]
+        self.hatch_width = params["print"]["width"]
+        self.hatch_height = params["print"]["height"]
+        self.hatch_depth = params["print"]["depth"]
         self.printing_dt = params["dt"]
         if "cooling_dt" in params:
             self.cooling_dt  = params["cooling_dt"]
@@ -43,7 +49,18 @@ class SingleProblemDriver:
         self.set_dt()
         if self.p.source.path.is_new_track:
             self.on_new_track_operations()
+        if self.next_track.type is TrackType.PRINTING:
+            self.hatch_to_metal()
         self.p.pre_iterate()
+
+    def hatch_to_metal(self):
+        #TODO: Define hatch
+        x0 = self.p.source.x
+        x1 = self.p.source.x + self.next_track.get_speed()*self.dt
+        obb = OBB(x0,x1,self.hatch_width,self.hatch_height,
+                  self.hatch_depth,self.p.dim)
+        new_metal_els = mesh_collision(self.p.domain,obb.get_dolfinx_mesh())
+        self.p.update_material_funcs(new_metal_els,0)
 
     def iterate(self):
         self.p.assemble()
@@ -55,6 +72,11 @@ class SingleProblemDriver:
     def deactivate_below_surface(self):
         active_els = fem.locate_dofs_geometrical(self.p.dg0_bg, lambda x : x[self.p.domain.topology.dim-1] < 0.0 )
         self.p.set_activation(active_els)
+        if self.print_type=="LPBF":
+            assert len(self.p.materials)>1, "At least 2 materials for LPBF simulation."
+            powder_els = [el for el in  np.arange(self.p.num_cells) if el not in active_els]
+            self.p.update_material_funcs(powder_els,1)
+
 
     def deposit_new_layer(self):
         dim = self.p.domain.topology.dim

@@ -2,6 +2,8 @@ from mpi4py import MPI
 import numpy as np
 from dolfinx import io, mesh, geometry, cpp, fem
 from petsc4py import PETSc
+import ufl
+import basix
 
 def mark_cells(msh, cell_index):
     num_cells = msh.topology.index_map(
@@ -64,10 +66,7 @@ def mesh_collision(mesh_big,mesh_small):
             local_cells_set = local_cells_set.union([o_cell_idx[local_cell]])
 
     sorted_unique_big_cells = np.unique(big_cells).astype(dtype=np.int32)
-    colliding_big_marker = mark_cells(mesh_big, sorted_unique_big_cells)
-    colliding_big_marker.name = "colliding cells"
-
-    return colliding_big_marker
+    return sorted_unique_big_cells
 
 class Hatch:
     def __init__(self,x0,x1,width,height,depth):
@@ -85,7 +84,7 @@ class Hatch:
 
 class OBB:
     def __init__(self,p0:np.ndarray,p1:np.ndarray,
-                 width=1.0,height=1.0,depth=1.0,dim=3):
+                 width=1.0,height=1.0,depth=1.0,dim=3,shrink=True):
         '''
         Note: For both dim 2 and 3, vectors have 3 components
         i.e. 2D is nested in 3D
@@ -100,6 +99,8 @@ class OBB:
         self.half_widths = np.array([step_len/2.0,
                                      width/2.0,
                                      (height+depth)/2.0,])
+        if shrink:
+            self.half_widths *= 0.999
 
     def set_transverse_axes(self,dim):
         '''

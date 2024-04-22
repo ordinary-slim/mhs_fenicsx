@@ -15,6 +15,7 @@ from abc import ABC, abstractmethod
 from mhs_fenicsx import gcode
 from mhs_fenicsx.problem.helpers import *
 from mhs_fenicsx.problem.heatsource import *
+from mhs_fenicsx.problem.material import Material
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -69,20 +70,7 @@ class Problem:
         self.time     = 0.0
         self.dt       = fem.Constant(self.domain, parameters["dt"])
         # Material parameters
-        self.T_env = parameters["environment_temperature"]
-        if "deposition_temperature" in parameters:
-            self.T_dep = parameters["deposition_temperature"]
-        self.k   = fem.Constant(self.domain,
-                PETSc.ScalarType(parameters["conductivity"]))
-        self.cp  = fem.Constant(
-                self.domain, PETSc.ScalarType(parameters["specific_heat"]))#specific heat
-        self.rho = fem.Constant(
-                self.domain, PETSc.ScalarType(parameters["density"]))#density
-        if "convection_coeff" in parameters:
-            self.convection_coeff = fem.Constant(
-                    self.domain, PETSc.ScalarType(parameters["convection_coeff"]))
-        else:
-            self.convection_coeff = None
+        self.define_materials(parameters)
         # Integration
         self.quadrature_metadata = {"quadrature_rule":"vertex",
                                     "quadrature_degree":1, }
@@ -97,6 +85,43 @@ class Problem:
         except TypeError:
             self.u.interpolate(expression)
         self.u_prev.x.array[:] = self.u.x.array[:]
+    
+    def define_materials(self,parameters):
+        self.T_env = parameters["environment_temperature"]
+        if "deposition_temperature" in parameters:
+            self.T_dep = parameters["deposition_temperature"]
+        if "convection_coeff" in parameters:
+            self.convection_coeff = fem.Constant(
+                    self.domain, PETSc.ScalarType(parameters["convection_coeff"]))
+        else:
+            self.convection_coeff = None
+
+        self.materials = []
+        for key in parameters.keys():
+            if key.startswith("material"):
+                self.materials.append(Material(parameters[key]))
+        assert len(self.materials) > 0, "No materials defined!"
+        # All domain starts out covered by material #0
+        self.material_id = fem.Function(self.dg0_bg,name="material_id")
+        self.material_id.x.array[:] = 0.0
+        # Initialize material funcs
+        self.k   = fem.Function(self.dg0_bg,name="conductivity")
+        self.cp  = fem.Function(self.dg0_bg,name="specific_heat")
+        self.rho = fem.Function(self.dg0_bg,name="density")
+        self.set_material_funcs()
+
+    def update_material_funcs(self,cells,new_id):
+        self.material_id.x.array[cells] = new_id
+        self.k.x.array[cells]   = self.materials[new_id].k
+        self.rho.x.array[cells] = self.materials[new_id].rho
+        self.cp.x.array[cells]  = self.materials[new_id].cp
+
+    def set_material_funcs(self):
+        for idx, material in enumerate(self.materials):
+            cells = np.flatnonzero(abs(self.material_id.x.array-idx)<1e-7)
+            self.k.x.array[cells]   = material.k
+            self.rho.x.array[cells] = material.rho
+            self.cp.x.array[cells]  = material.cp
 
     def pre_iterate(self):
         # Pre-iterate source first, current track is tn's
@@ -242,28 +267,6 @@ class Problem:
         rn must be called after set_forms_domain
         since a_ufl and l_ufl not initialized before
         '''
-        # Boundary measure
-        '''
-        def set_neumann_interface(self):
-            (p, p_ext) = (self.p_neumann,self.p_dirichlet)
-            p_ext.compute_gradient()
-
-            gammaIntegralEntities = p.compute_gamma_integration_ents()
-            # Custom measure
-            dS = ufl.Measure('ds', domain=p.domain, subdomain_data=[
-                (8,np.asarray(gammaIntegralEntities, dtype=np.int32))])
-            v = ufl.TestFunction(p.v)
-            n = ufl.FacetNormal(p.domain)
-            p.neumann_flux = interpolate_dg_at_facets(p_ext.grad_u,
-                                            p.gammaFacets.find(1),
-                                            p.dg0_dim2,
-                                            p_ext.bb_tree,
-                                            p.active_els_tag,
-                                            p_ext.active_els_tag,
-                                            name="flux",
-                                            )
-            p.l_ufl += +ufl.inner(n,p.neumann_flux) * v * dS(8)
-        '''
         boun_integral_entities = self.get_facet_integrations_entities(self.bfacets_tag.find(1))
         ds = ufl.Measure('ds', domain=self.domain, subdomain_data=[
             (1,np.asarray(boun_integral_entities, dtype=np.int32))])
@@ -329,24 +332,26 @@ class Problem:
         funcs = [self.u,
                  self.u_prev,
                  self.active_els_func,
-                 self.source_rhs]
+                 self.material_id,
+                 self.source_rhs,
+                 self.k]
         if self.gammaNodes is not None:
             funcs.append(self.gammaNodes)
         if self.is_grad_computed:
             funcs.append(self.grad_u)
         if self.is_dirichlet_gamma:
             funcs.append(self.dirichlet_gamma)
-        # DEBUG
-        #bnodes = indices_to_function(self.v,self.bfacets_tag.find(1),self.dim-1,name="bnodes")
-        #funcs.append(bnodes)
+
         try:
             self.domain.topology.create_connectivity(0, self.domain.topology.dim)
             just_activated_nodes = indices_to_function(self.v,self.just_activated_nodes,0,name="jnodes")
             funcs.append(just_activated_nodes)
         except AttributeError:
-            import pdb
-            pdb.set_trace()
-        # EDEBUG
+            pass
+
+        bnodes = indices_to_function(self.v,self.bfacets_tag.find(1),self.dim-1,name="bnodes")
+        funcs.append(bnodes)
+
         funcs.extend(extra_funcs)
         self.writer.write_function(funcs,t=np.round(self.time,7))
 

@@ -25,8 +25,6 @@ class Problem:
         self.domain   = domain
         self.dim = self.domain.topology.dim
         self.name = name
-        # Initializations
-        self.initialize_post()
         self.v_bg    = fem.functionspace(domain, ("Lagrange", 1),)
         self.v       = self.v_bg.clone()
         self.dg0_bg  = fem.functionspace(domain, ("Discontinuous Lagrange", 0),)
@@ -74,6 +72,7 @@ class Problem:
         # Integration
         self.quadrature_metadata = {"quadrature_rule":"vertex",
                                     "quadrature_degree":1, }
+        self.initialize_post()
 
     def __del__(self):
         self.writer.close()
@@ -329,6 +328,7 @@ class Problem:
         self.result_folder = "post"
         shutil.rmtree(self.result_folder,ignore_errors=True)
         self.writer = io.VTKFile(self.domain.comm, f"{self.result_folder}/{self.name}.pvd", "wb")
+        self.writer_vtx = io.VTXWriter(self.domain.comm, f"{self.result_folder}/{self.name}.bp",output=[self.u])
 
     def writepos(self,extra_funcs=[]):
         funcs = [self.u,
@@ -356,6 +356,8 @@ class Problem:
 
         funcs.extend(extra_funcs)
         self.writer.write_function(funcs,t=np.round(self.time,7))
+    def writepos_vtx(self):
+        self.writer_vtx.write(self.time)
 
     def clear_dirchlet_bcs(self):
         self.dirichlet_bcs = []

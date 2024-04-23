@@ -86,7 +86,8 @@ class SingleProblemDriver:
         height_midpoints_inactive = mesh.compute_midpoints(self.p.domain,
                                                            dim,
                                                            inactive_els_indices)[:,dim-1]
-        els_to_activate = inactive_els_indices[np.flatnonzero(height_midpoints_inactive<self.next_track.p1[dim-1])]
+        activation_height = self.next_track.p1[dim-1] + self.hatch_height
+        els_to_activate = inactive_els_indices[np.flatnonzero(height_midpoints_inactive<activation_height)]
         self.p.set_activation(np.concatenate((self.p.active_els_tag.find(1), els_to_activate)))
         self.p.u.x.array[self.p.just_activated_nodes] = self.p.T_dep
         self.p.u_prev.x.array[self.p.just_activated_nodes] = self.p.T_dep

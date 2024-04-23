@@ -1,4 +1,5 @@
 from meshing import get_mesh
+import mhs_fenicsx
 from mhs_fenicsx.problem import Problem
 import yaml
 from mhs_fenicsx.drivers import SingleProblemDriver
@@ -24,12 +25,16 @@ def main():
         p.writepos()
 
 if __name__=="__main__":
-    profiling = True
+    profiling = False
     if profiling:
         lp = LineProfiler()
         lp.add_module(SingleProblemDriver)
+        lp.add_module(mhs_fenicsx.problem)
+        lp.add_module(mhs_fenicsx.geometry)
         lp_wrapper = lp(main)
         lp_wrapper()
-        lp.print_stats()
+        with open("profiling.txt", 'w') as pf:
+            lp.print_stats(stream=pf)
+
     else:
         main()

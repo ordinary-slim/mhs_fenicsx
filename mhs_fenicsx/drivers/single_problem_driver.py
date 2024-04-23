@@ -23,7 +23,8 @@ class SingleProblemDriver:
             self.cooling_dt  = self.printing_dt
         self.dt = self.printing_dt
         self.p.set_initial_condition(params["environment_temperature"])
-        self.deactivate_below_surface()
+        if not(self.print_type.startswith("OFF")):
+            self.deactivate_below_surface()
         self.p.set_forms_domain()
         self.p.set_forms_boundary()
         p.compile_forms()
@@ -47,10 +48,11 @@ class SingleProblemDriver:
 
     def pre_iterate(self):
         self.set_dt()
-        if self.p.source.path.is_new_track:
-            self.on_new_track_operations()
-        if self.next_track.type is TrackType.PRINTING:
-            self.hatch_to_metal()
+        if self.p.source.path is not None:
+            if self.p.source.path.is_new_track:
+                self.on_new_track_operations()
+            if self.next_track.type is TrackType.PRINTING:
+                self.hatch_to_metal()
         self.p.pre_iterate()
 
     def hatch_to_metal(self):

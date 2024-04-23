@@ -15,7 +15,7 @@ partLens = params["part"]
 substrateLens = params["substrate"]
 radiusHs = params["heat_source"]["radius"]
 layerThickness = params["layerThickness"]
-fineElSize = min(radiusHs, layerThickness)
+fineElSize = min(radiusHs, layerThickness)/1
 nBounLayers = 2
 
 def boundaryLayerProgression( extrusionSize, nBounLayers, fineElSize, coarseElFactor=2 ):

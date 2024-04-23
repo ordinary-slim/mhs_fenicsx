@@ -6,12 +6,20 @@ heat_source : {
   radius : 1,
   power : 0,
 }
-dt : 0.1
+dt : 1.0
 # PROPS
-density : 1
-conductivity : 1
-specific_heat : 1
-convection_coeff : 1.0E-00
+material : {
+  density : 1,
+  conductivity : 2,
+  specific_heat : 1,
+}
+convection_coeff : 1.0
+print : {
+  type : "OFF",
+  height : 1,
+  width : 1,
+  depth : 1,
+}
 #
 environment_temperature : 0
 timeIntegration : 1
@@ -21,4 +29,4 @@ advectionSpeed : [0.0, 0.0, 0.0]
 speedDomain : [0.0, 0.0, 0.0]
 SUPG : 1
 #path: "Path.gcode"
-point_density: 2
+point_density: 1

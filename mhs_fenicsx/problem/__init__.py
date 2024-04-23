@@ -158,7 +158,8 @@ class Problem:
         self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
         self.bfacets_tag  = mesh.meshtags(self.domain, self.dim-1,
                                          np.arange(self.num_facets, dtype=np.int32),
-                                         get_mask(self.num_facets, locate_active_boundary( self.domain, active_els ), dtype=np.int32),
+                                         get_mask(self.num_facets,
+                                                  locate_active_boundary( self.domain, self.active_els_func), dtype=np.int32),
                                          )
 
     def compute_gradient(self):
@@ -269,7 +270,8 @@ class Problem:
         '''
         boun_integral_entities = self.get_facet_integrations_entities(self.bfacets_tag.find(1))
         ds = ufl.Measure('ds', domain=self.domain, subdomain_data=[
-            (1,np.asarray(boun_integral_entities, dtype=np.int32))])
+                         (1,np.asarray(boun_integral_entities, dtype=np.int32))],
+                         metadata=self.quadrature_metadata)
         (u, v) = (ufl.TrialFunction(self.v),ufl.TestFunction(self.v))
         # CONVECTION
         if self.convection_coeff is not None:

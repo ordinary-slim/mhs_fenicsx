@@ -32,7 +32,7 @@ def l2_squared(f : dolfinx.fem.Function,active_els_tag):
     l2_norm = comm.allreduce(l2_norm, op=MPI.SUM)
     return l2_norm
 
-def locate_active_boundary(domain, active_els):
+def locate_active_boundary(domain, active_els_func):
     bfacets = []
     domain.topology.create_connectivity(domain.topology.dim-1, domain.topology.dim)
     con_facet_cell = domain.topology.connectivity(domain.topology.dim-1, domain.topology.dim)
@@ -41,7 +41,7 @@ def locate_active_boundary(domain, active_els):
         local_con = con_facet_cell.links(ifacet)
         incident_active_els = 0
         for el in local_con:
-            if (el in active_els):
+            if abs(active_els_func.x.array[el]-1)<1e-7:
                 incident_active_els += 1
         if (incident_active_els==1) and (ifacet < num_facets_local):
             bfacets.append(ifacet)

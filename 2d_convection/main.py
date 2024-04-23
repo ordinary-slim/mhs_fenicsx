@@ -17,7 +17,7 @@ with open("input.yaml", 'r') as f:
 
 inputFile = "input.yaml"
 tol = 1e-7
-box = [-7, -3, 7, 3]
+box = [-10, -5, 10, 5]
 
 def run(case_name="case"):
     # Mesh and problems

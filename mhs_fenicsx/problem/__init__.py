@@ -65,6 +65,7 @@ class Problem:
 
         # Time
         self.isSteady = parameters["isSteady"]
+        self.iter     = 0
         self.time     = 0.0
         self.dt       = fem.Constant(self.domain, parameters["dt"])
         # Material parameters
@@ -126,10 +127,11 @@ class Problem:
         # Pre-iterate source first, current track is tn's
         self.source.pre_iterate(self.time,self.dt.value)
         self.source_rhs.interpolate(self.source)
+        self.iter += 1
         self.time += self.dt.value
         self.u_prev.x.array[:] = self.u.x.array[:]
         if rank==0:
-            print(f"Problem {self.name} about to solve for time {self.time}.")
+            print(f"Problem {self.name} about to solve for iter {self.iter}, time {self.time}.")
 
     def post_iterate(self):
         pass
@@ -146,12 +148,6 @@ class Problem:
                                             get_mask(self.num_cells, active_els),)
         self.domain.topology.create_connectivity(self.dim,self.dim)
         self.active_els_func= indices_to_function(self.dg0_bg,active_els,self.dim,name="active_els")
-        try:
-            old_active_dofs  = self.active_dofs.copy()
-            self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,)
-            self.just_activated_nodes = [item for item in self.active_dofs if item not in old_active_dofs]
-        except AttributeError:
-            self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,)
         self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,)
 
         self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
@@ -305,10 +301,10 @@ class Problem:
         ksp = petsc4py.PETSc.KSP()
         ksp.create(self.domain.comm)
         ksp.setOperators(self.A)
-        ksp.setType("preonly")
-        ksp.getPC().setType("lu")
-        ksp.getPC().setFactorSolverType("mumps")
-        ksp.setFromOptions()
+        ksp.setType("cg")
+        #ksp.getPC().setType("lu")
+        #ksp.getPC().setFactorSolverType("mumps")
+        #ksp.setFromOptions()
         ksp.solve(self.L, self.x)
         self.x.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
         ksp.destroy()
@@ -344,18 +340,11 @@ class Problem:
         if self.is_dirichlet_gamma:
             funcs.append(self.dirichlet_gamma)
 
-        try:
-            self.domain.topology.create_connectivity(0, self.domain.topology.dim)
-            just_activated_nodes = indices_to_function(self.v,self.just_activated_nodes,0,name="jnodes")
-            funcs.append(just_activated_nodes)
-        except AttributeError:
-            pass
-
         bnodes = indices_to_function(self.v,self.bfacets_tag.find(1),self.dim-1,name="bnodes")
         funcs.append(bnodes)
-
         funcs.extend(extra_funcs)
         self.writer.write_function(funcs,t=np.round(self.time,7))
+
     def writepos_vtx(self):
         self.writer_vtx.write(self.time)
 

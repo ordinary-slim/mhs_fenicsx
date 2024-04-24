@@ -42,7 +42,7 @@ class Driver:
         self.convergence_crit = 1e9
         self.convergence_threshold = 1e-6
         self.iter = 0
-        self.relaxation_factor = 0.5
+        self.relaxation_factor = 0.7
 
     def pre_iterate(self):
         self.previous_u_neumann = self.p_neumann.u.copy();self.previous_u_neumann.name="previous_u"
@@ -138,7 +138,7 @@ class Driver:
 
 def main():
     # Mesh and problems
-    points_side = 16
+    points_side = 32
     left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.quadrilateral)
     right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.triangle)
     p_left = Problem(left_mesh, name="left")
@@ -150,7 +150,7 @@ def main():
     p_left.set_activation( active_els_left )
     p_right.set_activation( active_els_right )
 
-    driver = Driver(p_left,p_right,max_iter=20)
+    driver = Driver(p_left,p_right,max_iter=40)
     for _ in range(driver.max_iter):
         driver.pre_iterate()
         driver.iterate()

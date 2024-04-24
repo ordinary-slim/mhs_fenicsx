@@ -36,7 +36,7 @@ def extract_cell_geometry(input_mesh, cell: int):
     return input_mesh.geometry.x[mesh_nodes]
 
 
-def mesh_collision(mesh_big,mesh_small):
+def mesh_collision(mesh_big,mesh_small,bb_tree_mesh_big=None):
     '''
     mesh_small is in MPI.COMM_SELF
     mesh_big is in MPI.COMM_WORLD
@@ -44,8 +44,10 @@ def mesh_collision(mesh_big,mesh_small):
     num_big_cells = mesh_big.topology.index_map(mesh_big.topology.dim).size_local + \
         mesh_big.topology.index_map(mesh_big.topology.dim).num_ghosts
 
-    bb_tree = geometry.bb_tree(
-        mesh_big, mesh_big.topology.dim, np.arange(num_big_cells, dtype=np.int32))
+    if bb_tree_mesh_big is None:
+        bb_tree = geometry.bb_tree( mesh_big, mesh_big.topology.dim, np.arange(num_big_cells, dtype=np.int32))
+    else:
+        bb_tree = bb_tree_mesh_big
 
     # For each local mesh, compute the bounding box, compute colliding cells
     tol = 1e-13

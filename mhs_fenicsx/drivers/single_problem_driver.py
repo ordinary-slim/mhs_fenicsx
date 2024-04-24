@@ -61,7 +61,7 @@ class SingleProblemDriver:
         x1 = self.p.source.x + self.next_track.get_speed()*self.dt
         obb = OBB(x0,x1,self.hatch_width,self.hatch_height,
                   self.hatch_depth,self.p.dim)
-        new_metal_els = mesh_collision(self.p.domain,obb.get_dolfinx_mesh())
+        new_metal_els = mesh_collision(self.p.domain,obb.get_dolfinx_mesh(),bb_tree_mesh_big=self.p.bb_tree)
         self.p.update_material_funcs(new_metal_els,0)
 
     def iterate(self):

@@ -316,7 +316,6 @@ class Problem:
         self.is_grad_computed   = False
 
     def writepos(self,extra_funcs=[]):
-        print("hello?")
         funcs = [self.u, self.active_els_func,self.gammaNodes]
         if self.is_grad_computed:
             funcs.append(self.grad_u)

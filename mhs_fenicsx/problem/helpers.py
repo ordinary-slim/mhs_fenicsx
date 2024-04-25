@@ -10,6 +10,9 @@ import dolfinx.fem.petsc
 import petsc4py.PETSc
 from dolfinx import default_scalar_type
 from abc import ABC, abstractmethod
+import sys
+sys.path.append('/root/shared/cases/mhs_fenicsx/problem/cpp/build')
+import cpp
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -33,18 +36,7 @@ def l2_squared(f : dolfinx.fem.Function,active_els_tag):
     return l2_norm
 
 def locate_active_boundary(domain, active_els_func):
-    bfacets = []
-    con_facet_cell = domain.topology.connectivity(domain.topology.dim-1, domain.topology.dim)
-    num_facets_local = domain.topology.index_map(domain.topology.dim-1).size_local
-    for ifacet in range(con_facet_cell.num_nodes):
-        local_con = con_facet_cell.links(ifacet)
-        incident_active_els = 0
-        for el in local_con:
-            if abs(active_els_func.x.array[el]-1)<1e-7:
-                incident_active_els += 1
-        if (incident_active_els==1) and (ifacet < num_facets_local):
-            bfacets.append(ifacet)
-    return bfacets
+    return cpp.locate_active_boundary(domain._cpp_object, active_els_func._cpp_object)
 
 def get_mask(size, indices, dtype=np.int32, true_val=1):
     true_val = dtype(true_val)

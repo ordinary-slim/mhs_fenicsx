@@ -38,4 +38,4 @@ print: {
 path: "Path.gcode"
 fineElFactor: 1
 fineTStepFactor: 1
-max_iter: 20
+max_iter: 5

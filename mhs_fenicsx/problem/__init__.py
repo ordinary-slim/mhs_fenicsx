@@ -16,9 +16,6 @@ from mhs_fenicsx import gcode
 from mhs_fenicsx.problem.helpers import *
 from mhs_fenicsx.problem.heatsource import *
 from mhs_fenicsx.problem.material import Material
-import sys
-sys.path.append('/root/shared/fenicsx-mhs-substepping/mhs_fenicsx/problem/cpp/build')
-import cpp
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -166,11 +163,10 @@ class Problem:
 
         self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
         bfacets_indices  = locate_active_boundary( self.domain, self.active_els_func)
-        bfacets_indices_cpp = cpp.locate_active_boundary(self.domain._cpp_object, self.active_els_func._cpp_object)
         self.bfacets_tag  = mesh.meshtags(self.domain, self.dim-1,
                                          np.arange(self.num_facets, dtype=np.int32),
                                          get_mask(self.num_facets,
-                                                  bfacets_indices_cpp, dtype=np.int32),
+                                                  bfacets_indices, dtype=np.int32),
                                          )
 
     def compute_gradient(self):

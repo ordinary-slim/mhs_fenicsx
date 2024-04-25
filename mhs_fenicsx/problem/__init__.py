@@ -44,8 +44,10 @@ class Problem:
         # Set num cells per processor
         self.cell_map = self.domain.topology.index_map(self.dim)
         self.facet_map = self.domain.topology.index_map(self.dim-1)
+        self.node_map = self.domain.topology.index_map(0)
         self.num_cells = self.cell_map.size_local + self.cell_map.num_ghosts
         self.num_facets = self.facet_map.size_local + self.facet_map.num_ghosts
+        self.num_nodes = self.node_map.size_local + self.node_map.num_ghosts
         self.bb_tree = geometry.bb_tree(self.domain,self.dim,padding=1e-7)
         self.set_activation()
 
@@ -153,11 +155,14 @@ class Problem:
                                             get_mask(self.num_cells, active_els),)
         self.active_els_func= indices_to_function(self.dg0_bg,active_els,self.dim,name="active_els")
         try:
-            old_active_dofs  = self.active_dofs.copy()
+            old_active_dofs_array  = self.active_dofs_array.copy()
             self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,)
-            self.just_activated_nodes = [item for item in self.active_dofs if item not in old_active_dofs]
+            self.active_dofs_array = get_mask(self.num_nodes,self.active_dofs,dtype=np.int32)
+            just_active_dofs_array = self.active_dofs_array - old_active_dofs_array
+            self.just_activated_nodes = np.flatnonzero(just_active_dofs_array)
         except AttributeError:
             self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,)
+            self.active_dofs_array = get_mask(self.num_nodes,self.active_dofs,dtype=np.int32)
 
         self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
         bfacets_indices  = locate_active_boundary( self.domain, self.active_els_func)

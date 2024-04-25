@@ -16,6 +16,9 @@ from mhs_fenicsx import gcode
 from mhs_fenicsx.problem.helpers import *
 from mhs_fenicsx.problem.heatsource import *
 from mhs_fenicsx.problem.material import Material
+import sys
+sys.path.append('/root/shared/fenicsx-mhs-substepping/mhs_fenicsx/problem/cpp/build')
+import cpp
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -35,8 +38,10 @@ class Problem:
                                                            shape=(self.dim,)))
         self.restriction = None
 
-        # Set num cells per processor
         self.domain.topology.create_entities(self.dim-1)
+        self.domain.topology.create_connectivity(self.dim,self.dim)
+        self.domain.topology.create_connectivity(domain.topology.dim-1, domain.topology.dim)
+        # Set num cells per processor
         self.cell_map = self.domain.topology.index_map(self.dim)
         self.facet_map = self.domain.topology.index_map(self.dim-1)
         self.num_cells = self.cell_map.size_local + self.cell_map.num_ghosts
@@ -146,15 +151,21 @@ class Problem:
         self.active_els_tag = mesh.meshtags(self.domain, self.dim,
                                             np.arange(self.num_cells, dtype=np.int32),
                                             get_mask(self.num_cells, active_els),)
-        self.domain.topology.create_connectivity(self.dim,self.dim)
         self.active_els_func= indices_to_function(self.dg0_bg,active_els,self.dim,name="active_els")
-        self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,)
+        try:
+            old_active_dofs  = self.active_dofs.copy()
+            self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,)
+            self.just_activated_nodes = [item for item in self.active_dofs if item not in old_active_dofs]
+        except AttributeError:
+            self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,)
 
         self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
+        bfacets_indices  = locate_active_boundary( self.domain, self.active_els_func)
+        bfacets_indices_cpp = cpp.locate_active_boundary(self.domain._cpp_object, self.active_els_func._cpp_object)
         self.bfacets_tag  = mesh.meshtags(self.domain, self.dim-1,
                                          np.arange(self.num_facets, dtype=np.int32),
                                          get_mask(self.num_facets,
-                                                  locate_active_boundary( self.domain, self.active_els_func), dtype=np.int32),
+                                                  bfacets_indices_cpp, dtype=np.int32),
                                          )
 
     def compute_gradient(self):

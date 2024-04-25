@@ -25,7 +25,7 @@ def main():
         p.writepos()
 
 if __name__=="__main__":
-    profiling = False
+    profiling = True
     if profiling:
         lp = LineProfiler()
         lp.add_module(SingleProblemDriver)

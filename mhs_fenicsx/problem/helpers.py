@@ -34,7 +34,6 @@ def l2_squared(f : dolfinx.fem.Function,active_els_tag):
 
 def locate_active_boundary(domain, active_els_func):
     bfacets = []
-    domain.topology.create_connectivity(domain.topology.dim-1, domain.topology.dim)
     con_facet_cell = domain.topology.connectivity(domain.topology.dim-1, domain.topology.dim)
     num_facets_local = domain.topology.index_map(domain.topology.dim-1).size_local
     for ifacet in range(con_facet_cell.num_nodes):

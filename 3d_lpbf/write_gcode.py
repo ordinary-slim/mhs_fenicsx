@@ -8,16 +8,16 @@ layer_thickness = params["layer_thickness"]
 speed = max(params["heat_source"]["initial_speed"])
 gcodeFile = params["path"]
 
-def write_gcode(nLayers=None):
+def write_gcode():
     gcodeLines = []
     # Start in -X
     X = - partLen[0] / 2
     Y = 0.0
     Z = 0.0
     E = 0.0
-    numLayers = int(partLen[2] / layer_thickness)
-    if nLayers is not None:
-        numLayers = max( numLayers, nLayers )
+    max_layers = int(partLen[2] / layer_thickness)
+    n_layers = params["n_layers"]
+    numLayers = min( n_layers, max_layers )
     
     gcodeLines.append( "G0 F{}".format(speed, X, Y, Z) )
     for ilayer in range(numLayers):

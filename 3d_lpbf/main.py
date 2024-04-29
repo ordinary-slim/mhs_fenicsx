@@ -20,6 +20,7 @@ def get_dt(adim_dt, params):
 with open("input.yaml", 'r') as f:
     params = yaml.safe_load(f)
 max_iter = params["max_iter"]
+post_frequency = int(params["post_frequency"])
 
 if "adim_dt" in params:
     params["dt"] = get_dt(params["adim_dt"],params)
@@ -32,15 +33,14 @@ def main():
         driver.pre_iterate()
         driver.iterate()
         driver.post_iterate()
-        #p.writepos()
-        p.writepos_vtx()
+        if driver.p.iter%post_frequency==0:
+            p.writepos()
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--layers', default=-1, type=int)
     parser.add_argument('--case-name', default='case')
     args = parser.parse_args()
-    write_gcode( nLayers=args.layers )
+    write_gcode()
     profiling = False
     if profiling:
         lp = LineProfiler()

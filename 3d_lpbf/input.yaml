@@ -37,6 +37,8 @@ print: {
   "depth" : 0.0,
 }
 path: "Path.gcode"
-fineElFactor: 2
+fineElFactor: 0.5
 fineTStepFactor: 1
 max_iter: 10.0E+10
+n_layers: 10
+post_frequency: 2

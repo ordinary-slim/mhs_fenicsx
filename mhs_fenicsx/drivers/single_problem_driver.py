@@ -3,7 +3,12 @@ from mhs_fenicsx.problem import Problem, HeatSource
 from mhs_fenicsx.gcode import TrackType
 from mhs_fenicsx.geometry import OBB, mesh_collision
 from dolfinx import fem, mesh
+from dolfinx import io
 import numpy as np
+from mpi4py import MPI
+
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
 
 class SingleProblemDriver:
     '''
@@ -28,6 +33,7 @@ class SingleProblemDriver:
         self.p.set_forms_domain()
         self.p.set_forms_boundary()
         p.compile_forms()
+        self.iofile = io.VTKFile(MPI.COMM_SELF,"obb_post/obb.pvd","wb")
 
     def set_dt(self):
         if self.p.source.path is not None:
@@ -61,7 +67,12 @@ class SingleProblemDriver:
         x1 = self.p.source.x + self.next_track.get_speed()*self.dt
         obb = OBB(x0,x1,self.hatch_width,self.hatch_height,
                   self.hatch_depth,self.p.dim)
-        new_metal_els = mesh_collision(self.p.domain,obb.get_dolfinx_mesh(),bb_tree_mesh_big=self.p.bb_tree)
+        obb_mesh = obb.get_dolfinx_mesh()
+        #BDEBUG
+        if rank==0:
+            self.iofile.write_mesh(obb_mesh,t=self.p.time)
+        #EDEBUG
+        new_metal_els = mesh_collision(self.p.domain,obb_mesh,bb_tree_mesh_big=self.p.bb_tree)
         self.p.update_material_funcs(new_metal_els,0)
 
     def iterate(self):

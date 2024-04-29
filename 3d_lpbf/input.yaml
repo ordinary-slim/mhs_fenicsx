@@ -7,6 +7,7 @@ heat_source : {
   initial_speed : [1000, 0, 0],
 }
 dt : 0.00005
+adim_dt : 0.125
 cooling_dt: 0.5
 interLayerDelay : 2
 # PROPS
@@ -36,6 +37,6 @@ print: {
   "depth" : 0.0,
 }
 path: "Path.gcode"
-fineElFactor: 1
+fineElFactor: 2
 fineTStepFactor: 1
-max_iter: 5
+max_iter: 10.0E+10

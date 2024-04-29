@@ -350,7 +350,7 @@ class Problem:
         self.result_folder = "post"
         shutil.rmtree(self.result_folder,ignore_errors=True)
         self.writer = io.VTKFile(self.domain.comm, f"{self.result_folder}/{self.name}.pvd", "wb")
-        self.writer_vtx = io.VTXWriter(self.domain.comm, f"{self.result_folder}/{self.name}.bp",output=[self.u,self.active_nodes_func])
+        self.writer_vtx = io.VTXWriter(self.domain.comm, f"{self.result_folder}/{self.name}.bp",output=[self.u,self.source_rh,self.active_nodes_func])
 
     def writepos(self,extra_funcs=[]):
         funcs = [self.u,

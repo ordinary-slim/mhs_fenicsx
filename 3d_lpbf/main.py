@@ -7,13 +7,22 @@ from mpi4py import MPI
 from write_gcode import write_gcode
 from line_profiler import LineProfiler
 import argparse
+import numpy as np
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
+def get_dt(adim_dt, params):
+    r = params["heat_source"]["radius"]
+    v = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    return adim_dt * (r / v)
+
 with open("input.yaml", 'r') as f:
     params = yaml.safe_load(f)
 max_iter = params["max_iter"]
+
+if "adim_dt" in params:
+    params["dt"] = get_dt(params["adim_dt"],params)
 
 def main():
     domain = get_mesh()
@@ -23,7 +32,8 @@ def main():
         driver.pre_iterate()
         driver.iterate()
         driver.post_iterate()
-        p.writepos()
+        #p.writepos()
+        p.writepos_vtx()
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
@@ -31,7 +41,7 @@ if __name__=="__main__":
     parser.add_argument('--case-name', default='case')
     args = parser.parse_args()
     write_gcode( nLayers=args.layers )
-    profiling = True
+    profiling = False
     if profiling:
         lp = LineProfiler()
         lp.add_module(SingleProblemDriver)

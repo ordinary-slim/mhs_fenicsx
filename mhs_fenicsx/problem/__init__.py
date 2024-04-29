@@ -16,6 +16,9 @@ from mhs_fenicsx import gcode
 from mhs_fenicsx.problem.helpers import *
 from mhs_fenicsx.problem.heatsource import *
 from mhs_fenicsx.problem.material import Material
+import sys
+sys.path.append('/data0/home/mslimani/cases/fenicsx-cases/mhs_fenicsx/problem/cpp/build')
+import cpp
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -340,11 +343,12 @@ class Problem:
 
     def writepos(self,extra_funcs=[]):
         funcs = [self.u,
-                 self.u_prev,
+                 #self.u_prev,
                  self.active_els_func,
                  self.material_id,
                  self.source_rhs,
-                 self.k]
+                 #self.k,
+                 ]
         if self.gammaNodes is not None:
             funcs.append(self.gammaNodes)
         if self.is_grad_computed:
@@ -352,8 +356,8 @@ class Problem:
         if self.is_dirichlet_gamma:
             funcs.append(self.dirichlet_gamma)
 
-        bnodes = indices_to_function(self.v,self.bfacets_tag.find(1),self.dim-1,name="bnodes")
-        funcs.append(bnodes)
+        #bnodes = indices_to_function(self.v,self.bfacets_tag.find(1),self.dim-1,name="bnodes")
+        #funcs.append(bnodes)
         funcs.extend(extra_funcs)
         self.writer.write_function(funcs,t=np.round(self.time,7))
 

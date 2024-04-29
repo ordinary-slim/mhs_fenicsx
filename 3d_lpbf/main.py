@@ -39,7 +39,8 @@ if __name__=="__main__":
         lp.add_module(mhs_fenicsx.geometry)
         lp_wrapper = lp(main)
         lp_wrapper()
-        with open("profiling.txt", 'w') as pf:
-            lp.print_stats(stream=pf)
+        if rank==0:
+            with open("profiling.txt", 'w') as pf:
+                lp.print_stats(stream=pf)
     else:
         main()

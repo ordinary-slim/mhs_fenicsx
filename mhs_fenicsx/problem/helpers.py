@@ -11,7 +11,8 @@ import petsc4py.PETSc
 from dolfinx import default_scalar_type
 from abc import ABC, abstractmethod
 import sys
-sys.path.append('/root/shared/cases/mhs_fenicsx/problem/cpp/build')
+import os
+sys.path.append(os.path.dirname(__file__)+"/cpp/build")
 import cpp
 
 comm = MPI.COMM_WORLD

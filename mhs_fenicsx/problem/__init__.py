@@ -16,9 +16,6 @@ from mhs_fenicsx import gcode
 from mhs_fenicsx.problem.helpers import *
 from mhs_fenicsx.problem.heatsource import *
 from mhs_fenicsx.problem.material import Material
-import sys
-sys.path.append('/data0/home/mslimani/cases/fenicsx-cases/mhs_fenicsx/problem/cpp/build')
-import cpp
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -49,7 +46,7 @@ class Problem:
         self.num_facets = self.facet_map.size_local + self.facet_map.num_ghosts
         self.num_nodes = self.node_map.size_local + self.node_map.num_ghosts
         self.bb_tree = geometry.bb_tree(self.domain,self.dim,padding=1e-7)
-        self.set_activation()
+        self.initialize_activation()
 
         self.u   = fem.Function(self.v, name="uh")   # Solution
         self.u_prev = fem.Function(self.v, name="uh_n") # Previous solution
@@ -84,6 +81,7 @@ class Problem:
 
     def __del__(self):
         self.writer.close()
+        self.writer_vtx.close()
 
     def set_initial_condition( self, expression ):
         try:
@@ -143,6 +141,18 @@ class Problem:
     def post_iterate(self):
         pass
 
+    def initialize_activation(self):
+        self.active_els_tag = mesh.meshtags(self.domain, self.dim,
+                                            np.arange(self.num_cells, dtype=np.int32),
+                                            np.ones(self.num_cells,dtype=np.int32))
+        self.active_els_func= fem.Function(self.dg0_bg,name="active_els")
+        self.active_els_func.x.array[:] = 1.0
+        self.active_nodes_func = fem.Function(self.v,name="active_nodes")
+        self.active_nodes_func.x.array[:] = 1.0
+        self.active_dofs = np.arange(self.num_nodes,dtype=np.int32)
+        self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
+        self.update_boundary()
+
     def set_activation(self, active_els=None):
         '''
         TODO: Refactor so that if arg None, do nothing.
@@ -154,17 +164,18 @@ class Problem:
                                             np.arange(self.num_cells, dtype=np.int32),
                                             get_mask(self.num_cells, active_els),)
         self.active_els_func= indices_to_function(self.dg0_bg,active_els,self.dim,name="active_els")
-        try:
-            old_active_dofs_array  = self.active_dofs_array.copy()
-            self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,)
-            self.active_dofs_array = get_mask(self.num_nodes,self.active_dofs,dtype=np.int32)
-            just_active_dofs_array = self.active_dofs_array - old_active_dofs_array
-            self.just_activated_nodes = np.flatnonzero(just_active_dofs_array)
-        except AttributeError:
-            self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,)
-            self.active_dofs_array = get_mask(self.num_nodes,self.active_dofs,dtype=np.int32)
+
+        old_active_dofs_array  = self.active_nodes_func.x.array.copy()
+        self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,)
+        self.active_nodes_func.x.array[:] = np.float64(0.0)
+        self.active_nodes_func.x.array[self.active_dofs] = np.float64(1.0)
+        just_active_dofs_array = self.active_nodes_func.x.array - old_active_dofs_array
+        self.just_activated_nodes = np.flatnonzero(just_active_dofs_array)
 
         self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
+        self.update_boundary()
+
+    def update_boundary(self):
         bfacets_indices  = locate_active_boundary( self.domain, self.active_els_func)
         self.bfacets_tag  = mesh.meshtags(self.domain, self.dim-1,
                                          np.arange(self.num_facets, dtype=np.int32),
@@ -339,12 +350,13 @@ class Problem:
         self.result_folder = "post"
         shutil.rmtree(self.result_folder,ignore_errors=True)
         self.writer = io.VTKFile(self.domain.comm, f"{self.result_folder}/{self.name}.pvd", "wb")
-        self.writer_vtx = io.VTXWriter(self.domain.comm, f"{self.result_folder}/{self.name}.bp",output=[self.u])
+        self.writer_vtx = io.VTXWriter(self.domain.comm, f"{self.result_folder}/{self.name}.bp",output=[self.u,self.active_nodes_func])
 
     def writepos(self,extra_funcs=[]):
         funcs = [self.u,
                  #self.u_prev,
                  self.active_els_func,
+                 self.active_nodes_func,
                  self.material_id,
                  self.source_rhs,
                  #self.k,

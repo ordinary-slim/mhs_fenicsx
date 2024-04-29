@@ -23,6 +23,7 @@ def main():
         driver.iterate()
         driver.post_iterate()
         p.writepos()
+        p.writepos_vtx()
 
 if __name__=="__main__":
     profiling = True

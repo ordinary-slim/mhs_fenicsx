@@ -31,7 +31,7 @@ class HeatSource(ABC):
             self.speed = self.path.current_track.get_speed()
             self.power = self.path.current_track.power
             if rank==0:
-                print(f"Current track is {self.path.current_track}.")
+                print(f"Current track is {self.path.current_track}")
                 if self.path.is_new_track:
                     print("Track has just started.")
 

@@ -29,7 +29,7 @@ class SingleProblemDriver:
         self.dt = self.printing_dt
         self.p.set_initial_condition(params["environment_temperature"])
         if not(self.print_type.startswith("OFF")):
-            self.deactivate_below_surface()
+            self.deactivate_below_surface(set_inactive_to_powder=True)
         self.p.set_forms_domain()
         self.p.set_forms_boundary()
         p.compile_forms()
@@ -82,12 +82,12 @@ class SingleProblemDriver:
     def post_iterate(self):
         self.p.post_iterate()
 
-    def deactivate_below_surface(self):
+    def deactivate_below_surface(self, set_inactive_to_powder=False):
         active_els = fem.locate_dofs_geometrical(self.p.dg0_bg, lambda x : x[self.p.domain.topology.dim-1] < 0.0 )
         self.p.set_activation(active_els)
-        if self.print_type=="LPBF":
+        if set_inactive_to_powder:
             assert len(self.p.materials)>1, "At least 2 materials for LPBF simulation."
-            powder_els = [el for el in  np.arange(self.p.num_cells) if el not in active_els]
+            powder_els = np.flatnonzero(np.round(np.float64(1)-self.p.active_els_func.x.array))
             self.p.update_material_funcs(powder_els,1)
 
 

@@ -130,13 +130,13 @@ class Problem:
 
     def pre_iterate(self):
         # Pre-iterate source first, current track is tn's
+        if rank==0:
+            print(f"\nProblem {self.name} about to solve for iter {self.iter+1}, time {self.time+self.dt.value}")
         self.source.pre_iterate(self.time,self.dt.value)
         self.source_rhs.interpolate(self.source)
         self.iter += 1
         self.time += self.dt.value
         self.u_prev.x.array[:] = self.u.x.array[:]
-        if rank==0:
-            print(f"Problem {self.name} about to solve for iter {self.iter}, time {self.time}.")
 
     def post_iterate(self):
         pass
@@ -340,6 +340,8 @@ class Problem:
                 multiphenicsx.fem.petsc.VecSubVectorWrapper(self.x, self.v.dofmap, self.restriction) as x_wrapper:
                     usub_vector_local[:] = x_wrapper
         self.x.destroy()
+        self.A.destroy()
+        self.L.destroy()
 
     def solve(self):
         self._solveLinearSystem()

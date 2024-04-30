@@ -33,7 +33,7 @@ class Track:
         return self.p0 + (time-self.t0)/(self.t1-self.t0)*(self.p1-self.p0)
 
     def __repr__(self):
-        return f"Track #{self.index} is a {self.type} track from {self.p0}, t={self.t0} to {self.p1},t={self.t1}.\n"
+        return f"Track #{self.index} is a {self.type} track from {self.p0}@t={self.t0} to {self.p1}@t={self.t1}"
 
 class Path:
     def __init__(self,tracks:list[Track]):

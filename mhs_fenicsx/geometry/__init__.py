@@ -50,7 +50,7 @@ def mesh_collision(mesh_big,mesh_small,bb_tree_mesh_big=None):
         bb_tree = bb_tree_mesh_big
 
     # For each local mesh, compute the bounding box, compute colliding cells
-    tol = 1e-13
+    tol = 1e-7
     big_cells = []
     local_cells_set = set()
     o_cell_idx = mesh_small.topology.original_cell_index
@@ -59,7 +59,6 @@ def mesh_collision(mesh_big,mesh_small,bb_tree_mesh_big=None):
     cell_cell_collisions = geometry.compute_collisions_trees(
         bb_small, bb_tree)
     for local_cell, big_cell in cell_cell_collisions:
-
         geom_small = extract_cell_geometry(mesh_small, local_cell)
         geom_big = extract_cell_geometry(mesh_big, big_cell)
         distance = geometry.compute_distance_gjk(geom_big, geom_small)

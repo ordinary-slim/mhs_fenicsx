@@ -43,13 +43,9 @@ class Path:
             self.times[idx] = tracks[idx].t0
         self.times[-1] = tracks[-1].t1
         self.current_track = tracks[0]
-        self.is_new_track = True
+
     def update(self,time):
         self.current_track = self.get_track(time)
-        if abs(self.current_track.t0 - time) < 1e-7:
-            self.is_new_track  = True
-        else:
-            self.is_new_track  = False
 
     def get_track(self,t:float):
         assert (t >= self.tracks[0].t0 and t <= self.tracks[-1].t1), "Time is out of bounds for this path."
@@ -59,6 +55,7 @@ class Path:
                 idx_track = idx
                 break
         return self.tracks[idx_track]
+
     def __repr__(self):
         return str([str(t) for t in self.tracks])
 

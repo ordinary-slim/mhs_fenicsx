@@ -300,7 +300,9 @@ class Problem:
         #ksp.getPC().setType("lu")
         #ksp.getPC().setFactorSolverType("mumps")
         #ksp.setFromOptions()
+        ksp.setTolerances(rtol=1e-10)
         ksp.solve(self.L, self.x)
+        print(f"Residual norm = {ksp.norm}, # iterations : {ksp.its}")
         self.x.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
         ksp.destroy()
 

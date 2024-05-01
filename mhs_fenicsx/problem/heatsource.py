@@ -32,8 +32,6 @@ class HeatSource(ABC):
             self.power = self.path.current_track.power
             if rank==0:
                 print(f"Current track is {self.path.current_track}")
-                if self.path.is_new_track:
-                    print("Track has just started.")
 
 class Gaussian2D(HeatSource):
     def __call__(self,x):

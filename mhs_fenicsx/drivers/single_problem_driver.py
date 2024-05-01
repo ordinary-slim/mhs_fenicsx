@@ -22,6 +22,8 @@ class SingleProblemDriver:
         self.hatch_height = params["print"]["height"]
         self.hatch_depth = params["print"]["depth"]
         self.printing_dt = params["dt"]
+        self.track_tn = None
+        self.is_new_track = False
         if "cooling_dt" in params:
             self.cooling_dt  = params["cooling_dt"]
         else:
@@ -36,9 +38,12 @@ class SingleProblemDriver:
 
     def set_dt(self):
         if self.p.source.path is not None:
-            self.next_track = self.p.source.path.get_track(self.p.time)
-            max_dt = self.next_track.t1 - self.p.time
-            if self.next_track.type is TrackType.PRINTING:
+            track_tn = self.p.source.path.get_track(self.p.time)
+            if track_tn != self.track_tn:
+                self.is_new_track = True
+            self.track_tn = track_tn
+            max_dt = self.track_tn.t1 - self.p.time
+            if self.track_tn.type is TrackType.PRINTING:
                 dt = self.printing_dt
             else:
                 dt = self.cooling_dt
@@ -48,22 +53,22 @@ class SingleProblemDriver:
 
     def on_new_track_operations(self):
         if self.p.source.path is not None:
-            if self.next_track.type is TrackType.RECOATING:
+            if self.track_tn.type is TrackType.RECOATING:
                 self.deposit_new_layer()
 
     def pre_iterate(self):
         self.set_dt()
         if self.p.source.path is not None:
-            if self.p.source.path.is_new_track:
+            if self.is_new_track:
                 self.on_new_track_operations()
-            if self.next_track.type is TrackType.PRINTING:
+            if self.track_tn.type is TrackType.PRINTING:
                 self.hatch_to_metal()
         self.p.pre_iterate()
 
     def hatch_to_metal(self):
         #TODO: Define hatch
         x0 = self.p.source.x
-        x1 = self.p.source.x + self.next_track.get_speed()*self.dt
+        x1 = self.p.source.x + self.track_tn.get_speed()*self.dt
         obb = OBB(x0,x1,self.hatch_width,self.hatch_height,
                   self.hatch_depth,self.p.dim)
         obb_mesh = obb.get_dolfinx_mesh()
@@ -92,7 +97,7 @@ class SingleProblemDriver:
         height_midpoints_inactive = mesh.compute_midpoints(self.p.domain,
                                                            dim,
                                                            inactive_els_indices)[:,dim-1]
-        activation_height = self.next_track.p1[dim-1] + self.hatch_height
+        activation_height = self.track_tn.p1[dim-1] + self.hatch_height
         els_to_activate = inactive_els_indices[np.flatnonzero(height_midpoints_inactive<activation_height)]
         self.p.set_activation(np.concatenate((self.p.active_els_tag.find(1), els_to_activate)))
         self.p.u.x.array[self.p.just_activated_nodes] = self.p.T_dep

@@ -23,6 +23,7 @@ class SingleProblemDriver:
         self.hatch_depth = params["print"]["depth"]
         self.printing_dt = params["dt"]
         self.track_tn = None
+        self.layer_counter = -1
         self.is_new_track = False
         if "cooling_dt" in params:
             self.cooling_dt  = params["cooling_dt"]
@@ -55,8 +56,10 @@ class SingleProblemDriver:
         if self.p.source.path is not None:
             if self.track_tn.type is TrackType.RECOATING:
                 self.deposit_new_layer()
+                self.layer_counter += 1
 
     def pre_iterate(self):
+        self.is_new_track = False
         self.set_dt()
         if self.p.source.path is not None:
             if self.is_new_track:

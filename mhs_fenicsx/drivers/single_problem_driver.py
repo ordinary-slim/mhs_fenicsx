@@ -33,7 +33,6 @@ class SingleProblemDriver:
         self.p.set_forms_domain()
         self.p.set_forms_boundary()
         p.compile_forms()
-        self.iofile = io.VTKFile(MPI.COMM_SELF,"obb_post/obb.pvd","wb")
 
     def set_dt(self):
         if self.p.source.path is not None:
@@ -68,10 +67,6 @@ class SingleProblemDriver:
         obb = OBB(x0,x1,self.hatch_width,self.hatch_height,
                   self.hatch_depth,self.p.dim)
         obb_mesh = obb.get_dolfinx_mesh()
-        #BDEBUG
-        if rank==0:
-            self.iofile.write_mesh(obb_mesh,t=self.p.time)
-        #EDEBUG
         new_metal_els = mesh_collision(self.p.domain,obb_mesh,bb_tree_mesh_big=self.p.bb_tree)
         self.p.update_material_funcs(new_metal_els,0)
 

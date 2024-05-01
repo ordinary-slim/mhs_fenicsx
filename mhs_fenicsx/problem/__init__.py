@@ -331,6 +331,7 @@ class Problem:
         #ksp.getPC().setType("lu")
         #ksp.getPC().setFactorSolverType("mumps")
         #ksp.setFromOptions()
+        ksp.setTolerances(rtol=1e-10)
         ksp.solve(self.L, self.x)
         self.x.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
         ksp.destroy()

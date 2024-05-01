@@ -6,17 +6,15 @@ from line_profiler import LineProfiler
 import mhs_fenicsx.problem
 import mhs_fenicsx.drivers
 import mhs_fenicsx.geometry
+import argparse
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-with open("input.yaml", 'r') as f:
-    params = yaml.safe_load(f)
-
 def main():
     write_gcode(params["path"])
     domain = get_mesh()
-    p = mhs_fenicsx.problem.Problem(domain, params, name="case")
+    p = mhs_fenicsx.problem.Problem(domain, params, name=params["case_name"])
     driver = mhs_fenicsx.drivers.SingleProblemDriver(p,params)
     while (driver.p.time < driver.p.source.path.times[-1] - 1e-7):
         driver.pre_iterate()
@@ -26,6 +24,11 @@ def main():
         p.writepos_vtx()
 
 if __name__=="__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-i', '--input-file', default='input.yaml')
+    args = parser.parse_args()
+    with open(args.input_file, 'r') as f:
+        params = yaml.safe_load(f)
     profiling = True
     if profiling:
         lp = LineProfiler()

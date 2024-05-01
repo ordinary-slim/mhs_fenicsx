@@ -17,17 +17,9 @@ def get_dt(adim_dt, params):
     v = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
     return adim_dt * (r / v)
 
-with open("input.yaml", 'r') as f:
-    params = yaml.safe_load(f)
-max_iter = params["max_iter"]
-post_frequency = int(params["post_frequency"])
-
-if "adim_dt" in params:
-    params["dt"] = get_dt(params["adim_dt"],params)
-
 def main():
     domain = get_mesh()
-    p = Problem(domain, params, name="case")
+    p = Problem(domain, params, name=params["case_name"])
     driver = SingleProblemDriver(p,params)
     while (driver.p.time < driver.p.source.path.times[-1] - 1e-7) and (driver.p.iter<max_iter):
         driver.pre_iterate()
@@ -38,9 +30,17 @@ def main():
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--case-name', default='case')
+    parser.add_argument('-i', '--input-file', default='input.yaml')
     args = parser.parse_args()
     write_gcode()
+    with open(args.input_file, 'r') as f:
+        params = yaml.safe_load(f)
+    max_iter = params["max_iter"]
+    post_frequency = int(params["post_frequency"])
+
+    if "adim_dt" in params:
+        params["dt"] = get_dt(params["adim_dt"],params)
+
     profiling = False
     if profiling:
         lp = LineProfiler()

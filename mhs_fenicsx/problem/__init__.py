@@ -350,7 +350,7 @@ class Problem:
         self.is_grad_computed   = False
     
     def initialize_post(self):
-        self.result_folder = "post"
+        self.result_folder = f"post_{self.name}"
         shutil.rmtree(self.result_folder,ignore_errors=True)
         self.writer = io.VTKFile(self.domain.comm, f"{self.result_folder}/{self.name}.pvd", "wb")
         self.writer_vtx = io.VTXWriter(self.domain.comm, f"{self.result_folder}/{self.name}.bp",output=[self.u,self.source_rhs,self.active_nodes_func])

@@ -8,18 +8,6 @@ from mpi4py import MPI
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-with open("input.yaml", 'r') as f:
-    params = yaml.safe_load(f)
-
-partLens = params["part"]
-substrateLens = params["substrate"]
-radiusHs = params["heat_source"]["radius"]
-layer_thickness = params["layer_thickness"]
-fineElFactor = params["fineElFactor"]
-fineElSize = min(radiusHs, layer_thickness) / fineElFactor
-nBounLayers = 2
-coarseElFactor = 4
-
 def boundaryLayerProgression( extrusionSize, nBounLayers, fineElSize, coarseElFactor=2 ):
     approxCoarseElSize = coarseElFactor * fineElSize
     numCoarseEls = np.ceil( (extrusionSize - nBounLayers*fineElSize) / approxCoarseElSize )
@@ -38,7 +26,17 @@ def boundaryLayerProgression( extrusionSize, nBounLayers, fineElSize, coarseElFa
 
     return numElementsPerLayer, heights
 
-def get_mesh():
+def get_mesh(params):
+
+    partLens = params["part"]
+    substrateLens = params["substrate"]
+    radiusHs = params["heat_source"]["radius"]
+    layer_thickness = params["layer_thickness"]
+    fineElFactor = params["fineElFactor"]
+    fineElSize = min(radiusHs, layer_thickness) / fineElFactor
+    nBounLayers = 2
+    coarseElFactor = 4
+
     gmsh.initialize()
     if rank==0:
         halfLensPart = np.array( partLens ) / 2

@@ -1,14 +1,12 @@
 import yaml
 
-with open("input.yaml", 'r') as f:
-    params = yaml.safe_load(f)
+def write_gcode(params):
 
-partLen = params["part"]
-layer_thickness = params["layer_thickness"]
-speed = max(params["heat_source"]["initial_speed"])
-gcodeFile = params["path"]
+    partLen = params["part"]
+    layer_thickness = params["layer_thickness"]
+    speed = max(params["heat_source"]["initial_speed"])
+    gcodeFile = params["path"]
 
-def write_gcode():
     gcodeLines = []
     # Start in -X
     X = - partLen[0] / 2

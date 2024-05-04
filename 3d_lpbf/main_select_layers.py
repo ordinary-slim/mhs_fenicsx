@@ -25,7 +25,7 @@ def main():
         driver.pre_iterate()
         driver.iterate()
         driver.post_iterate()
-        if driver.p.iter%post_frequency==0:
+        if (driver.p.iter%post_frequency==0) and (driver.layer_counter in params["select_layers"]):
             p.writepos()
 
 if __name__=="__main__":

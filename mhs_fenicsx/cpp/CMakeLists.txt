@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.15...3.27)
 
-project(cpp)
+project(mhs_fenicsx_cpp)
+include(GNUInstallDirs)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 20)
@@ -39,6 +40,12 @@ if (DOLFINX_FOUND)
   message(STATUS "Found DOLFINx C++ backend at ${DOLFINX_DIR}")
 endif()
 
-nanobind_add_module(cpp NOMINSIZE locate_active_boundary.cpp)
+nanobind_add_module(mhs_fenicsx_cpp NOMINSIZE locate_active_boundary.cpp)
 # Add DOLFINx C++ libraries
-target_link_libraries(cpp PRIVATE dolfinx)
+target_link_libraries(mhs_fenicsx_cpp PRIVATE dolfinx)
+
+# Install the compiled library to the cpp subdirectory
+set_target_properties(
+  mhs_fenicsx_cpp PROPERTIES INSTALL_RPATH_USE_LINK_PATH TRUE
+)
+install(TARGETS mhs_fenicsx_cpp LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})

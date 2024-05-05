@@ -1,0 +1,47 @@
+[build-system]
+requires = [
+            "fenics-dolfinx",
+            "multiphenicsx"
+]
+#build-backend = "scikit_build_core.build"
+
+[project]
+name = "mhs_fenicsx"
+version = "0.8.0.dev0"
+description = "Hello!"
+readme = "README.md"
+requires-python = ">=3.9"
+#license = { file = "LICENSE" }
+authors = [
+    { email = "mehdi.slimani.elmaddarsi@gmail.com" },
+    { name = "Mehdi Slimani" },
+]
+#dependencies = ["numpy>=1.21"]
+
+#[tool.scikit-build]
+#minimum-version = "0.5"
+#cmake.minimum-version = "3.19.0"
+#wheel.packages = ["mhs_fenicsx"]
+
+[tool.cibuildwheel]
+build = [
+    "cp{39,310,311,312}-manylinux_x86_64",
+    "cp{39,310,311,312}-manylinux_aarch64",
+    "cp{39,310,311,312}-macosx_x86_64",
+    "cp{39,310,311,312}-macosx_arm64",
+]
+manylinux-x86_64-image = "manylinux_2_28"
+
+[tool.cibuildwheel.linux]
+archs = [
+    "x86_64",
+    "aarch64",
+] # Forces arm64 build on x86_64 runner using emulation.
+before-build = "yum -y update && yum install -y epel-release && yum install -y openblas-devel ninja-build"
+
+[tool.cibuildwheel.macos]
+archs = [
+    "x86_64",
+    "arm64",
+] # Forces arm64 build on x86_64 runner using cross-compilation.
+before-build = "export HOMEBREW_AUTO_UPDATING=0 && brew update && brew install ninja"

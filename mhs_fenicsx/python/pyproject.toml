@@ -1,0 +1,24 @@
+[build-system]
+requires = [
+            "fenics-dolfinx",
+            "multiphenicsx"
+]
+#build-backend = "scikit_build_core.build"
+
+[project]
+name = "mhs_fenicsx"
+version = "0.8.0.dev0"
+description = "Hello!"
+#readme = "../README.md"
+requires-python = ">=3.9"
+#license = { file = "LICENSE" }
+authors = [
+    { email = "mehdi.slimani.elmaddarsi@gmail.com" },
+    { name = "Mehdi Slimani" },
+]
+#dependencies = ["numpy>=1.21"]
+
+#[tool.scikit-build]
+#minimum-version = "0.5"
+#cmake.minimum-version = "3.19.0"
+#wheel.packages = ["mhs_fenicsx"]

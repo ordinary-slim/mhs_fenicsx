@@ -33,7 +33,7 @@ int_vector locate_active_boundary(const dolfinx::mesh::Mesh<T> &domain,
   return bfacets_indices;
 }
 
-NB_MODULE(cpp, m) {
+NB_MODULE(mhs_fenicsx_cpp, m) {
   nb::bind_vector<int_vector>(m, "int_vector");
   m.def("locate_active_boundary", &locate_active_boundary<double>);
   m.def("locate_active_boundary", &locate_active_boundary<float>);

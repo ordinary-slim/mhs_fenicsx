@@ -10,10 +10,7 @@ import dolfinx.fem.petsc
 import petsc4py.PETSc
 from dolfinx import default_scalar_type
 from abc import ABC, abstractmethod
-import sys
-import os
-sys.path.append(os.path.dirname(__file__)+"/cpp/build")
-import cpp
+import mhs_fenicsx_cpp
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -37,7 +34,7 @@ def l2_squared(f : dolfinx.fem.Function,active_els_tag):
     return l2_norm
 
 def locate_active_boundary(domain, active_els_func):
-    return cpp.locate_active_boundary(domain._cpp_object, active_els_func._cpp_object)
+    return mhs_fenicsx_cpp.locate_active_boundary(domain._cpp_object, active_els_func._cpp_object)
 
 def get_mask(size, indices, dtype=np.int32, true_val=1):
     true_val = dtype(true_val)

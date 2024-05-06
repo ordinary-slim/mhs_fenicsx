@@ -75,8 +75,9 @@ class Problem:
         self.time     = 0.0
         self.dt       = fem.Constant(self.domain, parameters["dt"])
         # Motion
-        self.advection_speed  = np.array(parameters["advection_speed"]) if "advection_speed" in parameters else None
         self.domain_speed     = np.array(parameters["domain_speed"]) if "domain_speed" in parameters else None
+        advection_speed = parameters["advection_speed"][:self.domain.topology.dim] if "advection_speed" in parameters else np.zeros(self.domain.topology.dim)
+        self.advection_speed = fem.Constant(self.domain,advection_speed)
         # Material parameters
         self.define_materials(parameters)
         # Integration
@@ -292,6 +293,9 @@ class Problem:
         if not(self.isSteady):
             self.a_ufl += (self.rho*self.cp/self.dt)*u*v*dx(1)
             self.l_ufl += (self.rho*self.cp/self.dt)*self.u_prev*v*dx(1)
+        if np.linalg.norm(self.advection_speed.value):
+            self.a_ufl += self.rho*self.cp*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(1)
+
     def set_forms_boundary(self):
         '''
         rn must be called after set_forms_domain

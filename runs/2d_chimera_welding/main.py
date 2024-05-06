@@ -33,9 +33,18 @@ def main():
               )
     p_fixed = Problem(domain, params, name=params["case_name"])
     p_moving = build_moving_problem(p_fixed)
+
+    for p in [p_fixed,p_moving]:
+        p.set_forms_domain()
+        p.set_forms_boundary()
+        p.compile_forms()
     for _ in range(10):
         p_fixed.pre_iterate()
         p_moving.pre_iterate()
+        p_fixed.assemble()
+        p_moving.assemble()
+        p_fixed.solve()
+        p_moving.solve()
         p_fixed.writepos()
         p_moving.writepos()
 

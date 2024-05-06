@@ -8,7 +8,8 @@ def build_moving_problem(p_fixed:Problem):
     params = p_fixed.input_parameters.copy()
     if "path" in params:
         params.pop("path")
-    params["domain_speed"] = p_fixed.source.speed
+    params["domain_speed"]    = p_fixed.source.speed
+    params["advection_speed"] = -p_fixed.source.speed
     return Problem(moving_domain, params,name=p_fixed.name+"_moving")
 
 def mesh_around_hs(hs:HeatSource, dim:int):

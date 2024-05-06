@@ -22,9 +22,11 @@ rank = comm.Get_rank()
 
 class Problem:
     def __init__(self, domain, parameters, name="case"):
+        self.input_parameters = parameters.copy()
         self.domain   = domain
         self.dim = self.domain.topology.dim
         self.name = name
+        # Function spaces
         self.v_bg    = fem.functionspace(domain, ("Lagrange", 1),)
         self.v       = self.v_bg.clone()
         self.dg0_bg  = fem.functionspace(domain, ("Discontinuous Lagrange", 0),)
@@ -72,6 +74,9 @@ class Problem:
         self.iter     = 0
         self.time     = 0.0
         self.dt       = fem.Constant(self.domain, parameters["dt"])
+        # Motion
+        self.advection_speed  = np.array(parameters["advection_speed"]) if "advection_speed" in parameters else None
+        self.domain_speed     = np.array(parameters["domain_speed"]) if "domain_speed" in parameters else None
         # Material parameters
         self.define_materials(parameters)
         # Integration
@@ -133,6 +138,9 @@ class Problem:
         if rank==0:
             print(f"\nProblem {self.name} about to solve for iter {self.iter+1}, time {self.time+self.dt.value}")
         self.source.pre_iterate(self.time,self.dt.value)
+        # Mesh motion
+        if self.domain_speed is not None:
+            self.domain.geometry.x[:] += np.round(self.domain_speed*self.dt.value,7)
         self.source_rhs.interpolate(self.source)
         self.iter += 1
         self.time += self.dt.value

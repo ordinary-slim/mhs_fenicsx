@@ -17,10 +17,13 @@ class SingleProblemDriver:
     def __init__(self,p:Problem,params:dict):
         self.p = p
         # PRINT SETTINGS
-        self.print_type = params["print"]["type"]
-        self.hatch_width = params["print"]["width"]
-        self.hatch_height = params["print"]["height"]
-        self.hatch_depth = params["print"]["depth"]
+        if "print" in params:
+            self.print_type = params["print"]["type"]
+            self.hatch_width = params["print"]["width"]
+            self.hatch_height = params["print"]["height"]
+            self.hatch_depth = params["print"]["depth"]
+        else:
+            self.print_type = "OFF"
         self.printing_dt = params["dt"]
         self.track_tn = None
         self.layer_counter = -1

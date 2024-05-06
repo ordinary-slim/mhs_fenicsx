@@ -8,14 +8,19 @@ rank = comm.Get_rank()
 
 class HeatSource(ABC):
     def __init__(self,params:dict):
+        '''
+        TODO: Unify interface so that only initialized with Path
+        '''
         self.x      = np.array(params["heat_source"]["initial_position"],dtype=np.float64)
-        self.x_prev = self.x.copy()
         self.R = params["heat_source"]["radius"]
         self.power = params["heat_source"]["power"]
         self.speed = np.array(params["heat_source"]["initial_speed"],dtype=np.float64)
         self.path  = None
         if "path" in params:
-            self.path = gcode_to_path(params["path"],default_power=self.power)
+            self.path  = gcode_to_path(params["path"],default_power=self.power)
+            self.x     = self.path.tracks[0].p0
+            self.speed = self.path.tracks[0].get_speed()
+        self.x_prev = self.x.copy()
 
     @abstractmethod
     def __call__(self,x):

@@ -2,6 +2,38 @@ import dolfinx.mesh
 import numpy as np
 from mpi4py import MPI
 from mhs_fenicsx.problem import Problem, HeatSource
+from mhs_fenicsx.geometry import mesh_containment
+from dolfinx import fem
+import mhs_fenicsx_cpp
+
+def interpolate(func2project,
+                targetSpace,
+                interpolate,):
+    nmmid = dolfinx.fem.create_nonmatching_meshes_interpolation_data(
+                                 targetSpace.mesh,
+                                 targetSpace.element,
+                                 func2project.ufl_function_space().mesh,
+                                 padding=1e-6,)
+    interpolate.interpolate(func2project, nmm_interpolation_data=nmmid)
+    return interpolate
+
+def get_active_in_external_trees(p_loc:Problem, p_ext:Problem ):
+    '''
+    Return nodal function with nodes active in p_ext
+    '''
+    # Get function on p_ext
+    loc_active_dofs = fem.Function( p_loc.v )
+    #inodes = mhs_fenicsx_cpp.get_active_dofs_external(loc_active_dofs._cpp_object,
+                                                      #p_ext.active_els_func._cpp_object,
+                                                      #p_loc.bb_tree_nodes._cpp_object,
+                                                      #p_loc.domain._cpp_object,
+                                                      #p_ext.bb_tree._cpp_object,
+                                                      #p_ext.domain._cpp_object,)
+    inodes = mesh_containment(p_loc.bb_tree_nodes,p_loc.domain,
+                              p_ext.bb_tree,p_ext.domain,)
+    loc_active_dofs.x.array[fem.locate_dofs_topological(p_loc.v, 0, inodes)] = 1.0
+    loc_active_dofs.x.scatter_forward()
+    return loc_active_dofs
 
 def build_moving_problem(p_fixed:Problem):
     moving_domain = mesh_around_hs(p_fixed.source,p_fixed.domain.topology.dim)

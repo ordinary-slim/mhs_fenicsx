@@ -40,7 +40,8 @@ if (DOLFINX_FOUND)
   message(STATUS "Found DOLFINx C++ backend at ${DOLFINX_DIR}")
 endif()
 
-nanobind_add_module(mhs_fenicsx_cpp NOMINSIZE locate_active_boundary.cpp)
+nanobind_add_module(mhs_fenicsx_cpp NOMINSIZE wrapper.cpp)
+#target_sources(mhs_fenicsx_cpp PRIVATE locate_active_boundary.cpp)
 # Add DOLFINx C++ libraries
 target_link_libraries(mhs_fenicsx_cpp PRIVATE dolfinx)
 

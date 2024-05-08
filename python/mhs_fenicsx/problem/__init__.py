@@ -16,6 +16,7 @@ from mhs_fenicsx import gcode
 from mhs_fenicsx.problem.helpers import *
 from mhs_fenicsx.problem.heatsource import *
 from mhs_fenicsx.problem.material import Material
+from mhs_fenicsx.geometry import extract_cell_geometry
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -47,7 +48,7 @@ class Problem:
         self.num_cells = self.cell_map.size_local + self.cell_map.num_ghosts
         self.num_facets = self.facet_map.size_local + self.facet_map.num_ghosts
         self.num_nodes = self.node_map.size_local + self.node_map.num_ghosts
-        self.bb_tree = geometry.bb_tree(self.domain,self.dim,padding=1e-7)
+        self.set_bb_trees()
         self.initialize_activation()
 
         self.u   = fem.Function(self.v, name="uh")   # Solution
@@ -96,6 +97,10 @@ class Problem:
         except TypeError:
             self.u.interpolate(expression)
         self.u_prev.x.array[:] = self.u.x.array[:]
+
+    def set_bb_trees(self):
+        self.bb_tree = geometry.bb_tree(self.domain,self.dim,np.arange(self.num_cells,dtype=np.int32),padding=1e-7)
+        self.bb_tree_nodes = geometry.bb_tree(self.domain,0,np.arange(self.num_nodes,dtype=np.int32),padding=1e-7)
     
     def define_materials(self,parameters):
         self.T_env = parameters["environment_temperature"]
@@ -142,6 +147,9 @@ class Problem:
         # Mesh motion
         if self.domain_speed is not None:
             self.domain.geometry.x[:] += np.round(self.domain_speed*self.dt.value,7)
+            # This can be done more efficiently C++ level
+            self.set_bb_trees()
+
         self.source_rhs.interpolate(self.source)
         self.iter += 1
         self.time += self.dt.value
@@ -216,10 +224,29 @@ class Problem:
         np.round(active_dofs_ext_func_self.x.array,decimals=7,out=active_dofs_ext_func_self.x.array)
         return active_dofs_ext_func_self
 
-    def find_gamma(self, p_ext:Problem):
+    def subtract_problem(self,p_ext:Problem):
+        ext_nodal_activation = self.get_active_in_external(p_ext)
+        ext_active_nodes = ext_nodal_activation.x.array.nonzero()[0]
+        incident_cells = mesh.compute_incident_entities(self.domain.topology,
+                                                        ext_active_nodes,
+                                                        0,
+                                                        self.domain.topology.dim,)
+        active_els_mask = np.ones(self.num_cells,dtype=np.int32)
+        for cell in incident_cells:
+            all_active_in_ext = True
+            for inode in self.domain.geometry.dofmap[cell]:
+                if ext_nodal_activation.x.array[inode]==0:
+                    all_active_in_ext = False
+                    break
+            if all_active_in_ext:
+                active_els_mask[cell] = 0
+        active_els = active_els_mask.nonzero()[0]
+        self.set_activation(active_els)
+        self.find_gamma(ext_nodal_activation)
+
+    def find_gamma(self,ext_active_dofs_func):
         gammaFacets = []
-        ext_active_dofs_func = self.get_active_in_external( p_ext )
-        ext_active_dofs_func.name = "ext act dofs"
+        #ext_active_dofs_func = self.get_active_in_external( p_ext )
         # Loop over boundary facets, get incident nodes,
         # if all nodes of facet are active in external --> gamma facet
         self.domain.topology.create_connectivity(self.dim-1, 0)
@@ -295,6 +322,10 @@ class Problem:
             self.l_ufl += (self.rho*self.cp/self.dt)*self.u_prev*v*dx(1)
         if np.linalg.norm(self.advection_speed.value):
             self.a_ufl += self.rho*self.cp*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(1)
+            #TODO: Add stabilization here
+            #TODO 1: Compute h along advection
+            #TODO 2: Compute tau
+            #TODO 3: Compute 
 
     def set_forms_boundary(self):
         '''
@@ -382,6 +413,11 @@ class Problem:
             funcs.append(self.grad_u)
         if self.is_dirichlet_gamma:
             funcs.append(self.dirichlet_gamma)
+        #BPARTITIONTAG
+        partition = fem.Function(self.dg0_bg,name="partition")
+        partition.x.array[:] = rank
+        funcs.append(partition)
+        #EPARTITIONTAG
 
         bnodes = indices_to_function(self.v,self.bfacets_tag.find(1),self.dim-1,name="bnodes")
         funcs.append(bnodes)

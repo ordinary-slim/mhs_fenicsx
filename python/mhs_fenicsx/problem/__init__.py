@@ -16,7 +16,7 @@ from mhs_fenicsx import gcode
 from mhs_fenicsx.problem.helpers import *
 from mhs_fenicsx.problem.heatsource import *
 from mhs_fenicsx.problem.material import Material
-from mhs_fenicsx.geometry import extract_cell_geometry
+import mhs_fenicsx_cpp
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -64,7 +64,9 @@ class Problem:
         self.is_dirichlet_gamma = False
 
         # Source term
-        if self.dim == 2:
+        if self.dim == 1:
+            self.source = Gaussian1D(parameters)
+        elif self.dim == 2:
             self.source = Gaussian2D(parameters)
         else:
             self.source = Gaussian3D(parameters)
@@ -79,6 +81,11 @@ class Problem:
         self.domain_speed     = np.array(parameters["domain_speed"]) if "domain_speed" in parameters else None
         advection_speed = parameters["advection_speed"][:self.domain.topology.dim] if "advection_speed" in parameters else np.zeros(self.domain.topology.dim)
         self.advection_speed = fem.Constant(self.domain,advection_speed)
+        # Stabilization
+        self.is_supg = False
+        if ("supg" in parameters):
+            self.is_supg = bool(parameters["supg"])
+        self.supg_elwise_coeff = fem.Function(self.dg0_bg,name="supg_tau") if self.is_supg else None
         # Material parameters
         self.define_materials(parameters)
         # Integration
@@ -138,6 +145,15 @@ class Problem:
             self.k.x.array[cells]   = material.k
             self.rho.x.array[cells] = material.rho
             self.cp.x.array[cells]  = material.cp
+
+    def compute_supg_coeff(self):
+        if self.supg_elwise_coeff is None:
+            self.supg_elwise_coeff = fem.Function(self.dg0_bg,name="supg_tau")
+        mhs_fenicsx_cpp.compute_el_size_along_vector(self.supg_elwise_coeff._cpp_object,self.advection_speed._cpp_object)
+        advection_norm = np.linalg.norm(self.advection_speed.value)
+        self.supg_elwise_coeff.x.array[:] = self.supg_elwise_coeff.x.array[:]**2 / (
+                2 * self.supg_elwise_coeff.x.array[:] * self.rho.x.array[:] * self.cp.x.array[:]*advection_norm + \
+                 4 * self.k.x.array[:])
 
     def pre_iterate(self):
         # Pre-iterate source first, current track is tn's
@@ -313,7 +329,8 @@ class Problem:
 
     def set_forms_domain(self):
         dx = ufl.Measure("dx", subdomain_data=self.active_els_tag,
-                         metadata=self.quadrature_metadata)
+                         metadata=self.quadrature_metadata,
+                         )
         (u, v) = (ufl.TrialFunction(self.v),ufl.TestFunction(self.v))
         self.a_ufl = self.k*ufl.dot(ufl.grad(u), ufl.grad(v))*dx(1)
         self.l_ufl = self.source_rhs*v*dx(1)
@@ -322,10 +339,17 @@ class Problem:
             self.l_ufl += (self.rho*self.cp/self.dt)*self.u_prev*v*dx(1)
         if np.linalg.norm(self.advection_speed.value):
             self.a_ufl += self.rho*self.cp*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(1)
-            #TODO: Add stabilization here
-            #TODO 1: Compute h along advection
-            #TODO 2: Compute tau
-            #TODO 3: Compute 
+            if self.is_supg:
+                self.compute_supg_coeff()
+                if not(self.isSteady):
+                    self.a_ufl += (self.rho * self.cp / self.dt) * u * self.supg_elwise_coeff * \
+                                    self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(1)
+                    self.l_ufl += (self.rho * self.cp / self.dt) * self.u_prev * self.supg_elwise_coeff * \
+                                    self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(1)
+                self.a_ufl += (self.rho * self.cp) * ufl.dot(self.advection_speed,ufl.grad(u)) * \
+                                self.supg_elwise_coeff * self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(1)
+                self.l_ufl += self.source_rhs * \
+                        self.supg_elwise_coeff * self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(1)
 
     def set_forms_boundary(self):
         '''
@@ -370,11 +394,11 @@ class Problem:
         ksp = petsc4py.PETSc.KSP()
         ksp.create(self.domain.comm)
         ksp.setOperators(self.A)
-        ksp.setType("cg")
-        #ksp.getPC().setType("lu")
-        #ksp.getPC().setFactorSolverType("mumps")
-        #ksp.setFromOptions()
-        ksp.setTolerances(rtol=1e-10)
+        #ksp.setType("bcgs")
+        ksp.getPC().setType("lu")
+        ksp.getPC().setFactorSolverType("mumps")
+        ksp.setFromOptions()
+        #ksp.setTolerances(rtol=1e-10)
         ksp.solve(self.L, self.x)
         self.x.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
         ksp.destroy()
@@ -418,6 +442,10 @@ class Problem:
         partition.x.array[:] = rank
         funcs.append(partition)
         #EPARTITIONTAG
+        #BDEBUG
+        if self.supg_elwise_coeff is not None:
+            funcs.append(self.supg_elwise_coeff)
+        #EDEBUG
 
         bnodes = indices_to_function(self.v,self.bfacets_tag.find(1),self.dim-1,name="bnodes")
         funcs.append(bnodes)

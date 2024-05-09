@@ -3,15 +3,15 @@ isSteady: False
 heat_source : {
   type : 0,
   initial_position : [-5.0, 0.0, 0.0],
-  initial_speed : [20.0, 0.0, 0],
-  radius : 0.5,
-  power : 10,
+  initial_speed : [100.0, 0.0, 0],
+  radius : 0.1,
+  power : 100,
 }
 adim_dt: 0.5
 # PROPS
 material : {
   density : 4.3E-06,
-  conductivity : 10.0E-00,
+  conductivity : 10.0E-01,
   specific_heat : 700,
 }
 #convection_coeff : 1.0E-00
@@ -19,3 +19,4 @@ environment_temperature : 25
 # END_ESSENTIAL
 case_name: "fruit_box"
 max_iter: 1
+supg: 1

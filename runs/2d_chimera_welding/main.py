@@ -8,7 +8,6 @@ from helpers import mesh_around_hs, build_moving_problem, get_active_in_external
 from line_profiler import LineProfiler
 from mhs_fenicsx.geometry import mesh_containment
 
-
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
@@ -32,14 +31,14 @@ class Driver:
     def __init__(self,
                  p_fixed:problem.Problem,
                  p_moving:problem.Problem,
-                 max_staggered_iters=20):
+                 max_staggered_iters=40):
         self.p_fixed =  p_fixed
         self.p_moving = p_moving
         self.max_staggered_iters = max_staggered_iters
         self.convergence_crit = 1e9
         self.convergence_threshold = 1e-6
         self.iter = 0
-        self.relaxation_factor = 0.7
+        self.relaxation_factor = 0.5
 
     def pre_iterate(self):
         self.previous_u_moving = self.p_moving.u.copy();self.previous_u_moving.name="previous_u"

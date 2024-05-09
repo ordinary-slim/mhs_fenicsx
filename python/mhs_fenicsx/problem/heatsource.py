@@ -38,6 +38,12 @@ class HeatSource(ABC):
             if rank==0:
                 print(f"Current track is {self.path.current_track}")
 
+class Gaussian1D(HeatSource):
+    def __call__(self,x):
+        r2 = (x[0] - self.x[0])**2
+        return 2 * self.power / np.pi / self.R**2 * \
+            np.exp(-2*(r2)/self.R**2 )
+
 class Gaussian2D(HeatSource):
     def __call__(self,x):
         r2 = (x[0] - self.x[0])**2 + (x[1] - self.x[1])**2

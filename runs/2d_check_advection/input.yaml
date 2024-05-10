@@ -22,6 +22,6 @@ print : {
 }
 #
 environment_temperature : 25
-advection_speed : [-100.0, 0.0, 0.0]
+advection_speed : [-50.0, -50.0, 0.0]
 supg : 1
 point_density: 10

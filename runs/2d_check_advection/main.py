@@ -10,10 +10,10 @@ with open("input.yaml", 'r') as f:
 
 def run(case_name="case"):
     # Mesh and problems
-    point_density = params["point_density"]
+    point_density = 2 / params["heat_source"]["radius"]
     bounds = [-7.0,-2.0,7.0,2.0]
-    nx = np.round((bounds[2]-bounds[0]) * float(params["point_density"]) ).astype(np.int32)
-    ny = np.round((bounds[3]-bounds[1]) * float(params["point_density"]) ).astype(np.int32)
+    nx = np.round((bounds[2]-bounds[0]) * point_density ).astype(np.int32)
+    ny = np.round((bounds[3]-bounds[1]) * point_density ).astype(np.int32)
     domain = mesh.create_rectangle(MPI.COMM_WORLD,
                                    [bounds[:2],bounds[2:]],
                                    [nx,ny],

@@ -1,7 +1,7 @@
 from mhs_fenicsx import problem, geometry
 import numpy as np
 from mpi4py import MPI
-from dolfinx import mesh, fem
+from dolfinx import mesh, fem, io
 import ufl
 import yaml
 from helpers import mesh_around_hs, build_moving_problem, get_active_in_external_trees, interpolate
@@ -23,9 +23,9 @@ def get_dt(adim_dt):
     speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
     return adim_dt * (radius / speed)
 
-box = [-7*radius,-3*radius,+7*radius,+3*radius]
+box = [-8*radius,-4*radius,+8*radius,+4*radius]
 params["dt"] = get_dt(params["adim_dt"])
-params["heat_source"]["initial_position"] = [-5*radius, 0.0, 0.0]
+params["heat_source"]["initial_position"] = [-4*radius, 0.0, 0.0]
 
 class Driver:
     def __init__(self,
@@ -39,22 +39,44 @@ class Driver:
         self.convergence_threshold = 1e-6
         self.iter = 0
         self.relaxation_factor = 0.5
-
-    def pre_iterate(self):
         self.previous_u_moving = self.p_moving.u.copy();self.previous_u_moving.name="previous_u"
         self.previous_u_fixed = self.p_fixed.u.copy();self.previous_u_fixed.name="previous_u"
+
+    def pre_iterate(self):
         self.iter += 1
         self.p_fixed.clear_dirchlet_bcs()
         self.p_moving.clear_dirchlet_bcs()
         
-        for p in [self.p_fixed, self.p_moving]:
-            p.time = self.iter
+    def pre_loop(self):
+        self.iter = 0
+        self.writer_moving = io.VTKFile(self.p_moving.domain.comm, f"staggered_iters_{self.p_moving.name}.pvd", "wb")
+        self.writer_fixed = io.VTKFile(self.p_fixed.domain.comm, f"staggered_iters_{self.p_fixed.name}.pvd", "wb")
+        #self.writer_moving.write_function(self.p_moving.u)
+        #self.writer_fixed.write_function(self.p_fixed.u)
+
+    def writepos(self):
+        fs_moving = [self.p_moving.u,
+                     self.p_moving.neumann_flux,
+                     self.p_moving.active_els_func,
+                     self.previous_u_moving
+                     ]
+        fs_fixed = [self.p_fixed.u,
+                    self.p_fixed.dirichlet_gamma,
+                    self.p_fixed.active_els_func,
+                    self.previous_u_fixed]
+        self.writer_moving.write_function(fs_moving,t=self.iter)
+        self.writer_fixed.write_function(fs_fixed,t=self.iter)
+
+    def post_loop(self):
+        pass
 
     def post_iterate(self, verbose=False):
         (p_moving,p_fixed)=(self.p_moving,self.p_fixed)
         norm_diff_moving    = p_moving.l2_norm_gamma(p_moving.u-self.previous_u_moving)
         norm_current_moving = p_moving.l2_norm_gamma(p_moving.u)
         self.convergence_crit = np.sqrt(norm_diff_moving) / np.sqrt(norm_current_moving)
+        self.previous_u_moving.x.array[:] = self.p_moving.u.x.array[:]
+        self.previous_u_fixed.x.array[:] = self.p_fixed.u.x.array[:]
         if rank==0:
             if verbose:
                 print(f"Staggered iteration #{self.iter}, relative norm of difference: {self.convergence_crit}")
@@ -119,6 +141,9 @@ def main():
     p_fixed = problem.Problem(domain, params, name=params["case_name"])
     p_moving = build_moving_problem(p_fixed)
 
+    p_fixed.set_initial_condition(params["environment_temperature"])
+    p_moving.set_initial_condition(params["environment_temperature"])
+
     driver = Driver(p_fixed,p_moving)
 
     for _ in range(max_temporal_iters):
@@ -126,12 +151,15 @@ def main():
         p_moving.pre_iterate()
         p_fixed.subtract_problem(p_moving)
         p_moving.find_gamma(p_moving.get_active_in_external(p_fixed))
+        driver.pre_loop()
         for _ in range(driver.max_staggered_iters):
             driver.pre_iterate()
             driver.iterate()
             driver.post_iterate(verbose=True)
+            driver.writepos()
             if driver.convergence_crit < driver.convergence_threshold:
                 break
+        driver.post_loop()
         p_moving.writepos()
         p_fixed.writepos()
 
@@ -141,8 +169,7 @@ if __name__=="__main__":
         lp = LineProfiler()
         lp.add_module(problem)
         lp.add_function(build_moving_problem)
-        #lp.add_function(get_active_in_external_trees)
-        #lp.add_function(mesh_containment)
+        lp.add_class(Driver)
         lp_wrapper = lp(main)
         lp_wrapper()
         with open("profiling.txt", 'w') as pf:

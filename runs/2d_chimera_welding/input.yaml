@@ -9,10 +9,15 @@ heat_source : {
 }
 adim_dt: 0.5
 # PROPS
-material : {
-  density : 4.3E-06,
-  conductivity : 10.0E-01,
-  specific_heat : 700,
+#material : {
+#density : 1,
+#conductivity : 0.000001,
+#specific_heat : 1,
+#}
+material_metal : {
+  density : 4.3E-06, # kg / mm3
+  conductivity : 10.0E-03, # W / mm / K
+  specific_heat : 700, # J / kg / K
 }
 #convection_coeff : 1.0E-00
 environment_temperature : 25

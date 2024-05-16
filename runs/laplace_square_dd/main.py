@@ -1,24 +1,36 @@
-from dolfinx import fem, mesh
+from dolfinx import fem, mesh, io
 import ufl
 import numpy as np
 from mpi4py import MPI
-from Problem import Problem, interpolate_dg_at_facets, interpolate
+from mhs_fenicsx.problem import Problem, interpolate_dg_at_facets, interpolate
 from line_profiler import LineProfiler
-import argparse
+import yaml
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
+with open("input.yaml", 'r') as f:
+    params = yaml.safe_load(f)
+
 def exact_sol(x):
     return 2 -(x[0]**2 + x[1]**2)
-def exact_sol_ufl(mesh):
-    x = ufl.SpatialCoordinate(mesh)
-    return 2 -(x[0]**2 + x[1]**2)
-def exact_flux_ufl(mesh):
-    x = ufl.SpatialCoordinate(mesh)
-    return ufl.as_vector((-2*x[0], -2*x[1]))
-def rhs():
-    return 4
+
+class Rhs:
+    def __init__(self,rho,cp,k,v):
+        self.rho = rho
+        self.cp = cp
+        self.k = k
+        self.v = v
+
+    def __call__(self,x):
+        return_val = -2*self.rho*self.cp*self.v[0]*x[0] + -2*self.rho*self.cp*self.v[1]*x[1] + 4*self.k
+        return return_val
+
+rhs = Rhs(params["material"]["density"],
+          params["material"]["specific_heat"],
+          params["material"]["conductivity"],
+          params["advection_speed"])
+
 # Bcs
 def left_marker_dirichlet(x):
     return np.logical_or( np.isclose(x[1],1), np.logical_or(
@@ -35,14 +47,16 @@ def getPartition(p:Problem):
     return f
 
 class Driver:
-    def __init__(self, p_neumann:Problem, p_dirichlet:Problem, max_iter=5):
+    def __init__(self, p_neumann:Problem,
+                 p_dirichlet:Problem,
+                 max_staggered_iters=40):
         self.p_neumann = p_neumann
         self.p_dirichlet = p_dirichlet
-        self.max_iter = max_iter
+        self.max_staggered_iters = max_staggered_iters
         self.convergence_crit = 1e9
         self.convergence_threshold = 1e-6
         self.iter = 0
-        self.relaxation_factor = 0.7
+        self.relaxation_factor = 0.1
 
     def pre_iterate(self):
         self.previous_u_neumann = self.p_neumann.u.copy();self.previous_u_neumann.name="previous_u"
@@ -53,6 +67,36 @@ class Driver:
         
         for p in [self.p_dirichlet, self.p_neumann]:
             p.time = self.iter
+
+    def pre_loop(self):
+        self.iter = 0
+        self.writer_neumann = io.VTKFile(self.p_neumann.domain.comm, f"staggered_iters_{self.p_neumann.name}.pvd", "wb")
+        self.writer_dirichlet = io.VTKFile(self.p_dirichlet.domain.comm, f"staggered_iters_{self.p_dirichlet.name}.pvd", "wb")
+
+    def writepos(self):
+        exact_dirichlet = fem.Function(self.p_dirichlet.v,name="exact")
+        exact_neumann = fem.Function(self.p_neumann.v,name="exact")
+        exact_dirichlet.interpolate(exact_sol)
+        exact_neumann.interpolate(exact_sol)
+        fs_dirichlet = [self.p_dirichlet.u,
+                     self.p_dirichlet.dirichlet_gamma,
+                     self.p_dirichlet.active_els_func,
+                     self.p_dirichlet.source_rhs,
+                     self.previous_u_dirichlet,
+                     exact_dirichlet,
+                     ]
+        fs_neumann = [self.p_neumann.u,
+                    self.p_neumann.neumann_flux,
+                    self.p_neumann.active_els_func,
+                    self.p_neumann.source_rhs,
+                    self.previous_u_neumann,
+                    exact_neumann,
+                      ]
+        self.writer_neumann.write_function(fs_neumann,t=self.iter)
+        self.writer_dirichlet.write_function(fs_dirichlet,t=self.iter)
+
+    def post_loop(self):
+        pass
 
     def post_iterate(self, verbose=False):
         (p_neumann,p_dirichlet)=(self.p_neumann,self.p_dirichlet)
@@ -78,7 +122,7 @@ class Driver:
     def set_neumann_interface(self):
         (p, p_ext) = (self.p_neumann,self.p_dirichlet)
         p_ext.compute_gradient()
-        gammaIntegralEntities = p.compute_gamma_integration_ents()
+        gammaIntegralEntities = p.get_facet_integrations_entities()
         # Custom measure
         dS = ufl.Measure('ds', domain=p.domain, subdomain_data=[
             (8,np.asarray(gammaIntegralEntities, dtype=np.int32))])
@@ -86,7 +130,7 @@ class Driver:
         n = ufl.FacetNormal(p.domain)
         p.neumann_flux = interpolate_dg_at_facets(p_ext.grad_u,
                                         p.gammaFacets.find(1),
-                                        p.dg0_dim2,
+                                        p.dg0_vec,
                                         p_ext.bb_tree,
                                         p.active_els_tag,
                                         p_ext.active_els_tag,
@@ -94,10 +138,9 @@ class Driver:
                                         )
         p.l_ufl += +ufl.inner(n,p.neumann_flux) * v * dS(8)
 
-
     def iterate(self):
-        self.p_neumann.find_gamma(self.p_dirichlet)
-        self.p_dirichlet.find_gamma(self.p_neumann)
+        self.p_neumann.find_gamma(self.p_neumann.get_active_in_external( self.p_dirichlet ))
+        self.p_dirichlet.find_gamma(self.p_dirichlet.get_active_in_external( self.p_neumann ))
 
         self.p_neumann.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
         self.p_dirichlet.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
@@ -105,44 +148,24 @@ class Driver:
         # Solve left with Neumann from right
         self.p_neumann.set_forms_domain(rhs)
         self.set_neumann_interface()
+        self.p_neumann.compile_forms()
         self.p_neumann.assemble()
         self.p_neumann.solve()
 
         # Solve right with Dirichlet from left
         self.set_dirichlet_interface()
         self.p_dirichlet.set_forms_domain(rhs)
+        self.p_dirichlet.compile_forms()
         self.p_dirichlet.assemble()
         self.p_dirichlet.solve()
 
-
-    def writepos(self):
-        # Post
-        # exact sol
-        ex_left = fem.Function(self.p_neumann.v, name="exact")
-        ex_right = fem.Function(self.p_dirichlet.v, name="exact")
-        ex_left.interpolate(fem.Expression(exact_sol_ufl(self.p_neumann.domain),self.p_neumann.v.element.interpolation_points()))
-        ex_right.interpolate(fem.Expression(exact_sol_ufl(self.p_dirichlet.domain),self.p_dirichlet.v.element.interpolation_points()))
-        # partition
-        partition_left, partition_right = getPartition(self.p_neumann), getPartition(self.p_dirichlet)
-        # els numbering
-        els_numbering_right = fem.Function(self.p_dirichlet.dg0_bg, name="numbering")
-        els_numbering_right.x.array[:] = np.arange(self.p_dirichlet.num_cells)[:]
-        els_numbering_left = fem.Function(self.p_neumann.dg0_bg, name="numbering")
-        els_numbering_left.x.array[:] = np.arange(self.p_neumann.num_cells)[:]
-        # nodes numbering
-        nodes_numbering = fem.Function(self.p_neumann.v, name="numbering")
-        nodes_numbering.x.array[:] = np.arange(self.p_neumann.domain.topology.index_map(0).size_local+self.p_neumann.domain.topology.index_map(0).num_ghosts)[:]
-
-        self.p_neumann.writepos(extra_funcs=[ex_left, partition_left,nodes_numbering,els_numbering_left,self.p_neumann.neumann_flux,self.previous_u_neumann])
-        self.p_dirichlet.writepos(extra_funcs=[ex_right, partition_right,els_numbering_right,self.previous_u_dirichlet])
-
 def main():
     # Mesh and problems
-    points_side = 16
+    points_side = 64
     left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.quadrilateral)
     right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.triangle)
-    p_left = Problem(left_mesh, name="left")
-    p_right = Problem(right_mesh, name="right")
+    p_left = Problem(left_mesh, params, name="left")
+    p_right = Problem(right_mesh, params, name="right")
     # Activation
     active_els_left = fem.locate_dofs_geometrical(p_left.dg0_bg, lambda x : x[0] <= 0.5 )
     active_els_right = fem.locate_dofs_geometrical(p_right.dg0_bg, lambda x : x[0] >= 0.5 )
@@ -150,8 +173,9 @@ def main():
     p_left.set_activation( active_els_left )
     p_right.set_activation( active_els_right )
 
-    driver = Driver(p_left,p_right,max_iter=40)
-    for _ in range(driver.max_iter):
+    driver = Driver(p_left,p_right,max_staggered_iters=params["max_staggered_iters"])
+    driver.pre_loop()
+    for _ in range(driver.max_staggered_iters):
         driver.pre_iterate()
         driver.iterate()
         driver.post_iterate(verbose=True)

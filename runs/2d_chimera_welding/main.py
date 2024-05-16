@@ -16,8 +16,9 @@ with open("input.yaml", 'r') as f:
 
 radius = params["heat_source"]["radius"]
 max_temporal_iters = params["max_iter"]
+T_env = params["environment_temperature"]
 
-def get_el_size(resolution=2.0):
+def get_el_size(resolution=4.0):
     return params["heat_source"]["radius"] / resolution
 def get_dt(adim_dt):
     speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
@@ -29,60 +30,59 @@ params["heat_source"]["initial_position"] = [-4*radius, 0.0, 0.0]
 
 class Driver:
     def __init__(self,
-                 p_fixed:problem.Problem,
-                 p_moving:problem.Problem,
-                 max_staggered_iters=40):
-        self.p_fixed =  p_fixed
-        self.p_moving = p_moving
+                 p_dirichlet:problem.Problem,
+                 p_neumann:problem.Problem,
+                 max_staggered_iters=20):
+        self.p_dirichlet =  p_dirichlet
+        self.p_neumann = p_neumann
         self.max_staggered_iters = max_staggered_iters
         self.convergence_crit = 1e9
         self.convergence_threshold = 1e-6
         self.iter = 0
         self.relaxation_factor = 0.5
-        self.previous_u_moving = self.p_moving.u.copy();self.previous_u_moving.name="previous_u"
-        self.previous_u_fixed = self.p_fixed.u.copy();self.previous_u_fixed.name="previous_u"
+        self.previous_u_neumann = self.p_neumann.u.copy();self.previous_u_neumann.name="previous_u"
+        self.previous_u_dirichlet = self.p_dirichlet.u.copy();self.previous_u_dirichlet.name="previous_u"
 
     def pre_iterate(self):
         self.iter += 1
-        self.p_fixed.clear_dirchlet_bcs()
-        self.p_moving.clear_dirchlet_bcs()
+        self.p_dirichlet.clear_dirchlet_bcs()
+        self.p_neumann.clear_dirchlet_bcs()
         
     def pre_loop(self):
         self.iter = 0
-        self.writer_moving = io.VTKFile(self.p_moving.domain.comm, f"staggered_iters_{self.p_moving.name}.pvd", "wb")
-        self.writer_fixed = io.VTKFile(self.p_fixed.domain.comm, f"staggered_iters_{self.p_fixed.name}.pvd", "wb")
-        #self.writer_moving.write_function(self.p_moving.u)
-        #self.writer_fixed.write_function(self.p_fixed.u)
+        self.writer_neumann = io.VTKFile(self.p_neumann.domain.comm, f"staggered_iters_{self.p_neumann.name}.pvd", "wb")
+        self.writer_dirichlet = io.VTKFile(self.p_dirichlet.domain.comm, f"staggered_iters_{self.p_dirichlet.name}.pvd", "wb")
+        #self.writer_neumann.write_function(self.p_neumann.u)
+        #self.writer_dirichlet.write_function(self.p_dirichlet.u)
 
     def writepos(self):
-        fs_moving = [self.p_moving.u,
-                     self.p_moving.neumann_flux,
-                     self.p_moving.active_els_func,
-                     self.previous_u_moving
+        fs_dirichlet = [self.p_dirichlet.u,
+                     self.p_dirichlet.neumann_flux,
+                     self.p_dirichlet.active_els_func,
+                     self.previous_u_dirichlet
                      ]
-        fs_fixed = [self.p_fixed.u,
-                    self.p_fixed.dirichlet_gamma,
-                    self.p_fixed.active_els_func,
-                    self.previous_u_fixed]
-        self.writer_moving.write_function(fs_moving,t=self.iter)
-        self.writer_fixed.write_function(fs_fixed,t=self.iter)
+        fs_neumann = [self.p_neumann.u,
+                    self.p_neumann.dirichlet_gamma,
+                    self.p_neumann.active_els_func,
+                    self.previous_u_neumann]
+        self.writer_neumann.write_function(fs_neumann,t=self.iter)
+        self.writer_dirichlet.write_function(fs_dirichlet,t=self.iter)
 
     def post_loop(self):
         pass
 
     def post_iterate(self, verbose=False):
-        (p_moving,p_fixed)=(self.p_moving,self.p_fixed)
-        norm_diff_moving    = p_moving.l2_norm_gamma(p_moving.u-self.previous_u_moving)
-        norm_current_moving = p_moving.l2_norm_gamma(p_moving.u)
-        self.convergence_crit = np.sqrt(norm_diff_moving) / np.sqrt(norm_current_moving)
-        self.previous_u_moving.x.array[:] = self.p_moving.u.x.array[:]
-        self.previous_u_fixed.x.array[:] = self.p_fixed.u.x.array[:]
+        (p_neumann,p_dirichlet)=(self.p_neumann,self.p_dirichlet)
+        norm_diff_neumann    = p_neumann.l2_norm_gamma(p_neumann.u-self.previous_u_neumann)
+        norm_current_neumann = p_neumann.l2_norm_gamma(p_neumann.u)
+        self.convergence_crit = np.sqrt(norm_diff_neumann) / np.sqrt(norm_current_neumann)
+        self.previous_u_neumann.x.array[:] = self.p_neumann.u.x.array[:]
+        self.previous_u_dirichlet.x.array[:] = self.p_dirichlet.u.x.array[:]
         if rank==0:
             if verbose:
                 print(f"Staggered iteration #{self.iter}, relative norm of difference: {self.convergence_crit}")
 
-    def set_dirichlet_interface(self):
-        (p, p_ext) = (self.p_fixed,self.p_moving)
+    def set_dirichlet_interface(self,p:problem.Problem,p_ext:problem.Problem):
         # Get Gamma DOFS right
         dofs_gamma_right = fem.locate_dofs_topological(p.v, p.dim-1, p.gammaFacets.find(1))
         # Interpolate
@@ -93,8 +93,7 @@ class Driver:
         p.add_dirichlet_bc(p.dirichlet_gamma,bdofs=dofs_gamma_right, reset=False)
         p.is_dirichlet_gamma = True
     
-    def set_neumann_interface(self):
-        (p, p_ext) = (self.p_moving,self.p_fixed)
+    def set_neumann_interface(self,p:problem.Problem,p_ext:problem.Problem):
         p_ext.compute_gradient()
         gammaIntegralEntities = p.get_facet_integrations_entities(facet_indices=p.gammaFacets.find(1))
         # Custom measure
@@ -113,21 +112,20 @@ class Driver:
         p.l_ufl += +ufl.inner(n,p.neumann_flux) * v * dS(8)
 
     def iterate(self):
-        # Solve left with Neumann from right
-        self.p_moving.set_forms_domain()
-        self.p_moving.set_forms_boundary()
-        self.set_neumann_interface()
-        self.p_moving.compile_forms()
-        self.p_moving.assemble()
-        self.p_moving.solve()
-
         # Solve right with Dirichlet from left
-        self.p_fixed.set_forms_domain()
-        self.p_fixed.set_forms_boundary()
-        self.set_dirichlet_interface()
-        self.p_fixed.compile_forms()
-        self.p_fixed.assemble()
-        self.p_fixed.solve()
+        self.p_neumann.set_forms_domain()
+        self.p_neumann.set_forms_boundary()
+        self.set_dirichlet_interface(self.p_neumann,self.p_dirichlet)
+        self.p_neumann.compile_forms()
+        self.p_neumann.assemble()
+        self.p_neumann.solve()
+        # Solve left with Neumann from right
+        self.p_dirichlet.set_forms_domain()
+        self.p_dirichlet.set_forms_boundary()
+        self.set_neumann_interface(self.p_dirichlet,self.p_neumann)
+        self.p_dirichlet.compile_forms()
+        self.p_dirichlet.assemble()
+        self.p_dirichlet.solve()
 
 def main():
     point_density = np.round(1/get_el_size()).astype(np.int32)
@@ -141,10 +139,10 @@ def main():
     p_fixed = problem.Problem(domain, params, name=params["case_name"])
     p_moving = build_moving_problem(p_fixed)
 
-    p_fixed.set_initial_condition(params["environment_temperature"])
-    p_moving.set_initial_condition(params["environment_temperature"])
+    p_fixed.set_initial_condition(T_env)
+    p_moving.set_initial_condition(T_env)
 
-    driver = Driver(p_fixed,p_moving)
+    driver = Driver(p_fixed,p_moving,params["max_staggered_iters"])
 
     for _ in range(max_temporal_iters):
         p_fixed.pre_iterate()
@@ -157,7 +155,7 @@ def main():
             driver.iterate()
             driver.post_iterate(verbose=True)
             driver.writepos()
-            if driver.convergence_crit < driver.convergence_threshold:
+            if driver.convergence_crit < driver.convergence_threshold and (driver.iter > 1):
                 break
         driver.post_loop()
         p_moving.writepos()

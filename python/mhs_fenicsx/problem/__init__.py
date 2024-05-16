@@ -76,7 +76,7 @@ class Problem:
         self.isSteady = parameters["isSteady"]
         self.iter     = 0
         self.time     = 0.0
-        self.dt       = fem.Constant(self.domain, parameters["dt"])
+        self.dt       = fem.Constant(self.domain, parameters["dt"]) if not(self.isSteady) else -1
         # Motion
         self.domain_speed     = np.array(parameters["domain_speed"]) if "domain_speed" in parameters else None
         advection_speed = parameters["advection_speed"][:self.domain.topology.dim] if "advection_speed" in parameters else np.zeros(self.domain.topology.dim)
@@ -327,12 +327,14 @@ class Problem:
             facets_integration_ents.append(local_index[0])
         return facets_integration_ents
 
-    def set_forms_domain(self):
+    def set_forms_domain(self,rhs=None):
         dx = ufl.Measure("dx", subdomain_data=self.active_els_tag,
                          metadata=self.quadrature_metadata,
                          )
         (u, v) = (ufl.TrialFunction(self.v),ufl.TestFunction(self.v))
         self.a_ufl = self.k*ufl.dot(ufl.grad(u), ufl.grad(v))*dx(1)
+        if rhs is not None:
+            self.source_rhs.interpolate(rhs)
         self.l_ufl = self.source_rhs*v*dx(1)
         if not(self.isSteady):
             self.a_ufl += (self.rho*self.cp/self.dt)*u*v*dx(1)

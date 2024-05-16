@@ -46,12 +46,12 @@ def build_moving_problem(p_fixed:Problem):
 
 def mesh_around_hs(hs:HeatSource, dim:int):
     center_of_mesh = np.array(hs.x)
-    back_length  = hs.R * 2
-    front_length = hs.R * 2
-    side_length  = hs.R * 2
-    bot_length   = hs.R * 2
-    top_length   = hs.R * 2
-    el_size      = hs.R / 2.0
+    back_length  = hs.R * 3
+    front_length = hs.R * 3
+    side_length  = hs.R * 3
+    bot_length   = hs.R * 3
+    top_length   = hs.R * 3
+    el_size      = hs.R / 4.0
     mesh_bounds  = [
             center_of_mesh[0]-back_length,
             center_of_mesh[1]-side_length,
@@ -60,9 +60,9 @@ def mesh_around_hs(hs:HeatSource, dim:int):
             center_of_mesh[1]+side_length,
             center_of_mesh[2]+top_length,
             ]
-    nx = np.ceil((back_length+front_length)/el_size).astype(int)
-    ny = np.ceil(side_length*2/el_size).astype(int)
-    nz = np.ceil((top_length+bot_length)/el_size).astype(int)
+    nx = np.round((back_length+front_length)/el_size).astype(int)
+    ny = np.round(side_length*2/el_size).astype(int)
+    nz = np.round((top_length+bot_length)/el_size).astype(int)
     if dim==1:
         return dolfinx.mesh.create_interval(MPI.COMM_WORLD,
                                             nx,

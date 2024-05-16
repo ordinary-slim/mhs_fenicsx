@@ -56,7 +56,7 @@ class Driver:
         self.convergence_crit = 1e9
         self.convergence_threshold = 1e-6
         self.iter = 0
-        self.relaxation_factor = 0.1
+        self.relaxation_factor = 0.5
 
     def pre_iterate(self):
         self.previous_u_neumann = self.p_neumann.u.copy();self.previous_u_neumann.name="previous_u"
@@ -136,7 +136,16 @@ class Driver:
                                         p_ext.active_els_tag,
                                         name="flux",
                                         )
-        p.l_ufl += +ufl.inner(n,p.neumann_flux) * v * dS(8)
+
+        ext_conductivity = interpolate_dg_at_facets(p_ext.k,
+                                        p.gammaFacets.find(1),
+                                        p.dg0_bg,
+                                        p_ext.bb_tree,
+                                        p.active_els_tag,
+                                        p_ext.active_els_tag,
+                                        name="ext_conduc",
+                                        )
+        p.l_ufl += +ext_conductivity * ufl.inner(n,p.neumann_flux) * v * dS(8)
 
     def iterate(self):
         self.p_neumann.find_gamma(self.p_neumann.get_active_in_external( self.p_dirichlet ))
@@ -161,7 +170,7 @@ class Driver:
 
 def main():
     # Mesh and problems
-    points_side = 64
+    points_side = 16
     left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.quadrilateral)
     right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.triangle)
     p_left = Problem(left_mesh, params, name="left")

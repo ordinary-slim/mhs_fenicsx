@@ -95,10 +95,12 @@ def interpolate_dg_at_facets(f,facets,targetSpace,bb_tree_ext,
     global_parent_els = np.zeros(total_facet_count, np.int32)
     comm.Allgatherv(global_parent_els_proc,[global_parent_els,facet_counts,facets_offsets,MPI.INT])
     local_parent_els  = domain.topology.index_map(domain.geometry.dim).global_to_local(global_parent_els)
+
+    dim_offset = 1 if (len(interpolated_f.ufl_shape) == 0) else interpolated_f.ufl_shape[0]
     for idx, el in enumerate(local_parent_els):
         if el < 0:
             continue
-        flat_idx    = el*interpolated_f.ufl_shape[0]
+        flat_idx    = el*dim_offset
         interpolated_f.x.array[flat_idx:flat_idx+2] = global_vals[idx]
 
     interpolated_f.vector.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)

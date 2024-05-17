@@ -2,20 +2,16 @@ import dolfinx.mesh
 import numpy as np
 from mpi4py import MPI
 from mhs_fenicsx.problem import Problem, HeatSource
+from mhs_fenicsx.problem.helpers import interpolate
 from mhs_fenicsx.geometry import mesh_containment
 from dolfinx import fem
 import mhs_fenicsx_cpp
 
-def interpolate(func2project,
-                targetSpace,
-                interpolate,):
-    nmmid = dolfinx.fem.create_nonmatching_meshes_interpolation_data(
-                                 targetSpace.mesh,
-                                 targetSpace.element,
-                                 func2project.ufl_function_space().mesh,
-                                 padding=1e-6,)
-    interpolate.interpolate(func2project, nmm_interpolation_data=nmmid)
-    return interpolate
+def interpolate_solution_to_inactive(p:Problem, p_ext:Problem):
+    u_ext = fem.Function(p.v)
+    interpolate(p_ext.u,p.v,u_ext)
+    inactive_nodes = np.where(p.active_nodes_func.x.array==0)[0]
+    p.u.x.array[inactive_nodes] = u_ext.x.array[inactive_nodes]
 
 def get_active_in_external_trees(p_loc:Problem, p_ext:Problem ):
     '''
@@ -46,11 +42,11 @@ def build_moving_problem(p_fixed:Problem):
 
 def mesh_around_hs(hs:HeatSource, dim:int):
     center_of_mesh = np.array(hs.x)
-    back_length  = hs.R * 3
-    front_length = hs.R * 3
-    side_length  = hs.R * 3
-    bot_length   = hs.R * 3
-    top_length   = hs.R * 3
+    back_length  = hs.R * 4
+    front_length = hs.R * 2
+    side_length  = hs.R * 2
+    bot_length   = hs.R * 2
+    top_length   = hs.R * 2
     el_size      = hs.R / 4.0
     mesh_bounds  = [
             center_of_mesh[0]-back_length,

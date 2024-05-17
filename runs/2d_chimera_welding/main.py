@@ -1,10 +1,11 @@
 from mhs_fenicsx import problem, geometry
+from mhs_fenicsx.problem.helpers import interpolate, interpolate_dg_at_facets
 import numpy as np
 from mpi4py import MPI
 from dolfinx import mesh, fem, io
 import ufl
 import yaml
-from helpers import mesh_around_hs, build_moving_problem, get_active_in_external_trees, interpolate
+from helpers import interpolate_solution_to_inactive, mesh_around_hs, build_moving_problem, get_active_in_external_trees
 from line_profiler import LineProfiler
 from mhs_fenicsx.geometry import mesh_containment
 
@@ -24,7 +25,7 @@ def get_dt(adim_dt):
     speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
     return adim_dt * (radius / speed)
 
-box = [-8*radius,-4*radius,+8*radius,+4*radius]
+box = [-10*radius,-4*radius,+10*radius,+4*radius]
 params["dt"] = get_dt(params["adim_dt"])
 params["heat_source"]["initial_position"] = [-4*radius, 0.0, 0.0]
 
@@ -101,15 +102,24 @@ class Driver:
             (8,np.asarray(gammaIntegralEntities, dtype=np.int32))])
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
-        p.neumann_flux = problem.interpolate_dg_at_facets(p_ext.grad_u,
-                                                          p.gammaFacets.find(1),
-                                                          p.dg0_vec,
-                                                          p_ext.bb_tree,
-                                                          p.active_els_tag,
-                                                          p_ext.active_els_tag,
-                                                          name="flux",
-                                                          )
-        p.l_ufl += +ufl.inner(n,p.neumann_flux) * v * dS(8)
+        p.neumann_flux = interpolate_dg_at_facets(p_ext.grad_u,
+                                                  p.gammaFacets.find(1),
+                                                  p.dg0_vec,
+                                                  p_ext.bb_tree,
+                                                  p.active_els_tag,
+                                                  p_ext.active_els_tag,
+                                                  name="flux",
+                                                  )
+
+        ext_conductivity = interpolate_dg_at_facets(p_ext.k,
+                                                    p.gammaFacets.find(1),
+                                                    p.dg0_bg,
+                                                    p_ext.bb_tree,
+                                                    p.active_els_tag,
+                                                    p_ext.active_els_tag,
+                                                    name="ext_conduc",
+                                                    )
+        p.l_ufl += +ext_conductivity * ufl.inner(n,p.neumann_flux) * v * dS(8)
 
     def iterate(self):
         # Solve right with Dirichlet from left
@@ -158,6 +168,8 @@ def main():
             if driver.convergence_crit < driver.convergence_threshold and (driver.iter > 1):
                 break
         driver.post_loop()
+        #TODO: Interpolate solution at inactive nodes
+        interpolate_solution_to_inactive(p_fixed,p_moving)
         p_moving.writepos()
         p_fixed.writepos()
 

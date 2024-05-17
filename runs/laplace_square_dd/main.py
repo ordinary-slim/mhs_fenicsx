@@ -154,6 +154,12 @@ class Driver:
         self.p_neumann.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
         self.p_dirichlet.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
 
+        # Solve right with Dirichlet from left
+        self.set_dirichlet_interface()
+        self.p_dirichlet.set_forms_domain(rhs)
+        self.p_dirichlet.compile_forms()
+        self.p_dirichlet.assemble()
+        self.p_dirichlet.solve()
         # Solve left with Neumann from right
         self.p_neumann.set_forms_domain(rhs)
         self.set_neumann_interface()
@@ -161,16 +167,10 @@ class Driver:
         self.p_neumann.assemble()
         self.p_neumann.solve()
 
-        # Solve right with Dirichlet from left
-        self.set_dirichlet_interface()
-        self.p_dirichlet.set_forms_domain(rhs)
-        self.p_dirichlet.compile_forms()
-        self.p_dirichlet.assemble()
-        self.p_dirichlet.solve()
 
 def main():
     # Mesh and problems
-    points_side = 16
+    points_side = 32
     left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.quadrilateral)
     right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.triangle)
     p_left = Problem(left_mesh, params, name="left")
@@ -189,7 +189,7 @@ def main():
         driver.iterate()
         driver.post_iterate(verbose=True)
         driver.writepos()
-        if driver.convergence_crit < driver.convergence_threshold:
+        if driver.convergence_crit < driver.convergence_threshold and driver.iter > 10:
             break
 
 if __name__=="__main__":

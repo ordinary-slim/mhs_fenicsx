@@ -303,29 +303,9 @@ class Problem:
         self.dirichlet_bcs.append(fem.dirichletbc(u_bc, bdofs))
 
     def get_facet_integrations_entities(self, facet_indices=None):
-        facets_integration_ents = []
         if facet_indices is None:
             facet_indices = self.gammaFacets.find(1)
-        f_to_c = self.domain.topology.connectivity(self.dim-1,self.dim)
-        c_to_f = self.domain.topology.connectivity(self.dim,self.dim-1)
-        for ifacet in facet_indices:
-            if ifacet >= self.facet_map.size_local:
-                continue
-            # Find cells connected to facet
-            cells = f_to_c.links(ifacet)
-            # Get correct cell from activation
-            active_cells = cells[np.flatnonzero(self.active_els_tag.values[cells])]
-
-            assert len(active_cells) == 1
-            # Get local index of ifacet
-            local_facets = c_to_f.links(active_cells[0])
-            local_index = np.flatnonzero(local_facets == ifacet)
-            assert len(local_index) == 1
-
-            # Append integration entities
-            facets_integration_ents.append(active_cells[0])
-            facets_integration_ents.append(local_index[0])
-        return facets_integration_ents
+        return get_facet_integration_entities(self.domain,facet_indices,self.active_els_func)
 
     def set_forms_domain(self,rhs=None):
         dx = ufl.Measure("dx", subdomain_data=self.active_els_tag,
@@ -409,6 +389,9 @@ class Problem:
         with self.u.vector.localForm() as usub_vector_local, \
                 multiphenicsx.fem.petsc.VecSubVectorWrapper(self.x, self.v.dofmap, self.restriction) as x_wrapper:
                     usub_vector_local[:] = x_wrapper
+        self._destroy()
+
+    def _destroy(self):
         self.x.destroy()
         self.A.destroy()
         self.L.destroy()

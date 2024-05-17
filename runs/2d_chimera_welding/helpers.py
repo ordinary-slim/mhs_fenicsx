@@ -31,8 +31,8 @@ def get_active_in_external_trees(p_loc:Problem, p_ext:Problem ):
     loc_active_dofs.x.scatter_forward()
     return loc_active_dofs
 
-def build_moving_problem(p_fixed:Problem):
-    moving_domain = mesh_around_hs(p_fixed.source,p_fixed.domain.topology.dim)
+def build_moving_problem(p_fixed:Problem,els_per_radius=2):
+    moving_domain = mesh_around_hs(p_fixed.source,p_fixed.domain.topology.dim,els_per_radius)
     params = p_fixed.input_parameters.copy()
     if "path" in params:
         params.pop("path")
@@ -40,14 +40,14 @@ def build_moving_problem(p_fixed:Problem):
     params["advection_speed"] = -p_fixed.source.speed
     return Problem(moving_domain, params,name=p_fixed.name+"_moving")
 
-def mesh_around_hs(hs:HeatSource, dim:int):
+def mesh_around_hs(hs:HeatSource, dim:int,els_per_radius:int):
     center_of_mesh = np.array(hs.x)
     back_length  = hs.R * 4
     front_length = hs.R * 2
     side_length  = hs.R * 2
     bot_length   = hs.R * 2
     top_length   = hs.R * 2
-    el_size      = hs.R / 4.0
+    el_size      = hs.R / float(els_per_radius)
     mesh_bounds  = [
             center_of_mesh[0]-back_length,
             center_of_mesh[1]-side_length,

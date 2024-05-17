@@ -36,6 +36,12 @@ def l2_squared(f : dolfinx.fem.Function,active_els_tag):
 def locate_active_boundary(domain, active_els_func):
     return mhs_fenicsx_cpp.locate_active_boundary(domain._cpp_object, active_els_func._cpp_object)
 
+def get_facet_integration_entities(domain,facet_indices,active_els_func):
+    return mhs_fenicsx_cpp.get_facet_integration_entities(domain._cpp_object,
+                                                          facet_indices,
+                                                          active_els_func._cpp_object,
+                                                          )
+
 def get_mask(size, indices, dtype=np.int32, true_val=1):
     true_val = dtype(true_val)
     mask = np.zeros(size, dtype=dtype)

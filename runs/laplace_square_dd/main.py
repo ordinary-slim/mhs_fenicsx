@@ -62,8 +62,6 @@ class Driver:
         self.previous_u_neumann = self.p_neumann.u.copy();self.previous_u_neumann.name="previous_u"
         self.previous_u_dirichlet = self.p_dirichlet.u.copy();self.previous_u_dirichlet.name="previous_u"
         self.iter += 1
-        self.p_dirichlet.clear_dirchlet_bcs()
-        self.p_neumann.clear_dirchlet_bcs()
         
         for p in [self.p_dirichlet, self.p_neumann]:
             p.time = self.iter
@@ -72,6 +70,23 @@ class Driver:
         self.iter = 0
         self.writer_neumann = io.VTKFile(self.p_neumann.domain.comm, f"staggered_iters_{self.p_neumann.name}.pvd", "wb")
         self.writer_dirichlet = io.VTKFile(self.p_dirichlet.domain.comm, f"staggered_iters_{self.p_dirichlet.name}.pvd", "wb")
+        self.p_dirichlet.clear_dirchlet_bcs()
+        self.p_neumann.clear_dirchlet_bcs()
+        # Find interface
+        self.p_neumann.find_gamma(self.p_neumann.get_active_in_external( self.p_dirichlet ))
+        self.p_dirichlet.find_gamma(self.p_dirichlet.get_active_in_external( self.p_neumann ))
+        # Set outside Dirichlet
+        self.p_neumann.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
+        self.p_dirichlet.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
+        # Forms and allocation
+        self.set_dirichlet_interface()
+        self.p_dirichlet.set_forms_domain(rhs)
+        self.p_dirichlet.compile_forms()
+        self.p_dirichlet.pre_assemble()
+        self.p_neumann.set_forms_domain(rhs)
+        self.set_neumann_interface()
+        self.p_neumann.compile_forms()
+        self.p_neumann.pre_assemble()
 
     def writepos(self):
         exact_dirichlet = fem.Function(self.p_dirichlet.v,name="exact")
@@ -111,13 +126,17 @@ class Driver:
         (p, p_ext) = (self.p_dirichlet,self.p_neumann)
         # Get Gamma DOFS right
         dofs_gamma_right = fem.locate_dofs_topological(p.v, p.dim-1, p.gammaFacets.find(1))
+        self.update_dirichlet_interface()
+        # Set Gamma dirichlet
+        p.add_dirichlet_bc(p.dirichlet_gamma,bdofs=dofs_gamma_right, reset=False)
+        p.is_dirichlet_gamma = True
+
+    def update_dirichlet_interface(self):
+        (p, p_ext) = (self.p_dirichlet,self.p_neumann)
         # Interpolate
         interpolate(p_ext.u, p.v,p.dirichlet_gamma)
         p.dirichlet_gamma.x.array[:] = self.relaxation_factor*p.dirichlet_gamma.x.array[:] + \
                                  (1-self.relaxation_factor)*p.u.x.array[:]
-        # Set Gamma dirichlet
-        p.add_dirichlet_bc(p.dirichlet_gamma,bdofs=dofs_gamma_right, reset=False)
-        p.is_dirichlet_gamma = True
     
     def set_neumann_interface(self):
         (p, p_ext) = (self.p_neumann,self.p_dirichlet)
@@ -128,6 +147,11 @@ class Driver:
             (8,np.asarray(gammaIntegralEntities, dtype=np.int32))])
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
+        self.update_neumann_interface()
+        p.l_ufl += +self.ext_conductivity * ufl.inner(n,p.neumann_flux) * v * dS(8)
+
+    def update_neumann_interface(self):
+        (p, p_ext) = (self.p_neumann,self.p_dirichlet)
         p.neumann_flux = interpolate_dg_at_facets(p_ext.grad_u,
                                         p.gammaFacets.find(1),
                                         p.dg0_vec,
@@ -137,7 +161,7 @@ class Driver:
                                         name="flux",
                                         )
 
-        ext_conductivity = interpolate_dg_at_facets(p_ext.k,
+        self.ext_conductivity = interpolate_dg_at_facets(p_ext.k,
                                         p.gammaFacets.find(1),
                                         p.dg0_bg,
                                         p_ext.bb_tree,
@@ -145,15 +169,8 @@ class Driver:
                                         p_ext.active_els_tag,
                                         name="ext_conduc",
                                         )
-        p.l_ufl += +ext_conductivity * ufl.inner(n,p.neumann_flux) * v * dS(8)
 
     def iterate(self):
-        self.p_neumann.find_gamma(self.p_neumann.get_active_in_external( self.p_dirichlet ))
-        self.p_dirichlet.find_gamma(self.p_dirichlet.get_active_in_external( self.p_neumann ))
-
-        self.p_neumann.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
-        self.p_dirichlet.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
-
         # Solve right with Dirichlet from left
         self.set_dirichlet_interface()
         self.p_dirichlet.set_forms_domain(rhs)
@@ -170,7 +187,7 @@ class Driver:
 
 def main():
     # Mesh and problems
-    points_side = 32
+    points_side = 128
     left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.quadrilateral)
     right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.triangle)
     p_left = Problem(left_mesh, params, name="left")
@@ -193,7 +210,7 @@ def main():
             break
 
 if __name__=="__main__":
-    profiling = False
+    profiling = True
     if profiling:
         lp = LineProfiler()
         lp.add_module(Driver)
@@ -203,6 +220,8 @@ if __name__=="__main__":
         lp.add_function(interpolate_dg_at_facets)
         lp_wrapper = lp(main)
         lp_wrapper()
-        lp.print_stats()
+        if rank==0:
+            with open("profiling.txt", 'w') as pf:
+                lp.print_stats(stream=pf)
     else:
         main()

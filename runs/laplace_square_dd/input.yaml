@@ -9,14 +9,14 @@ heat_source : {
 }
 # PROPS
 material : {
-  density : 1000,
-  conductivity : 0.001,
+  density : 1,
+  conductivity : 1,
   specific_heat : 1,
 }
 #convection_coeff : 1.0E-00
 environment_temperature : 25
 supg: 1
-advection_speed : [1000.0, 0.0, 0]
+advection_speed : [0.0, 0.0, 0]
 # END_ESSENTIAL
 case_name: "fruit_box"
 max_iter: 1

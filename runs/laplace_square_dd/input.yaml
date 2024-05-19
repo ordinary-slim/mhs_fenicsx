@@ -20,4 +20,4 @@ advection_speed : [0.0, 0.0, 0]
 # END_ESSENTIAL
 case_name: "fruit_box"
 max_iter: 1
-max_staggered_iters: 100
+max_staggered_iters: 20

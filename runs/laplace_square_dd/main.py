@@ -1,4 +1,5 @@
 from dolfinx import fem, mesh, io
+from mhs_fenicsx.problem.helpers import indices_to_function
 import ufl
 import numpy as np
 from mpi4py import MPI
@@ -56,7 +57,7 @@ class Driver:
         self.convergence_crit = 1e9
         self.convergence_threshold = 1e-6
         self.iter = 0
-        self.relaxation_factor = 0.5
+        self.relaxation_factor = 1
 
     def pre_iterate(self):
         self.previous_u_neumann = self.p_neumann.u.copy();self.previous_u_neumann.name="previous_u"
@@ -67,25 +68,37 @@ class Driver:
             p.time = self.iter
 
     def pre_loop(self):
+        (pd,pn) = (self.p_dirichlet,self.p_neumann)
         self.iter = 0
-        self.writer_neumann = io.VTKFile(self.p_neumann.domain.comm, f"staggered_iters_{self.p_neumann.name}.pvd", "wb")
-        self.writer_dirichlet = io.VTKFile(self.p_dirichlet.domain.comm, f"staggered_iters_{self.p_dirichlet.name}.pvd", "wb")
-        self.p_dirichlet.clear_dirchlet_bcs()
-        self.p_neumann.clear_dirchlet_bcs()
+        self.writer_neumann = io.VTKFile(pn.domain.comm, f"staggered_iters_{pn.name}.pvd", "wb")
+        self.writer_dirichlet = io.VTKFile(pd.domain.comm, f"staggered_iters_{pd.name}.pvd", "wb")
+        pd.clear_dirchlet_bcs()
+        pn.clear_dirchlet_bcs()
+        # Interpolation data
+        self.nmmid_d2n = fem.create_nonmatching_meshes_interpolation_data(
+                                                     pn.domain,
+                                                     pn.v.element,
+                                                     pd.domain,
+                                                     padding=1e-6,)
+        self.nmmid_n2d = fem.create_nonmatching_meshes_interpolation_data(
+                                                     pd.domain,
+                                                     pd.v.element,
+                                                     pn.domain,
+                                                     padding=1e-6,)
         # Find interface
-        self.p_neumann.find_gamma(self.p_neumann.get_active_in_external( self.p_dirichlet ))
-        self.p_dirichlet.find_gamma(self.p_dirichlet.get_active_in_external( self.p_neumann ))
+        pn.find_gamma(pn.get_active_in_external( pd ))
+        pd.find_gamma(pd.get_active_in_external( pn ))
         # Set outside Dirichlet
-        self.p_neumann.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
-        self.p_dirichlet.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
+        pn.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
+        pd.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
         # Forms and allocation
         self.set_dirichlet_interface()
-        self.p_dirichlet.set_forms_domain(rhs)
-        self.p_dirichlet.compile_forms()
-        self.p_dirichlet.pre_assemble()
-        self.p_neumann.set_forms_domain(rhs)
+        pd.set_forms_domain(rhs)
+        pd.compile_forms()
+        pd.pre_assemble()
+        pn.set_forms_domain(rhs)
         self.set_neumann_interface()
-        self.p_neumann.compile_forms()
+        pn.compile_forms()
         self.p_neumann.pre_assemble()
 
     def writepos(self):
@@ -134,7 +147,13 @@ class Driver:
     def update_dirichlet_interface(self):
         (p, p_ext) = (self.p_dirichlet,self.p_neumann)
         # Interpolate
-        interpolate(p_ext.u, p.v,p.dirichlet_gamma)
+        gamma_els = mesh.compute_incident_entities(p.domain.topology,
+                                                   p.gammaFacets.find(1),
+                                                   p.domain.topology.dim-1,
+                                                   p.domain.topology.dim,)
+        p.dirichlet_gamma.interpolate(p_ext.u,
+                                      #cells=gamma_els,
+                                      nmm_interpolation_data=self.nmmid_n2d)
         p.dirichlet_gamma.x.array[:] = self.relaxation_factor*p.dirichlet_gamma.x.array[:] + \
                                  (1-self.relaxation_factor)*p.u.x.array[:]
     
@@ -187,7 +206,7 @@ class Driver:
 
 def main():
     # Mesh and problems
-    points_side = 128
+    points_side = 64
     left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.quadrilateral)
     right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.triangle)
     p_left = Problem(left_mesh, params, name="left")

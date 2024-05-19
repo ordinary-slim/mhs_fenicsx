@@ -4,6 +4,7 @@ from mpi4py import MPI
 import dolfinx.fem.petsc
 import basix.ufl
 from line_profiler import LineProfiler
+import numpy as np
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -19,13 +20,16 @@ def interpolate(sending_func,
     Interpolate sending_func to receiving_func,
     each comming from separate meshes
     '''
-    targetSpace = receiving_func.function_space
-    nmmid = dolfinx.fem.create_nonmatching_meshes_interpolation_data(
-                                 targetSpace.mesh,
-                                 targetSpace.element,
-                                 sending_func.ufl_function_space().mesh,
+    topology = receiving_func.function_space.mesh.topology
+    cmap = topology.index_map(topology.dim)
+    num_cells = cmap.size_local + cmap.num_ghosts
+    cells = np.arange(num_cells,dtype=np.int32)
+    nmmid = fem.create_interpolation_data(
+                                 receiving_func.function_space,
+                                 sending_func.function_space,
+                                 cells,
                                  padding=0,)
-    receiving_func.interpolate(sending_func, nmm_interpolation_data=nmmid)
+    receiving_func.interpolate_nonmatching(sending_func, cells, interpolation_data=nmmid)
     return receiving_func
 
 def solve(domain,u):
@@ -69,7 +73,7 @@ def main():
     # Interpolate from mesh1 to mesh2
     interpolate(u1,u2)
     # Write post
-    #write_post(mesh1,mesh2,u1,u2)
+    write_post(mesh1,mesh2,u1,u2)
 
 if __name__=="__main__":
     profiling = True
@@ -82,4 +86,6 @@ if __name__=="__main__":
         lp.add_function(fem.Function.interpolate)
         lp_wrapper = lp(main)
         lp_wrapper()
-        lp.print_stats()
+        if rank==0:
+            with open("profiling.txt", 'w') as pf:
+                lp.print_stats(stream=pf)

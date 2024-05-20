@@ -23,13 +23,17 @@ def interpolate(sending_func,
     topology = receiving_func.function_space.mesh.topology
     cmap = topology.index_map(topology.dim)
     num_cells = cmap.size_local + cmap.num_ghosts
-    cells = np.arange(num_cells,dtype=np.int32)
+    print(num_cells)
+    cells = np.array([128,],dtype=np.int32)
     nmmid = fem.create_interpolation_data(
                                  receiving_func.function_space,
                                  sending_func.function_space,
-                                 cells,
+                                 np.arange(num_cells),
                                  padding=0,)
     receiving_func.interpolate_nonmatching(sending_func, cells, interpolation_data=nmmid)
+    import pdb
+    pdb.set_trace()
+    print(f"Max = {max(receiving_func.x.array)}")
     return receiving_func
 
 def solve(domain,u):
@@ -62,7 +66,7 @@ def write_post(mesh1,mesh2,u1,u2):
 
 def main():
     # Mesh and problems
-    points_side = 512
+    points_side = 16
     mesh1 = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.triangle)
     mesh2 = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.quadrilateral)
 

@@ -57,7 +57,7 @@ class Driver:
         self.convergence_crit = 1e9
         self.convergence_threshold = 1e-6
         self.iter = 0
-        self.relaxation_factor = 1
+        self.relaxation_factor = 0.5
 
     def pre_iterate(self):
         self.previous_u_neumann = self.p_neumann.u.copy();self.previous_u_neumann.name="previous_u"
@@ -70,24 +70,32 @@ class Driver:
     def pre_loop(self):
         (pd,pn) = (self.p_dirichlet,self.p_neumann)
         self.iter = 0
-        self.writer_neumann = io.VTKFile(pn.domain.comm, f"staggered_iters_{pn.name}.pvd", "wb")
-        self.writer_dirichlet = io.VTKFile(pd.domain.comm, f"staggered_iters_{pd.name}.pvd", "wb")
+        self.writer_neumann = io.VTKFile(pn.domain.comm, f"staggered_out/staggered_iters_{pn.name}.pvd", "wb")
+        self.writer_dirichlet = io.VTKFile(pd.domain.comm, f"staggered_out/staggered_iters_{pd.name}.pvd", "wb")
         pd.clear_dirchlet_bcs()
         pn.clear_dirchlet_bcs()
-        # Interpolation data
-        self.nmmid_d2n = fem.create_nonmatching_meshes_interpolation_data(
-                                                     pn.domain,
-                                                     pn.v.element,
-                                                     pd.domain,
-                                                     padding=1e-6,)
-        self.nmmid_n2d = fem.create_nonmatching_meshes_interpolation_data(
-                                                     pd.domain,
-                                                     pd.v.element,
-                                                     pn.domain,
-                                                     padding=1e-6,)
         # Find interface
         pn.find_gamma(pn.get_active_in_external( pd ))
         pd.find_gamma(pd.get_active_in_external( pn ))
+        # Interpolation data
+        self.gamma_cells_d = mesh.compute_incident_entities(pd.domain.topology,
+                                                            pd.gammaFacets.find(1),
+                                                            pd.dim-1,
+                                                            pd.dim)
+        self.gamma_cells_n = mesh.compute_incident_entities(pn.domain.topology,
+                                                            pn.gammaFacets.find(1),
+                                                            pn.dim-1,
+                                                            pn.dim)
+        self.iid_d2n = fem.create_interpolation_data(
+                                             pn.v,
+                                             pd.v,
+                                             self.gamma_cells_n,
+                                             padding=1e-6,)
+        self.iid_n2d = fem.create_interpolation_data(
+                                             pd.v,
+                                             pn.v,
+                                             self.gamma_cells_d,
+                                             padding=1e-6,)
         # Set outside Dirichlet
         pn.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
         pd.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
@@ -147,13 +155,9 @@ class Driver:
     def update_dirichlet_interface(self):
         (p, p_ext) = (self.p_dirichlet,self.p_neumann)
         # Interpolate
-        gamma_els = mesh.compute_incident_entities(p.domain.topology,
-                                                   p.gammaFacets.find(1),
-                                                   p.domain.topology.dim-1,
-                                                   p.domain.topology.dim,)
-        p.dirichlet_gamma.interpolate(p_ext.u,
-                                      #cells=gamma_els,
-                                      nmm_interpolation_data=self.nmmid_n2d)
+        p.dirichlet_gamma.interpolate_nonmatching(p_ext.u,
+                                                  cells=self.gamma_cells_d,
+                                                  interpolation_data=self.iid_n2d)
         p.dirichlet_gamma.x.array[:] = self.relaxation_factor*p.dirichlet_gamma.x.array[:] + \
                                  (1-self.relaxation_factor)*p.u.x.array[:]
     
@@ -171,6 +175,7 @@ class Driver:
 
     def update_neumann_interface(self):
         (p, p_ext) = (self.p_neumann,self.p_dirichlet)
+        # Update functions
         p.neumann_flux = interpolate_dg_at_facets(p_ext.grad_u,
                                         p.gammaFacets.find(1),
                                         p.dg0_vec,
@@ -203,10 +208,9 @@ class Driver:
         self.p_neumann.assemble()
         self.p_neumann.solve()
 
-
 def main():
     # Mesh and problems
-    points_side = 64
+    points_side = 32
     left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.quadrilateral)
     right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.triangle)
     p_left = Problem(left_mesh, params, name="left")
@@ -225,7 +229,7 @@ def main():
         driver.iterate()
         driver.post_iterate(verbose=True)
         driver.writepos()
-        if driver.convergence_crit < driver.convergence_threshold and driver.iter > 10:
+        if driver.convergence_crit < driver.convergence_threshold:
             break
 
 if __name__=="__main__":

@@ -180,7 +180,7 @@ if __name__=="__main__":
         lp = LineProfiler()
         lp.add_module(problem)
         lp.add_function(build_moving_problem)
-        lp.add_class(Driver)
+        #lp.add_class(Driver)
         lp_wrapper = lp(main)
         lp_wrapper()
         with open("profiling.txt", 'w') as pf:

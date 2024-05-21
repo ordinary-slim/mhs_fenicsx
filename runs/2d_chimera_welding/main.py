@@ -8,6 +8,7 @@ import yaml
 from helpers import interpolate_solution_to_inactive, mesh_around_hs, build_moving_problem, get_active_in_external_trees
 from line_profiler import LineProfiler
 from mhs_fenicsx.geometry import mesh_containment
+from driver2 import Driver
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -30,6 +31,7 @@ box = [-10*radius,-4*radius,+10*radius,+4*radius]
 params["dt"] = get_dt(params["adim_dt"])
 params["heat_source"]["initial_position"] = [-4*radius, 0.0, 0.0]
 
+'''
 class Driver:
     def __init__(self,
                  p_dirichlet:problem.Problem,
@@ -180,6 +182,7 @@ class Driver:
         self.p_neumann.compile_forms()
         self.p_neumann.assemble()
         self.p_neumann.solve()
+'''
 
 def main():
     point_density = np.round(1/get_el_size(els_per_radius)).astype(np.int32)
@@ -196,7 +199,8 @@ def main():
     p_fixed.set_initial_condition(T_env)
     p_moving.set_initial_condition(T_env)
 
-    driver = Driver(p_moving,p_fixed,params["max_staggered_iters"])
+    driver = Driver(p_moving,p_fixed,params["max_staggered_iters"],
+                    relaxation_factor=0.5)
 
     for _ in range(max_temporal_iters):
         p_fixed.pre_iterate()

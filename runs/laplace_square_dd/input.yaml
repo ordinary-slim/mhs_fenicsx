@@ -16,7 +16,7 @@ material : {
 #convection_coeff : 1.0E-00
 environment_temperature : 25
 supg: 1
-advection_speed : [0.0, 0.0, 0]
+advection_speed : [10.0, 0.0, 0]
 # END_ESSENTIAL
 case_name: "fruit_box"
 max_iter: 1

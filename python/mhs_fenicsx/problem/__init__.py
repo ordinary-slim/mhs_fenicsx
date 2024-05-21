@@ -70,7 +70,8 @@ class Problem:
             self.source = Gaussian2D(parameters)
         else:
             self.source = Gaussian3D(parameters)
-        self.source_rhs   = fem.Function(self.v, name="source")   # Solution
+        self.rhs = None # For python functions
+        self.source_rhs   = fem.Function(self.v, name="source")   # For moving hs
 
         # Time
         self.isSteady = parameters["isSteady"]
@@ -104,6 +105,9 @@ class Problem:
         except TypeError:
             self.u.interpolate(expression)
         self.u_prev.x.array[:] = self.u.x.array[:]
+
+    def set_rhs( self, rhs ):
+        self.rhs = rhs
 
     def set_bb_trees(self):
         self.bb_tree = geometry.bb_tree(self.domain,self.dim,np.arange(self.num_cells,dtype=np.int32),padding=1e-7)
@@ -310,14 +314,14 @@ class Problem:
             facet_indices = self.gammaFacets.find(1)
         return get_facet_integration_entities(self.domain,facet_indices,self.active_els_func)
 
-    def set_forms_domain(self,rhs=None):
+    def set_forms_domain(self):
         dx = ufl.Measure("dx", subdomain_data=self.active_els_tag,
                          metadata=self.quadrature_metadata,
                          )
         (u, v) = (ufl.TrialFunction(self.v),ufl.TestFunction(self.v))
         self.a_ufl = self.k*ufl.dot(ufl.grad(u), ufl.grad(v))*dx(1)
-        if rhs is not None:
-            self.source_rhs.interpolate(rhs)
+        if self.rhs is not None:
+            self.source_rhs.interpolate(self.rhs)
         self.l_ufl = self.source_rhs*v*dx(1)
         if not(self.isSteady):
             self.a_ufl += (self.rho*self.cp/self.dt)*u*v*dx(1)

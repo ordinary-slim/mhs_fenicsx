@@ -210,7 +210,7 @@ class Driver:
 
 def main():
     # Mesh and problems
-    points_side = 32
+    points_side = params["points_side"]
     left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.quadrilateral)
     right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.triangle)
     p_left = Problem(left_mesh, params, name="left")

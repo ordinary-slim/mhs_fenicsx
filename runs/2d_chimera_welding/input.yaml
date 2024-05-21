@@ -9,26 +9,16 @@ heat_source : {
 }
 adim_dt: 1
 # PROPS
-#material : {
-#density : 1,
-#conductivity : 0.000001,
-#specific_heat : 1,
-#}
 material_metal : {
   density : 4.3E-06, # kg / mm3
   conductivity : 10.0E-03, # W / mm / K
   specific_heat : 700, # J / kg / K
 }
-#material_metal : {
-#density : 1.0E-06,
-#conductivity : 1,
-#specific_heat : 1,
-#}
 #convection_coeff : 1.0E-00
 environment_temperature : 25
 # END_ESSENTIAL
 case_name: "fruit_box"
 max_iter: 1
 supg: 1
-max_staggered_iters: 40
+max_staggered_iters: 20
 els_per_radius: 16

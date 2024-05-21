@@ -42,29 +42,59 @@ class Driver:
         self.convergence_threshold = 1e-6
         self.iter = 0
         self.relaxation_factor = 0.5
-        self.previous_u_neumann = self.p_neumann.u.copy();self.previous_u_neumann.name="previous_u"
-        self.previous_u_dirichlet = self.p_dirichlet.u.copy();self.previous_u_dirichlet.name="previous_u"
 
     def pre_iterate(self):
+        self.previous_u_neumann = self.p_neumann.u.copy();self.previous_u_neumann.name="previous_u"
+        self.previous_u_dirichlet = self.p_dirichlet.u.copy();self.previous_u_dirichlet.name="previous_u"
         self.iter += 1
-        self.p_dirichlet.clear_dirchlet_bcs()
-        self.p_neumann.clear_dirchlet_bcs()
         
     def pre_loop(self):
+        (pd,pn) = (self.p_dirichlet,self.p_neumann)
         self.iter = 0
-        self.writer_neumann = io.VTKFile(self.p_neumann.domain.comm, f"staggered_iters_{self.p_neumann.name}.pvd", "wb")
-        self.writer_dirichlet = io.VTKFile(self.p_dirichlet.domain.comm, f"staggered_iters_{self.p_dirichlet.name}.pvd", "wb")
-        #self.writer_neumann.write_function(self.p_neumann.u)
-        #self.writer_dirichlet.write_function(self.p_dirichlet.u)
+        self.writer_neumann = io.VTKFile(pn.domain.comm, f"staggered_out/staggered_iters_{pn.name}.pvd", "wb")
+        self.writer_dirichlet = io.VTKFile(pd.domain.comm, f"staggered_out/staggered_iters_{pd.name}.pvd", "wb")
+        pd.clear_dirchlet_bcs()
+        pn.clear_dirchlet_bcs()
+        # Find interface
+        pn.find_gamma(pn.get_active_in_external( pd ))
+        pd.find_gamma(pd.get_active_in_external( pn ))
+        # Interpolation data
+        self.gamma_cells_d = mesh.compute_incident_entities(pd.domain.topology,
+                                                            pd.gammaFacets.find(1),
+                                                            pd.dim-1,
+                                                            pd.dim)
+        self.gamma_cells_n = mesh.compute_incident_entities(pn.domain.topology,
+                                                            pn.gammaFacets.find(1),
+                                                            pn.dim-1,
+                                                            pn.dim)
+        self.iid_d2n = fem.create_interpolation_data(
+                                             pn.v,
+                                             pd.v,
+                                             self.gamma_cells_n,
+                                             padding=1e-6,)
+        self.iid_n2d = fem.create_interpolation_data(
+                                             pd.v,
+                                             pn.v,
+                                             self.gamma_cells_d,
+                                             padding=1e-6,)
+        # Forms and allocation
+        self.set_dirichlet_interface()
+        pd.set_forms_domain()
+        pd.compile_forms()
+        pd.pre_assemble()
+        pn.set_forms_domain()
+        self.set_neumann_interface()
+        pn.compile_forms()
+        self.p_neumann.pre_assemble()
 
     def writepos(self):
         fs_dirichlet = [self.p_dirichlet.u,
-                     self.p_dirichlet.neumann_flux,
+                     self.p_dirichlet.dirichlet_gamma,
                      self.p_dirichlet.active_els_func,
                      self.previous_u_dirichlet
                      ]
         fs_neumann = [self.p_neumann.u,
-                    self.p_neumann.dirichlet_gamma,
+                    self.p_neumann.neumann_flux,
                     self.p_neumann.active_els_func,
                     self.previous_u_neumann]
         self.writer_neumann.write_function(fs_neumann,t=self.iter)
@@ -84,59 +114,72 @@ class Driver:
             if verbose:
                 print(f"Staggered iteration #{self.iter}, relative norm of difference: {self.convergence_crit}")
 
-    def set_dirichlet_interface(self,p:problem.Problem,p_ext:problem.Problem):
+    def set_dirichlet_interface(self):
+        pd= self.p_dirichlet
         # Get Gamma DOFS right
-        dofs_gamma_right = fem.locate_dofs_topological(p.v, p.dim-1, p.gammaFacets.find(1))
+        dofs_gamma_right = fem.locate_dofs_topological(pd.v, pd.dim-1, pd.gammaFacets.find(1))
+        self.update_dirichlet_interface()
+        # Set Gamma dirichlet
+        pd.add_dirichlet_bc(pd.dirichlet_gamma,bdofs=dofs_gamma_right, reset=False)
+        pd.is_dirichlet_gamma = True
+
+    def update_dirichlet_interface(self):
+        (p, p_ext) = (self.p_dirichlet,self.p_neumann)
         # Interpolate
-        interpolate(p_ext.u, p.v,p.dirichlet_gamma)
+        p.dirichlet_gamma.interpolate_nonmatching(p_ext.u,
+                                                  cells=self.gamma_cells_d,
+                                                  interpolation_data=self.iid_n2d)
         p.dirichlet_gamma.x.array[:] = self.relaxation_factor*p.dirichlet_gamma.x.array[:] + \
                                  (1-self.relaxation_factor)*p.u.x.array[:]
-        # Set Gamma dirichlet
-        p.add_dirichlet_bc(p.dirichlet_gamma,bdofs=dofs_gamma_right, reset=False)
-        p.is_dirichlet_gamma = True
     
-    def set_neumann_interface(self,p:problem.Problem,p_ext:problem.Problem):
-        p_ext.compute_gradient()
-        gammaIntegralEntities = p.get_facet_integrations_entities(facet_indices=p.gammaFacets.find(1))
+    def set_neumann_interface(self):
+        (pn, pd) = (self.p_neumann,self.p_dirichlet)
+        pd.compute_gradient()
+        gammaIntegralEntities = pn.get_facet_integrations_entities()
         # Custom measure
-        dS = ufl.Measure('ds', domain=p.domain, subdomain_data=[
+        dS = ufl.Measure('ds', domain=pn.domain, subdomain_data=[
             (8,np.asarray(gammaIntegralEntities, dtype=np.int32))])
-        v = ufl.TestFunction(p.v)
-        n = ufl.FacetNormal(p.domain)
-        p.neumann_flux = interpolate_dg_at_facets(p_ext.grad_u,
-                                                  p.gammaFacets.find(1),
-                                                  p.dg0_vec,
-                                                  p_ext.bb_tree,
-                                                  p.active_els_tag,
-                                                  p_ext.active_els_tag,
-                                                  name="flux",
-                                                  )
+        v = ufl.TestFunction(pn.v)
+        n = ufl.FacetNormal(pn.domain)
+        self.update_neumann_interface()
+        pn.l_ufl += +self.ext_conductivity * ufl.inner(n,pn.neumann_flux) * v * dS(8)
 
-        ext_conductivity = interpolate_dg_at_facets(p_ext.k,
-                                                    p.gammaFacets.find(1),
-                                                    p.dg0_bg,
-                                                    p_ext.bb_tree,
-                                                    p.active_els_tag,
-                                                    p_ext.active_els_tag,
-                                                    name="ext_conduc",
-                                                    )
-        p.l_ufl += +ext_conductivity * ufl.inner(n,p.neumann_flux) * v * dS(8)
+    def update_neumann_interface(self):
+        (pn, pd) = (self.p_neumann,self.p_dirichlet)
+        # Update functions
+        pn.neumann_flux = interpolate_dg_at_facets(pd.grad_u,
+                                        pn.gammaFacets.find(1),
+                                        pn.dg0_vec,
+                                        pd.bb_tree,
+                                        pn.active_els_tag,
+                                        pd.active_els_tag,
+                                        name="flux",
+                                        )
+
+        self.ext_conductivity = interpolate_dg_at_facets(pd.k,
+                                        pn.gammaFacets.find(1),
+                                        pn.dg0_bg,
+                                        pd.bb_tree,
+                                        pn.active_els_tag,
+                                        pd.active_els_tag,
+                                        name="ext_conduc",
+                                        )
 
     def iterate(self):
         # Solve right with Dirichlet from left
-        self.p_neumann.set_forms_domain()
-        self.p_neumann.set_forms_boundary()
-        self.set_dirichlet_interface(self.p_neumann,self.p_dirichlet)
-        self.p_neumann.compile_forms()
-        self.p_neumann.assemble()
-        self.p_neumann.solve()
-        # Solve left with Neumann from right
         self.p_dirichlet.set_forms_domain()
         self.p_dirichlet.set_forms_boundary()
-        self.set_neumann_interface(self.p_dirichlet,self.p_neumann)
+        self.set_dirichlet_interface()
         self.p_dirichlet.compile_forms()
         self.p_dirichlet.assemble()
         self.p_dirichlet.solve()
+        # Solve left with Neumann from right
+        self.p_neumann.set_forms_domain()
+        self.p_neumann.set_forms_boundary()
+        self.set_neumann_interface()
+        self.p_neumann.compile_forms()
+        self.p_neumann.assemble()
+        self.p_neumann.solve()
 
 def main():
     point_density = np.round(1/get_el_size(els_per_radius)).astype(np.int32)
@@ -153,7 +196,7 @@ def main():
     p_fixed.set_initial_condition(T_env)
     p_moving.set_initial_condition(T_env)
 
-    driver = Driver(p_fixed,p_moving,params["max_staggered_iters"])
+    driver = Driver(p_moving,p_fixed,params["max_staggered_iters"])
 
     for _ in range(max_temporal_iters):
         p_fixed.pre_iterate()
@@ -180,11 +223,12 @@ if __name__=="__main__":
         lp = LineProfiler()
         lp.add_module(problem)
         lp.add_function(build_moving_problem)
-        #lp.add_class(Driver)
+        lp.add_module(Driver)
         lp_wrapper = lp(main)
         lp_wrapper()
-        with open("profiling.txt", 'w') as pf:
-            lp.print_stats(stream=pf)
+        if rank==0:
+            with open("profiling.txt", 'w') as pf:
+                lp.print_stats(stream=pf)
 
     else:
         main()

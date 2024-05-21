@@ -229,14 +229,17 @@ class Problem:
         active_dofs_ext_func_ext = fem.Function( p_ext.v )
         active_dofs_ext_func_ext.x.array[p_ext.active_dofs] = 1.0
         # Interpolate to nodes of self
-        nmmid = dolfinx.fem.create_nonmatching_meshes_interpolation_data(
-                                     self.domain,
-                                     self.v.element,
-                                     active_dofs_ext_func_ext.function_space.mesh,
+        cells = np.arange(self.num_cells,dtype=np.int32)
+        nmmid = dolfinx.fem.create_interpolation_data(
+                                     self.v,
+                                     p_ext.v,
+                                     cells,
                                      padding=1e-5,)
         active_dofs_ext_func_self = dolfinx.fem.Function(self.v_bg,
                                                          name="active_nodes_ext",)
-        active_dofs_ext_func_self.interpolate(active_dofs_ext_func_ext, nmm_interpolation_data=nmmid)
+        active_dofs_ext_func_self.interpolate_nonmatching(active_dofs_ext_func_ext,
+                                                          cells=cells,
+                                                          interpolation_data=nmmid,)
         np.round(active_dofs_ext_func_self.x.array,decimals=7,out=active_dofs_ext_func_self.x.array)
         return active_dofs_ext_func_self
 

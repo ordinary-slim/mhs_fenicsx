@@ -15,16 +15,23 @@ import mhs_fenicsx_cpp
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-def interpolate(func2project,
-                targetSpace,
-                interpolate,):
-    nmmid = dolfinx.fem.create_nonmatching_meshes_interpolation_data(
-                                 targetSpace.mesh,
-                                 targetSpace.element,
-                                 func2project.ufl_function_space().mesh,
+def interpolate(sending_func,
+                receiving_func,):
+    '''
+    Interpolate sending_func to receiving_func,
+    each comming from separate meshes
+    '''
+    topology = receiving_func.function_space.mesh.topology
+    cmap = topology.index_map(topology.dim)
+    num_cells = cmap.size_local + cmap.num_ghosts
+    cells = np.arange(num_cells,dtype=np.int32)
+    nmmid = fem.create_interpolation_data(
+                                 receiving_func.function_space,
+                                 sending_func.function_space,
+                                 cells,
                                  padding=1e-6,)
-    interpolate.interpolate(func2project, nmm_interpolation_data=nmmid)
-    return interpolate
+    receiving_func.interpolate_nonmatching(sending_func, cells, interpolation_data=nmmid)
+    return receiving_func,
 
 def l2_squared(f : dolfinx.fem.Function,active_els_tag):
     dx = ufl.Measure("dx")(subdomain_data=active_els_tag)
@@ -56,6 +63,7 @@ def interpolate_dg_at_facets(f,facets,targetSpace,bb_tree_ext,
     domain           = targetSpace.mesh
     ext_domain       = f.function_space.mesh
     cdim = domain.topology.dim
+    function_dim = 1 if (len(interpolated_f.ufl_shape) == 0) else interpolated_f.ufl_shape[0]
     # Build Gamma midpoints array
     local_interface_midpoints = np.zeros((len(facets), 3), np.double)
     for i, ifacet in enumerate(facets):
@@ -71,8 +79,8 @@ def interpolate_dg_at_facets(f,facets,targetSpace,bb_tree_ext,
     comm.Allgatherv(local_interface_midpoints,[global_interface_midpoints,facet_counts*local_interface_midpoints.shape[1],facets_offsets*local_interface_midpoints.shape[1],MPI.DOUBLE])
 
     # Collect values at midpoints
-    local_vals  = np.zeros((total_facet_count,cdim),dtype=np.double,order='C')
-    global_vals = np.zeros((total_facet_count,cdim),dtype=np.double,order='C')
+    local_vals  = np.zeros((total_facet_count,function_dim),dtype=np.double,order='C')
+    global_vals = np.zeros((total_facet_count,function_dim),dtype=np.double,order='C')
     found_local  = np.zeros(total_facet_count,dtype=np.double,order='C')
     found_global = np.zeros(total_facet_count,dtype=np.double,order='C')
     for idx in range(total_facet_count):
@@ -102,11 +110,10 @@ def interpolate_dg_at_facets(f,facets,targetSpace,bb_tree_ext,
     comm.Allgatherv(global_parent_els_proc,[global_parent_els,facet_counts,facets_offsets,MPI.INT])
     local_parent_els  = domain.topology.index_map(domain.geometry.dim).global_to_local(global_parent_els)
 
-    dim_offset = 1 if (len(interpolated_f.ufl_shape) == 0) else interpolated_f.ufl_shape[0]
     for idx, el in enumerate(local_parent_els):
         if el < 0:
             continue
-        flat_idx    = el*dim_offset
+        flat_idx    = el*function_dim
         interpolated_f.x.array[flat_idx:flat_idx+2] = global_vals[idx]
 
     interpolated_f.vector.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)

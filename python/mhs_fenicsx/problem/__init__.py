@@ -17,6 +17,7 @@ from mhs_fenicsx.problem.helpers import *
 from mhs_fenicsx.problem.heatsource import *
 from mhs_fenicsx.problem.material import Material
 import mhs_fenicsx_cpp
+import typing
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -58,7 +59,7 @@ class Problem:
         self.dirichlet_bcs = []
 
         # BCs / Interface
-        self.gammaNodes = None
+        self.gamma_nodes = None
         self.neumann_flux = None
         self.dirichlet_gamma = fem.Function(self.v,name="dirichlet_gamma")
         self.is_dirichlet_gamma = False
@@ -74,10 +75,10 @@ class Problem:
         self.source_rhs   = fem.Function(self.v, name="source")   # For moving hs
 
         # Time
-        self.isSteady = parameters["isSteady"]
+        self.is_steady = parameters["isSteady"]
         self.iter     = 0
         self.time     = 0.0
-        self.dt       = fem.Constant(self.domain, parameters["dt"]) if not(self.isSteady) else -1
+        self.dt       = fem.Constant(self.domain, parameters["dt"]) if not(self.is_steady) else -1
         # Motion
         self.domain_speed     = np.array(parameters["domain_speed"]) if "domain_speed" in parameters else None
         advection_speed = parameters["advection_speed"][:self.domain.topology.dim] if "advection_speed" in parameters else np.zeros(self.domain.topology.dim)
@@ -173,10 +174,11 @@ class Problem:
         self.source_rhs.interpolate(self.source)
         self.iter += 1
         self.time += self.dt.value
-        self.u_prev.x.array[:] = self.u.x.array[:]
+        self.u_prev.x.array[:] = self.u.x.array
 
     def post_iterate(self):
-        pass
+        self._destroy()
+        self.has_preassembled = False
 
     def initialize_activation(self):
         self.active_els_tag = mesh.meshtags(self.domain, self.dim,
@@ -288,7 +290,7 @@ class Problem:
         self.gammaFacets = mesh.meshtags(self.domain, self.dim-1,
                                          np.arange(self.num_facets, dtype=np.int32),
                                          get_mask(self.num_facets, gammaFacets),)
-        self.gammaNodes = indices_to_function(self.v,
+        self.gamma_nodes = indices_to_function(self.v,
                                          self.gammaFacets.find(1),
                                          self.dim-1,
                                          name="gammaNodes",)
@@ -307,7 +309,9 @@ class Problem:
                     bdofs  = fem.locate_dofs_geometrical(self.v,marker)
         u_bc = fem.Function(self.v)
         u_bc.interpolate(func)
-        self.dirichlet_bcs.append(fem.dirichletbc(u_bc, bdofs))
+        bc = fem.dirichletbc(u_bc, bdofs)
+        self.dirichlet_bcs.append(bc)
+        return bc
 
     def get_facet_integrations_entities(self, facet_indices=None):
         if facet_indices is None:
@@ -323,14 +327,14 @@ class Problem:
         if self.rhs is not None:
             self.source_rhs.interpolate(self.rhs)
         self.l_ufl = self.source_rhs*v*dx(1)
-        if not(self.isSteady):
+        if not(self.is_steady):
             self.a_ufl += (self.rho*self.cp/self.dt)*u*v*dx(1)
             self.l_ufl += (self.rho*self.cp/self.dt)*self.u_prev*v*dx(1)
         if np.linalg.norm(self.advection_speed.value):
             self.a_ufl += self.rho*self.cp*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(1)
             if self.is_supg:
                 self.compute_supg_coeff()
-                if not(self.isSteady):
+                if not(self.is_steady):
                     self.a_ufl += (self.rho * self.cp / self.dt) * u * self.supg_elwise_coeff * \
                                     self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(1)
                     self.l_ufl += (self.rho * self.cp / self.dt) * self.u_prev * self.supg_elwise_coeff * \
@@ -365,21 +369,35 @@ class Problem:
         self.l_compiled = fem.form(self.l_ufl)
 
     def pre_assemble(self):
-        pass
+        self.A = multiphenicsx.fem.petsc.create_matrix(self.a_compiled,
+                                                  (self.restriction, self.restriction),
+                                                  )
+        self.L = multiphenicsx.fem.petsc.create_vector(self.l_compiled,
+                                                  self.restriction)
+        self.x = multiphenicsx.fem.petsc.create_vector(self.l_compiled, restriction=self.restriction)
+        self.has_preassembled = True
 
     def assemble(self):
-        self.A = multiphenicsx.fem.petsc.assemble_matrix(self.a_compiled,
-                                                    bcs=self.dirichlet_bcs,
-                                                    restriction=(self.restriction, self.restriction))
+        if not(self.has_preassembled):
+            self.pre_assemble()
+        self.A.zeroEntries()
+        multiphenicsx.fem.petsc.assemble_matrix(self.A,
+                                                self.a_compiled,
+                                                bcs=self.dirichlet_bcs,
+                                                restriction=(self.restriction, self.restriction))
         self.A.assemble()
-        self.L = multiphenicsx.fem.petsc.assemble_vector(self.l_compiled,
-                                                    restriction=self.restriction,)
+        with self.L.localForm() as l_local:
+            l_local.set(0.0)
+        multiphenicsx.fem.petsc.assemble_vector(self.L,
+                                                self.l_compiled,
+                                                restriction=self.restriction,)
         multiphenicsx.fem.petsc.apply_lifting(self.L, [self.a_compiled], [self.dirichlet_bcs], restriction=self.restriction,)
         self.L.ghostUpdate(addv=petsc4py.PETSc.InsertMode.ADD, mode=petsc4py.PETSc.ScatterMode.REVERSE)
         multiphenicsx.fem.petsc.set_bc(self.L,self.dirichlet_bcs,restriction=self.restriction)
 
     def _solveLinearSystem(self):
-        self.x = multiphenicsx.fem.petsc.create_vector(self.l_compiled, restriction=self.restriction)
+        with self.x.localForm() as x_local:
+            x_local.set(0.0)
         ksp = petsc4py.PETSc.KSP()
         ksp.create(self.domain.comm)
         ksp.setOperators(self.A)
@@ -396,7 +414,6 @@ class Problem:
         with self.u.vector.localForm() as usub_vector_local, \
                 multiphenicsx.fem.petsc.VecSubVectorWrapper(self.x, self.v.dofmap, self.restriction) as x_wrapper:
                     usub_vector_local[:] = x_wrapper
-        self._destroy()
 
     def _destroy(self):
         self.x.destroy()
@@ -423,8 +440,8 @@ class Problem:
                  self.source_rhs,
                  #self.k,
                  ]
-        if self.gammaNodes is not None:
-            funcs.append(self.gammaNodes)
+        if self.gamma_nodes is not None:
+            funcs.append(self.gamma_nodes)
         if self.is_grad_computed:
             funcs.append(self.grad_u)
         if self.is_dirichlet_gamma:
@@ -456,11 +473,13 @@ class Problem:
         with io.VTKFile(bmesh.comm, f"out/bmesh_{self.name}.pvd", "w") as ofile:
             ofile.write_mesh(bmesh)
 
-    def l2_norm_gamma( self, f : dolfinx.fem.Function ):
+    def l2_dot_gamma( self, f : dolfinx.fem.Function, g : typing.Optional[dolfinx.fem.Function] = None ):
+        if g is None:
+            g = f
         gamma_ents = self.get_facet_integrations_entities()
         ds_neumann = ufl.Measure('ds', domain=self.domain, subdomain_data=[
             (8,np.asarray(gamma_ents, dtype=np.int32))])
-        l_ufl = f*f*ds_neumann(8)
+        l_ufl = f*g*ds_neumann(8)
         l2_norm = dolfinx.fem.assemble_scalar(fem.form(l_ufl))
         l2_norm = comm.allreduce(l2_norm, op=MPI.SUM)
         return l2_norm

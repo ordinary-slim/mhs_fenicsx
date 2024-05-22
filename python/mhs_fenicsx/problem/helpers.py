@@ -55,15 +55,15 @@ def get_mask(size, indices, dtype=np.int32, true_val=1):
     mask[indices] = true_val
     return mask
 
-def interpolate_dg_at_facets(f,facets,targetSpace,bb_tree_ext,
+def interpolate_dg_at_facets(sending_f,
+                             receiving_f,
+                             facets,bb_tree_ext,
                              activation_tag,
-                             ext_activation_tag,
-                             name="flux"):
-    interpolated_f = fem.Function(targetSpace,name=name)
-    domain           = targetSpace.mesh
-    ext_domain       = f.function_space.mesh
+                             ext_activation_tag,):
+    domain           = receiving_f.function_space.mesh
+    ext_domain       = sending_f.function_space.mesh
     cdim = domain.topology.dim
-    function_dim = 1 if (len(interpolated_f.ufl_shape) == 0) else interpolated_f.ufl_shape[0]
+    function_dim = 1 if (len(receiving_f.ufl_shape) == 0) else receiving_f.ufl_shape[0]
     # Build Gamma midpoints array
     local_interface_midpoints = np.zeros((len(facets), 3), np.double)
     for i, ifacet in enumerate(facets):
@@ -90,7 +90,7 @@ def interpolate_dg_at_facets(f,facets,targetSpace,bb_tree_ext,
         if len(potential_parent_els_ext)>0:
             idx_owner_el = potential_parent_els_ext[0]
             if idx_owner_el < ext_domain.topology.index_map(cdim).size_local:
-                local_vals[idx,:]  = f.eval(global_interface_midpoints[idx,:], idx_owner_el)
+                local_vals[idx,:]  = sending_f.eval(global_interface_midpoints[idx,:], idx_owner_el)
                 found_local[idx] = 1
     comm.Allreduce([local_vals, MPI.DOUBLE], [global_vals, MPI.DOUBLE])
     comm.Allreduce([found_local, MPI.DOUBLE], [found_global, MPI.DOUBLE])
@@ -114,10 +114,9 @@ def interpolate_dg_at_facets(f,facets,targetSpace,bb_tree_ext,
         if el < 0:
             continue
         flat_idx    = el*function_dim
-        interpolated_f.x.array[flat_idx:flat_idx+2] = global_vals[idx]
+        receiving_f.x.array[flat_idx:flat_idx+2] = global_vals[idx]
 
-    interpolated_f.vector.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
-    return interpolated_f
+    receiving_f.vector.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
 
 def inidices_to_nodal_meshtag(space, indices, dim):
     nodal_dofs = fem.locate_dofs_topological(space, dim, indices,)

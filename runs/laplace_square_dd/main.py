@@ -6,7 +6,7 @@ from mpi4py import MPI
 from mhs_fenicsx.problem import Problem, interpolate_dg_at_facets, interpolate
 from line_profiler import LineProfiler
 import yaml
-from driver import Driver
+from mhs_fenicsx.drivers.staggered_dn_driver import StaggeredDNDriver
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -74,7 +74,7 @@ def main():
     p_left.set_rhs(rhs)
     p_right.set_rhs(rhs)
 
-    driver = Driver(p_right,p_left,max_staggered_iters=params["max_staggered_iters"])
+    driver = StaggeredDNDriver(p_right,p_left,max_staggered_iters=params["max_staggered_iters"])
 
     driver.pre_loop(set_bc=set_bc)
     for _ in range(driver.max_staggered_iters):
@@ -84,12 +84,13 @@ def main():
         driver.writepos(extra_funcs_neumann=[exact_left],extra_funcs_dirichlet=[exact_right])
         if driver.convergence_crit < driver.convergence_threshold:
             break
+    driver.post_loop()
 
 if __name__=="__main__":
     profiling = True
     if profiling:
         lp = LineProfiler()
-        lp.add_module(Driver)
+        lp.add_module(StaggeredDNDriver)
         lp.add_module(Problem)
         lp.add_function(interpolate)
         lp.add_function(fem.Function.interpolate)

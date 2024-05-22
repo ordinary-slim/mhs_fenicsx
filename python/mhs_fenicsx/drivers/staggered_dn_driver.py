@@ -9,12 +9,12 @@ from line_profiler import LineProfiler
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-class Driver:
+class StaggeredDNDriver:
     def __init__(self,
                  p_dirichlet:Problem,
                  p_neumann:Problem,
                  max_staggered_iters=40,
-                 relaxation_factor=0.5,
+                 initial_relaxation_factor=0.5,
                  ):
         self.p_neumann = p_neumann
         self.p_dirichlet = p_dirichlet
@@ -22,7 +22,9 @@ class Driver:
         self.convergence_crit = 1e9
         self.convergence_threshold = 1e-6
         self.iter = 0
-        self.relaxation_factor = relaxation_factor
+        self.initial_relaxation_factor = initial_relaxation_factor
+        self.relaxation_factor = initial_relaxation_factor
+        self.dirichlet_tcon = None
 
     def pre_iterate(self):
         if self.iter == 0:
@@ -45,6 +47,7 @@ class Driver:
         pn.clear_dirchlet_bcs()
         # Find interface
         pn.find_gamma(pn.get_active_in_external( pd ))
+        self.gamma_dofs_neumann = pn.gamma_nodes.x.array.nonzero()[0]
         pd.find_gamma(pd.get_active_in_external( pn ))
         # Interpolation data
         self.gamma_cells_d = mesh.compute_incident_entities(pd.domain.topology,
@@ -65,8 +68,17 @@ class Driver:
                                              pn.v,
                                              self.gamma_cells_d,
                                              padding=1e-6,)
+        # Neumann Gamma funcs
+        pn.neumann_flux = fem.Function(pn.dg0_vec,name="flux")
+        self.ext_conductivity = fem.Function(pn.dg0_bg,name="ext_conduc")
+        self.neumann_res = fem.Function(pn.v,name="residual")
+        self.neumann_prev_res = fem.Function(pn.v,name="previous residual")
+        self.neumann_res_diff = fem.Function(pn.v,name="residual difference")
+
+        # Ext bc
         if set_bc is not None:
             set_bc(pn,pd)
+
         # Forms and allocation
         self.set_dirichlet_interface()
         pd.set_forms_domain()
@@ -98,16 +110,17 @@ class Driver:
         self.writer_dirichlet.write_function(fs_dirichlet,t=self.iter)
 
     def post_loop(self):
-        pass
+        self.p_neumann.post_iterate()
+        self.p_dirichlet.post_iterate()
 
     def post_iterate(self, verbose=False):
-        (p_neumann,p_dirichlet)=(self.p_neumann,self.p_dirichlet)
-        norm_diff_neumann    = p_neumann.l2_norm_gamma(p_neumann.u-self.previous_u_neumann)
-        norm_current_neumann = p_neumann.l2_norm_gamma(p_neumann.u)
+        pn = self.p_neumann
+        norm_diff_neumann    = pn.l2_dot_gamma(pn.u-self.previous_u_neumann)
+        norm_current_neumann = pn.l2_dot_gamma(pn.u)
         self.convergence_crit = np.sqrt(norm_diff_neumann) / np.sqrt(norm_current_neumann)
         if rank==0:
             if verbose:
-                print(f"Staggered iteration #{self.iter}, relative norm of difference: {self.convergence_crit}")
+                print(f"Staggered iteration #{self.iter}, omega = {self.relaxation_factor}, relative norm of difference: {self.convergence_crit}")
     
     def set_dirichlet_interface(self):
         pd = self.p_dirichlet
@@ -115,8 +128,20 @@ class Driver:
         dofs_gamma_right = fem.locate_dofs_topological(pd.v, pd.dim-1, pd.gammaFacets.find(1))
         self.update_dirichlet_interface()
         # Set Gamma dirichlet
-        pd.add_dirichlet_bc(pd.dirichlet_gamma,bdofs=dofs_gamma_right, reset=False)
+        self.dirichlet_tcon = pd.add_dirichlet_bc(pd.dirichlet_gamma,bdofs=dofs_gamma_right, reset=False)
         pd.is_dirichlet_gamma = True
+
+    def update_relaxation_factor(self):
+        pn = self.p_neumann
+        if self.iter > 1:
+            self.neumann_prev_res.x.array[self.gamma_dofs_neumann] = self.neumann_res.x.array[self.gamma_dofs_neumann]
+        self.neumann_res.x.array[self.gamma_dofs_neumann] = pn.u.x.array[self.gamma_dofs_neumann] - \
+                               self.previous_u_neumann.x.array[self.gamma_dofs_neumann]
+        if self.iter > 1:
+            self.neumann_res_diff.x.array[self.gamma_dofs_neumann] = self.neumann_res.x.array[self.gamma_dofs_neumann] - \
+                    self.neumann_prev_res.x.array[self.gamma_dofs_neumann]
+            self.relaxation_factor = - self.relaxation_factor * pn.l2_dot_gamma(self.neumann_res,self.neumann_res_diff)
+            self.relaxation_factor /= pn.l2_dot_gamma(self.neumann_res_diff)
 
     def update_dirichlet_interface(self):
         (p, p_ext) = (self.p_dirichlet,self.p_neumann)
@@ -126,54 +151,48 @@ class Driver:
                                                   interpolation_data=self.iid_n2d)
         p.dirichlet_gamma.x.array[:] = self.relaxation_factor*p.dirichlet_gamma.x.array + \
                                  (1-self.relaxation_factor)*p.u.x.array
+        if self.dirichlet_tcon is not None:
+            self.dirichlet_tcon.g.x.array[:] = p.dirichlet_gamma.x.array
     
     def set_neumann_interface(self):
-        (p, p_ext) = (self.p_neumann,self.p_dirichlet)
-        p_ext.compute_gradient()
-        gammaIntegralEntities = p.get_facet_integrations_entities()
+        p = self.p_neumann
+        self.update_neumann_interface()
         # Custom measure
+        gammaIntegralEntities = p.get_facet_integrations_entities()
         dS = ufl.Measure('ds', domain=p.domain, subdomain_data=[
             (8,np.asarray(gammaIntegralEntities, dtype=np.int32))])
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
-        self.update_neumann_interface()
         p.l_ufl += +self.ext_conductivity * ufl.inner(n,p.neumann_flux) * v * dS(8)
 
     def update_neumann_interface(self):
         (p, p_ext) = (self.p_neumann,self.p_dirichlet)
+        p_ext.compute_gradient()
         # Update functions
-        p.neumann_flux = interpolate_dg_at_facets(p_ext.grad_u,
-                                        p.gammaFacets.find(1),
-                                        p.dg0_vec,
-                                        p_ext.bb_tree,
-                                        p.active_els_tag,
-                                        p_ext.active_els_tag,
-                                        name="flux",
-                                        )
+        interpolate_dg_at_facets(p_ext.grad_u,
+                                 p.neumann_flux,
+                                 p.gammaFacets.find(1),
+                                 p_ext.bb_tree,
+                                 p.active_els_tag,
+                                 p_ext.active_els_tag,
+                                 )
 
-        self.ext_conductivity = interpolate_dg_at_facets(p_ext.k,
-                                        p.gammaFacets.find(1),
-                                        p.dg0_bg,
-                                        p_ext.bb_tree,
-                                        p.active_els_tag,
-                                        p_ext.active_els_tag,
-                                        name="ext_conduc",
-                                        )
+        interpolate_dg_at_facets(p_ext.k,
+                                 self.ext_conductivity,
+                                 p.gammaFacets.find(1),
+                                 p_ext.bb_tree,
+                                 p.active_els_tag,
+                                 p_ext.active_els_tag,
+                                 )
 
     def iterate(self):
         (pn, pd) = (self.p_neumann,self.p_dirichlet)
-        # Solve right with Dirichlet from left
-        self.set_dirichlet_interface()
-        pd.set_forms_domain()
-        pd.set_forms_boundary()
-        pd.compile_forms()
-        pd.assemble()
-        pd.solve()
         # Solve left with Neumann from right
-        pn.set_forms_domain()
-        pn.set_forms_boundary()
-        self.set_neumann_interface()
-        pn.compile_forms()
+        self.update_neumann_interface()
         pn.assemble()
         pn.solve()
-
+        # Solve right with Dirichlet from left
+        self.update_relaxation_factor()
+        self.update_dirichlet_interface()
+        pd.assemble()
+        pd.solve()

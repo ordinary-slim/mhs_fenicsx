@@ -31,9 +31,6 @@ def interpolate(sending_func,
                                  np.arange(num_cells),
                                  padding=0,)
     receiving_func.interpolate_nonmatching(sending_func, cells, interpolation_data=nmmid)
-    import pdb
-    pdb.set_trace()
-    print(f"Max = {max(receiving_func.x.array)}")
     return receiving_func
 
 def solve(domain,u):

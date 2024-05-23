@@ -7,6 +7,7 @@ from mhs_fenicsx.problem import Problem, interpolate_dg_at_facets, interpolate
 from line_profiler import LineProfiler
 import yaml
 from mhs_fenicsx.drivers.staggered_dn_driver import StaggeredDNDriver
+import trace, sys
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -88,6 +89,7 @@ def main():
 
 if __name__=="__main__":
     profiling = True
+    tracing = False
     if profiling:
         lp = LineProfiler()
         lp.add_module(StaggeredDNDriver)
@@ -100,5 +102,16 @@ if __name__=="__main__":
         if rank==0:
             with open("profiling.txt", 'w') as pf:
                 lp.print_stats(stream=pf)
+    elif tracing:
+        # define Trace object: trace line numbers at runtime, exclude some modules
+        tracer = trace.Trace(
+            ignoredirs=[sys.prefix, sys.exec_prefix],
+            ignoremods=[
+                'inspect', 'contextlib', '_bootstrap',
+                '_weakrefset', 'abc', 'posixpath', 'genericpath', 'textwrap'
+            ],
+            trace=1,
+            count=0)
+        tracer.runfunc(main)
     else:
         main()

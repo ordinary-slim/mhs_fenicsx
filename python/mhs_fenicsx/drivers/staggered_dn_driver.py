@@ -52,11 +52,11 @@ class StaggeredDNDriver:
         self.gamma_dofs_dirichlet = pd.gamma_nodes.x.array.nonzero()[0]
         # Interpolation data
         self.gamma_cells_d = mesh.compute_incident_entities(pd.domain.topology,
-                                                            pd.gammaFacets.find(1),
+                                                            np.hstack((pd.gamma_facets.find(1),pd.gamma_facets.find(2))),
                                                             pd.dim-1,
                                                             pd.dim)
         self.gamma_cells_n = mesh.compute_incident_entities(pn.domain.topology,
-                                                            pn.gammaFacets.find(1),
+                                                            np.hstack((pn.gamma_facets.find(1),pn.gamma_facets.find(2))),
                                                             pn.dim-1,
                                                             pn.dim)
         self.iid_d2n = fem.create_interpolation_data(
@@ -141,7 +141,7 @@ class StaggeredDNDriver:
     def set_dirichlet_interface(self):
         (pd,pn) = (self.p_dirichlet,self.p_neumann)
         # Get Gamma DOFS right
-        dofs_gamma_right = fem.locate_dofs_topological(pd.v, pd.dim-1, pd.gammaFacets.find(1))
+        dofs_gamma_right = fem.locate_dofs_topological(pd.v, pd.dim-1, pd.gamma_facets.find(1))
         self.update_dirichlet_interface()
         # Set Gamma dirichlet
         self.dirichlet_tcon = pd.add_dirichlet_bc(pd.dirichlet_gamma,bdofs=dofs_gamma_right, reset=False)
@@ -195,7 +195,7 @@ class StaggeredDNDriver:
         # Update functions
         interpolate_dg_at_facets(p_ext.grad_u,
                                  p.neumann_flux,
-                                 p.gammaFacets.find(1),
+                                 p.gamma_facets.find(1),
                                  p_ext.bb_tree,
                                  p.active_els_tag,
                                  p_ext.active_els_tag,
@@ -203,7 +203,7 @@ class StaggeredDNDriver:
 
         interpolate_dg_at_facets(p_ext.k,
                                  self.ext_conductivity,
-                                 p.gammaFacets.find(1),
+                                 p.gamma_facets.find(1),
                                  p_ext.bb_tree,
                                  p.active_els_tag,
                                  p_ext.active_els_tag,

@@ -49,10 +49,14 @@ def get_facet_integration_entities(domain,facet_indices,active_els_func):
                                                           active_els_func._cpp_object,
                                                           )
 
-def get_mask(size, indices, dtype=np.int32, true_val=1):
-    true_val = dtype(true_val)
+def get_mask(size, indices, dtype=np.int32, val=1):
+    val = dtype(val)
     mask = np.zeros(size, dtype=dtype)
-    mask[indices] = true_val
+    if isinstance(val, np.ndarray):
+        for i, v in zip(indices, val):
+            mask[i] = v
+    else:
+        mask[indices] = val
     return mask
 
 def interpolate_dg_at_facets(sending_f,

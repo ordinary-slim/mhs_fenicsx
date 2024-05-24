@@ -246,6 +246,7 @@ class Problem:
         active_dofs_ext_func_self.interpolate_nonmatching(active_dofs_ext_func_ext,
                                                           cells=cells,
                                                           interpolation_data=nmmid,)
+        active_dofs_ext_func_self.x.scatter_forward()
         np.round(active_dofs_ext_func_self.x.array,decimals=7,out=active_dofs_ext_func_self.x.array)
         return active_dofs_ext_func_self
 
@@ -270,7 +271,8 @@ class Problem:
         self.find_gamma(ext_nodal_activation)
 
     def find_gamma(self,ext_active_dofs_func):
-        gammaFacets = []
+        loc_gamma_facets = []
+        ghost_gamma_facets = []
         #ext_active_dofs_func = self.get_active_in_external( p_ext )
         # Loop over boundary facets, get incident nodes,
         # if all nodes of facet are active in external --> gamma facet
@@ -286,12 +288,15 @@ class Problem:
                     all_nodes_active = False
                     break
             if all_nodes_active:
-                gammaFacets.append(ifacet)
-        self.gammaFacets = mesh.meshtags(self.domain, self.dim-1,
+                if ifacet < self.facet_map.size_local:
+                    loc_gamma_facets.append(ifacet)
+                else:
+                    ghost_gamma_facets.append(ifacet)
+        self.gamma_facets = mesh.meshtags(self.domain, self.dim-1,
                                          np.arange(self.num_facets, dtype=np.int32),
-                                         get_mask(self.num_facets, gammaFacets),)
+                                         get_mask(self.num_facets, [loc_gamma_facets,ghost_gamma_facets], val=[1,2]),)
         self.gamma_nodes = indices_to_function(self.v,
-                                         self.gammaFacets.find(1),
+                                         self.gamma_facets.find(1),
                                          self.dim-1,
                                          name="gammaNodes",)
 
@@ -315,7 +320,7 @@ class Problem:
 
     def get_facet_integrations_entities(self, facet_indices=None):
         if facet_indices is None:
-            facet_indices = self.gammaFacets.find(1)
+            facet_indices = self.gamma_facets.find(1)
         return get_facet_integration_entities(self.domain,facet_indices,self.active_els_func)
 
     def set_forms_domain(self):

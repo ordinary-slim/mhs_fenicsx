@@ -34,9 +34,6 @@ class StaggeredDNDriver:
             self.previous_u_neumann.x.array[:] = self.p_neumann.u.x.array
             self.previous_u_dirichlet.x.array[:] = self.p_dirichlet.u.x.array
         self.iter += 1
-        
-        for p in [self.p_dirichlet, self.p_neumann]:
-            p.time = self.iter
 
     def pre_loop(self,set_bc=None):
         (pd,pn) = (self.p_dirichlet,self.p_neumann)

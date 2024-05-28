@@ -18,7 +18,7 @@ material_metal : {
 environment_temperature : 25
 # END_ESSENTIAL
 case_name: "fruit_box"
-max_iter: 1
+max_iter: 2
 supg: 1
 max_staggered_iters: 40
-els_per_radius: 16
+els_per_radius: 4

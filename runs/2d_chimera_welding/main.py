@@ -38,7 +38,7 @@ def main():
     domain  = mesh.create_rectangle(MPI.COMM_WORLD,
               [box[:2], box[2:]],
               [nx, ny],
-              mesh.CellType.quadrilateral,
+              #mesh.CellType.quadrilateral,
               )
     p_fixed = problem.Problem(domain, params, name=params["case_name"])
     p_moving = build_moving_problem(p_fixed,els_per_radius)

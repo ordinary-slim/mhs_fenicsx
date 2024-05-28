@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dolfinx import io, fem, mesh, cpp, geometry
+from dolfinx import io, fem, mesh, cpp, geometry, la
 import ufl
 import numpy as np
 from mpi4py import MPI
@@ -202,12 +202,14 @@ class Problem:
         self.active_els_tag = mesh.meshtags(self.domain, self.dim,
                                             np.arange(self.num_cells, dtype=np.int32),
                                             get_mask(self.num_cells, active_els),)
-        self.active_els_func= indices_to_function(self.dg0_bg,active_els,self.dim,name="active_els")
+        indices_to_function(self.dg0_bg,active_els,self.dim,name="active_els",remote=False, f=self.active_els_func)
+        #self.active_els_func.x.scatter_forward()
 
         old_active_dofs_array  = self.active_nodes_func.x.array.copy()
-        self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,)
+        self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,remote=False)
         self.active_nodes_func.x.array[:] = np.float64(0.0)
         self.active_nodes_func.x.array[self.active_dofs] = np.float64(1.0)
+        #self.active_nodes_func.x.scatter_forward()
         just_active_dofs_array = self.active_nodes_func.x.array - old_active_dofs_array
         self.just_activated_nodes = np.flatnonzero(just_active_dofs_array)
 
@@ -246,29 +248,34 @@ class Problem:
         active_dofs_ext_func_self.interpolate_nonmatching(active_dofs_ext_func_ext,
                                                           cells=cells,
                                                           interpolation_data=nmmid,)
-        active_dofs_ext_func_self.x.scatter_forward()
         np.round(active_dofs_ext_func_self.x.array,decimals=7,out=active_dofs_ext_func_self.x.array)
+        active_dofs_ext_func_self.x.scatter_forward()
         return active_dofs_ext_func_self
 
     def subtract_problem(self,p_ext:Problem):
-        ext_nodal_activation = self.get_active_in_external(p_ext)
-        ext_active_nodes = ext_nodal_activation.x.array.nonzero()[0]
+        self.ext_nodal_activation = self.get_active_in_external(p_ext)
+        self.ext_nodal_activation.name = "ext_act"
+        ext_active_nodes = self.ext_nodal_activation.x.array.nonzero()[0]
         incident_cells = mesh.compute_incident_entities(self.domain.topology,
                                                         ext_active_nodes,
                                                         0,
                                                         self.domain.topology.dim,)
-        active_els_mask = np.ones(self.num_cells,dtype=np.int32)
+        active_els_mask = la.vector(self.cell_map,1,dtype=np.int32)
+        active_els_mask.array[:] = np.int32(1)
         for cell in incident_cells:
+            if cell >= self.cell_map.size_local:
+                continue
             all_active_in_ext = True
-            for inode in self.domain.geometry.dofmap[cell]:
-                if ext_nodal_activation.x.array[inode]==0:
+            for idof in self.v.dofmap.cell_dofs(cell):
+                if self.ext_nodal_activation.x.array[idof]==0:
                     all_active_in_ext = False
                     break
             if all_active_in_ext:
-                active_els_mask[cell] = 0
-        active_els = active_els_mask.nonzero()[0]
+                active_els_mask.array[cell] = 0
+        active_els_mask.scatter_forward()
+        active_els = active_els_mask.array.nonzero()[0]
         self.set_activation(active_els)
-        self.find_gamma(ext_nodal_activation)
+        self.find_gamma(self.ext_nodal_activation)
 
     def find_gamma(self,ext_active_dofs_func):
         loc_gamma_facets = []
@@ -400,25 +407,31 @@ class Problem:
         self.L.ghostUpdate(addv=petsc4py.PETSc.InsertMode.ADD, mode=petsc4py.PETSc.ScatterMode.REVERSE)
         multiphenicsx.fem.petsc.set_bc(self.L,self.dirichlet_bcs,restriction=self.restriction)
 
-    def _solveLinearSystem(self):
+    def _solve_linear_system(self):
         with self.x.localForm() as x_local:
             x_local.set(0.0)
         ksp = petsc4py.PETSc.KSP()
         ksp.create(self.domain.comm)
         ksp.setOperators(self.A)
+        '''
         #ksp.setType("bcgs")
         ksp.getPC().setType("lu")
         ksp.getPC().setFactorSolverType("mumps")
+        '''
+        opts = PETSc.Options()  # type: ignore
+        opts["pc_type"] = "lu"
+        opts["pc_factor_mat_solver_type"] = "mumps"
         ksp.setFromOptions()
         #ksp.setTolerances(rtol=1e-10)
         ksp.solve(self.L, self.x)
         self.x.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
         ksp.destroy()
 
-    def _restrictSolution(self):
+    def _restrict_solution(self):
         with self.u.vector.localForm() as usub_vector_local, \
                 multiphenicsx.fem.petsc.VecSubVectorWrapper(self.x, self.v.dofmap, self.restriction) as x_wrapper:
                     usub_vector_local[:] = x_wrapper
+        self.u.x.scatter_forward()
 
     def _destroy(self):
         self.x.destroy()
@@ -426,8 +439,8 @@ class Problem:
         self.L.destroy()
 
     def solve(self):
-        self._solveLinearSystem()
-        self._restrictSolution()
+        self._solve_linear_system()
+        self._restrict_solution()
         self.is_grad_computed   = False
     
     def initialize_post(self):

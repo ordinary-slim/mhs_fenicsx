@@ -129,9 +129,12 @@ def inidices_to_nodal_meshtag(space, indices, dim):
                          np.ones(len(nodal_dofs),
                                  dtype=np.int32),)
 
-def indices_to_function(space, indices, dim, name="f"):
-    dofs = fem.locate_dofs_topological(space, dim, indices,)
-    f = fem.Function(space,name=name)
+def indices_to_function(space, indices, dim, name="f", remote=True, f = None):
+    dofs = fem.locate_dofs_topological(space, dim, indices,remote)
+    if f is None:
+        f = fem.Function(space,name=name)
+    else:
+        f.x.array[:] = 0
     f.x.array[dofs] = 1
     return f
 

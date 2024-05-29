@@ -94,6 +94,7 @@ class Problem:
         self.quadrature_metadata = {"quadrature_rule":"vertex",
                                     "quadrature_degree":1, }
         self.initialize_post()
+        self.set_linear_solver(parameters["petsc_opts"] if "petsc_opts" in parameters else None)
 
     def __del__(self):
         self.writer.close()
@@ -276,6 +277,7 @@ class Problem:
         active_els = active_els_mask.array.nonzero()[0]
         self.set_activation(active_els)
         self.find_gamma(self.ext_nodal_activation)
+        active_els_mask.petsc_vec.destroy()
 
     def find_gamma(self,ext_active_dofs_func):
         loc_gamma_facets = []
@@ -407,22 +409,21 @@ class Problem:
         self.L.ghostUpdate(addv=petsc4py.PETSc.InsertMode.ADD, mode=petsc4py.PETSc.ScatterMode.REVERSE)
         multiphenicsx.fem.petsc.set_bc(self.L,self.dirichlet_bcs,restriction=self.restriction)
 
+    def set_linear_solver(self, opts:typing.Optional[dict] = None):
+        if opts is None:
+            opts = {"pc_type" : "lu", "pc_factor_mat_solver_type" : "mumps",}
+        self.linear_solver_opts = dict(opts)
+
     def _solve_linear_system(self):
         with self.x.localForm() as x_local:
             x_local.set(0.0)
         ksp = petsc4py.PETSc.KSP()
         ksp.create(self.domain.comm)
         ksp.setOperators(self.A)
-        '''
-        #ksp.setType("bcgs")
-        ksp.getPC().setType("lu")
-        ksp.getPC().setFactorSolverType("mumps")
-        '''
-        opts = PETSc.Options()  # type: ignore
-        opts["pc_type"] = "lu"
-        opts["pc_factor_mat_solver_type"] = "mumps"
+        ksp_opts = PETSc.Options()
+        for k,v in self.linear_solver_opts.items():
+            ksp_opts[k] = v
         ksp.setFromOptions()
-        #ksp.setTolerances(rtol=1e-10)
         ksp.solve(self.L, self.x)
         self.x.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
         ksp.destroy()

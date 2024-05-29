@@ -40,6 +40,7 @@ def main():
               [nx, ny],
               #mesh.CellType.quadrilateral,
               )
+    params["petsc_opts"] = params["petsc_opts_fixed"]
     p_fixed = problem.Problem(domain, params, name=params["case_name"])
     p_moving = build_moving_problem(p_fixed,els_per_radius)
 
@@ -77,9 +78,8 @@ if __name__=="__main__":
         lp.add_module(StaggeredDNDriver)
         lp_wrapper = lp(main)
         lp_wrapper()
-        if rank==0:
-            with open("profiling.txt", 'w') as pf:
-                lp.print_stats(stream=pf)
+        with open(f"profiling_{rank}.txt", 'w') as pf:
+            lp.print_stats(stream=pf)
 
     else:
         main()

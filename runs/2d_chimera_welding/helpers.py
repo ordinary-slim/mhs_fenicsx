@@ -38,6 +38,7 @@ def build_moving_problem(p_fixed:Problem,els_per_radius=2):
         params.pop("path")
     params["domain_speed"]    = p_fixed.source.speed
     params["advection_speed"] = -p_fixed.source.speed
+    params["petsc_opts"] = params["petsc_opts_moving"]
     return Problem(moving_domain, params,name=p_fixed.name+"_moving")
 
 def mesh_around_hs(hs:HeatSource, dim:int,els_per_radius:int):

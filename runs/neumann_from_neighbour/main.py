@@ -5,8 +5,9 @@ import numpy as np
 import basix.ufl, basix.cell
 import ufl
 import petsc4py
+from line_profiler import LineProfiler
 import sys
-sys.path.insert(0,"/root/shared/mhs_fenicsx/runs/neumann_from_neighbour/cpp/build-dir")
+sys.path.insert(0,"./cpp/build-dir")
 from interpolate_dg0_at_facets import interpolate_dg0_at_facets as cpp_interpolate_dg0_at_facets
 
 comm = MPI.COMM_WORLD
@@ -84,18 +85,10 @@ def interpolate_dg0_at_facets(sending_f,
 def new_interpolate_dg0_at_facets(sending_f,
                                   receiving_f,
                                   facets,bb_tree_ext,):
-    domain           = receiving_f.function_space.mesh
-    ext_domain       = sending_f.function_space.mesh
-    cdim = domain.topology.dim
-    function_dim = 1 if (len(receiving_f.ufl_shape) == 0) else receiving_f.ufl_shape[0]
-    # Build Gamma midpoints array
-    local_interface_midpoints = mesh.compute_midpoints(domain,cdim-1,facets)
-    midpoint_owners = determine_point_ownership(ext_domain._cpp_object,local_interface_midpoints,1e-7)
-    import pdb
-    pdb.set_trace()
     cpp_interpolate_dg0_at_facets(sending_f._cpp_object,
                                   receiving_f._cpp_object,
                                   facets)
+    receiving_f.vector.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
 
 class Problem:
     def __init__(self, domain, name="case"):
@@ -120,33 +113,43 @@ class Problem:
         with io.VTKFile(self.domain.comm, f"out/{self.name}.pvd", "w") as ofile:
             ofile.write_function(funcs)
 
-el_size = 0.125
-mesh_left  = mesh_rectangle(0, 0, 0.5, 1, elsize=el_size)
-mesh_right = mesh_rectangle(0.5, 0, 1, 1, elsize=el_size, cell_type=mesh.CellType.quadrilateral)
+def main():
+    el_size = 1.0/32.0
+    mesh_left  = mesh_rectangle(0, 0, 0.5, 1, elsize=el_size)
+    mesh_right = mesh_rectangle(0.5, 0, 1, 1, elsize=el_size, cell_type=mesh.CellType.quadrilateral)
 
-p_right = Problem(mesh_right, name="right")
-p_left  = Problem(mesh_left, name="left")
+    p_right = Problem(mesh_right, name="right")
+    p_left  = Problem(mesh_left, name="left")
 
-d_f   = fem.Function(p_right.dg0,name="d_f")
-der   = fem.Function(p_right.dg0_dim2,name="der")
-c_f   = fem.Function(p_right.V,name="c_f")
-x = ufl.SpatialCoordinate(mesh_right)
-c_f.interpolate( fem.Expression(x[0]**2 + x[1]**2,c_f.function_space.element.interpolation_points()))
-d_f.interpolate( fem.Expression(x[0],d_f.function_space.element.interpolation_points()))
-der.interpolate( fem.Expression(ufl.grad(c_f),der.function_space.element.interpolation_points()))
+    d_f   = fem.Function(p_right.dg0,name="d_f")
+    der   = fem.Function(p_right.dg0_dim2,name="der")
+    c_f   = fem.Function(p_right.V,name="c_f")
+    x = ufl.SpatialCoordinate(mesh_right)
+    c_f.interpolate( fem.Expression(x[0]**2 + x[1]**2,c_f.function_space.element.interpolation_points()))
+    d_f.interpolate( fem.Expression(x[0],d_f.function_space.element.interpolation_points()))
+    der.interpolate( fem.Expression(ufl.grad(c_f),der.function_space.element.interpolation_points()))
 
-rfacets = mesh.locate_entities_boundary(p_left.domain,p_left.dim-1,lambda x:np.isclose(x[0],0.5))# local to process
+    rfacets = mesh.locate_entities_boundary(p_left.domain,p_left.dim-1,lambda x:np.isclose(x[0],0.5))# local to process
 
-der_python  = fem.Function(p_left.dg0_dim2,name="der")
-der_python2 = fem.Function(p_left.dg0_dim2,name="der")
-interpolate_dg0_at_facets(der,
-                          der_python,
-                          rfacets,
-                          p_right.bb_tree)
-new_interpolate_dg0_at_facets(der,
-                              der_python2,
+    der_python  = fem.Function(p_left.dg0_dim2,name="der_py")
+    der_cpp = fem.Function(p_left.dg0_dim2,name="der_cpp")
+    interpolate_dg0_at_facets(der,
+                              der_python,
                               rfacets,
                               p_right.bb_tree)
+    new_interpolate_dg0_at_facets(der,
+                                  der_cpp,
+                                  rfacets,
+                                  p_right.bb_tree)
 
-p_left.writepos(funcs=[der_python])
-p_right.writepos(funcs=[c_f,d_f,der])
+    p_left.writepos(funcs=[der_python,der_cpp])
+    p_right.writepos(funcs=[c_f,d_f,der])
+
+if __name__=="__main__":
+    lp = LineProfiler()
+    lp.add_function(interpolate_dg0_at_facets)
+    lp.add_function(new_interpolate_dg0_at_facets)
+    lp_wrapper = lp(main)
+    lp_wrapper()
+    with open(f"profiling{rank}.txt", 'w') as pf:
+        lp.print_stats(stream=pf)

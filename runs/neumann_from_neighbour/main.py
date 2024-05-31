@@ -1,10 +1,13 @@
 from dolfinx import fem, mesh, io, geometry
+from dolfinx.cpp.geometry import determine_point_ownership
 from mpi4py import MPI
 import numpy as np
 import basix.ufl, basix.cell
 import ufl
-import mhs_fenicsx_cpp
 import petsc4py
+import sys
+sys.path.insert(0,"/root/shared/mhs_fenicsx/runs/neumann_from_neighbour/cpp/build-dir")
+from interpolate_dg0_at_facets import interpolate_dg0_at_facets as cpp_interpolate_dg0_at_facets
 
 comm = MPI.COMM_WORLD
 rank = comm.rank
@@ -85,10 +88,14 @@ def new_interpolate_dg0_at_facets(sending_f,
     ext_domain       = sending_f.function_space.mesh
     cdim = domain.topology.dim
     function_dim = 1 if (len(receiving_f.ufl_shape) == 0) else receiving_f.ufl_shape[0]
-    midpoint_tree = geometry.create_midpoint_tree(domain,1,facets)
-    global_midpoint_tree = midpoint_tree.create_global_tree(comm)
-    print(f"Rank = {rank}, num_bboxes of local = {midpoint_tree.num_bboxes}")
-    print(f"Rank = {rank}, num_bboxes of global = {global_midpoint_tree.num_bboxes}")
+    # Build Gamma midpoints array
+    local_interface_midpoints = mesh.compute_midpoints(domain,cdim-1,facets)
+    midpoint_owners = determine_point_ownership(ext_domain._cpp_object,local_interface_midpoints,1e-7)
+    import pdb
+    pdb.set_trace()
+    cpp_interpolate_dg0_at_facets(sending_f._cpp_object,
+                                  receiving_f._cpp_object,
+                                  facets)
 
 class Problem:
     def __init__(self, domain, name="case"):
@@ -128,7 +135,7 @@ c_f.interpolate( fem.Expression(x[0]**2 + x[1]**2,c_f.function_space.element.int
 d_f.interpolate( fem.Expression(x[0],d_f.function_space.element.interpolation_points()))
 der.interpolate( fem.Expression(ufl.grad(c_f),der.function_space.element.interpolation_points()))
 
-rfacets = mesh.locate_entities_boundary(p_left.domain,p_left.dim-1,lambda x:np.isclose(x[0],0.5))
+rfacets = mesh.locate_entities_boundary(p_left.domain,p_left.dim-1,lambda x:np.isclose(x[0],0.5))# local to process
 
 der_python  = fem.Function(p_left.dg0_dim2,name="der")
 der_python2 = fem.Function(p_left.dg0_dim2,name="der")

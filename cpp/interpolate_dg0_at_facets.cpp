@@ -2,10 +2,12 @@
 #include <cassert>
 #include <dolfinx/fem/interpolate.h>
 #include <dolfinx/mesh/Mesh.h>
+#include <dolfinx/mesh/MeshTags.h>
 #include <dolfinx/mesh/utils.h>
 #include <dolfinx/fem/Function.h>
 #include <dolfinx/geometry/utils.h>
 #include <vector>
+#include <dolfinx/la/Vector.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 
@@ -14,15 +16,24 @@ using int_vector = std::vector<int>;
 template <std::floating_point T>
 void interpolate_dg0_at_facets(const dolfinx::fem::Function<T> &sending_f,
                                dolfinx::fem::Function<T> &receiving_f,
-                               std::span<const std::int32_t> facets,
-                               geometry::PointOwnershipData<T> &po
-                               ) {
+                               const dolfinx::fem::Function<T> &receiving_active_els_f,
+                               const mesh::MeshTags<std::int32_t> &facet_tag,
+                               std::span<const std::int32_t> incident_cells,
+                               geometry::PointOwnershipData<T> &po,
+                               const dolfinx::common::IndexMap &gamma_index_map)
+{
   /*
    * Facets are local facets
    */
   std::shared_ptr smesh = sending_f.function_space()->mesh();//sending mesh
   std::shared_ptr rmesh = receiving_f.function_space()->mesh();//receiving mesh
   int cdim = rmesh->topology()->dim();
+  const std::size_t value_size = sending_f.function_space()->value_size();
+
+  la::Vector interpolated_vals_vec = la::Vector<T>(
+      std::shared_ptr<const dolfinx::common::IndexMap>(&gamma_index_map, [](const dolfinx::common::IndexMap*){}),
+      value_size);
+  auto interpolated_vals_array = interpolated_vals_vec.mutable_array();
 
   auto& dest_ranks = po.src_owner;
   auto& src_ranks = po.dest_owners;
@@ -30,7 +41,6 @@ void interpolate_dg0_at_facets(const dolfinx::fem::Function<T> &sending_f,
   auto& evaluation_cells = po.dest_cells;
   // 1. Eval my points
   // Code copied from dolfinx interpolate.h
-  const std::size_t value_size = sending_f.function_space()->value_size();
   // Evaluate the interpolating function where possible
   std::vector<T> send_values(recv_points.size() / 3 * value_size);
   /*
@@ -64,36 +74,73 @@ void interpolate_dg0_at_facets(const dolfinx::fem::Function<T> &sending_f,
       valuesT(j, i) = values(i, j);
 
   // 3. Insert vals into receiving_f
-  auto con_facet_cell = rmesh->topology()->connectivity(cdim-1,cdim);
-  assert(con_facet_cell);
+  auto active_els_array = receiving_active_els_f.x()->array();
+  auto con_cell_facet = rmesh->topology()->connectivity(cdim,cdim-1);
+  assert(con_cell_facet);
   auto facet_map = rmesh->topology()->index_map(cdim-1);
   auto r_x = receiving_f.x()->mutable_array();
-  for (int i = 0; i < facets.size(); ++i) {
-    int ifacet = facets[i];
-    auto local_con = con_facet_cell->links(ifacet);
-    assert(local_con.size() > 0);
-    int incident_el = local_con[0];
+
+  std::span<const std::int32_t> facet_tag_vals = facet_tag.values();
+
+  // Build facet indices (local and ghost)
+  std::size_t n = std::count_if(facet_tag_vals.begin(), facet_tag_vals.end(), [](std::int32_t i){return i>0;});
+  std::vector<std::int32_t> facet_indices;
+  facet_indices.reserve(n);
+  for (std::int32_t i = 0; i < facet_tag_vals.size(); ++i)
+  {
+    if (facet_tag_vals[i] > 0)
+      facet_indices.push_back(i);//dirty
+  }
+
+  // TODO: Clean this up
+  for (int i = 0; i < facet_indices.size(); ++i) {
     for (int j = 0; j < value_size; ++j) {
-      r_x[incident_el*value_size+j] = values_b[i*value_size+j];
+      // TODO: Bug here in assignment
+      interpolated_vals_array[i*value_size+j] = values_b[i*value_size+j];
+    }
+  }
+
+  // Ghost communication
+  interpolated_vals_vec.scatter_fwd();
+
+
+
+  for (int i = 0; i < incident_cells.size(); ++i) {
+    int icell = incident_cells[i];
+    if (!active_els_array[icell])
+      continue;
+    auto local_con = con_cell_facet->links(icell);
+    auto it = std::find_if(local_con.begin(),local_con.end(),[&facet_tag_vals](std::int32_t ifacet){return (facet_tag_vals[ifacet]>0);});
+    assert(it != std::end(local_con));
+    auto it2 = std::find(facet_indices.begin(),facet_indices.end(),*it);
+    assert(it2 != facet_indices.end());
+    int ifacet = std::distance(facet_indices.begin(),it2);
+    for (int j = 0; j < value_size; ++j) {
+      r_x[icell*value_size+j] = interpolated_vals_array[ifacet*value_size+j];
     }
   }
 }
 
 namespace nb = nanobind;
-
 template <std::floating_point T>
 void templated_declare_interpolate_dg0_at_facets(nb::module_ &m) {
   m.def(
       "interpolate_dg0_at_facets",
       [](const dolfinx::fem::Function<T> &sending_f,
          dolfinx::fem::Function<T> &receiving_f,
-         nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> facets,
-         geometry::PointOwnershipData<T> &po)
+         const dolfinx::fem::Function<T> &receiving_active_els_f,
+         const mesh::MeshTags<std::int32_t> &facet_tag,
+         nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> cells,
+         geometry::PointOwnershipData<T> &po,
+         const dolfinx::common::IndexMap &gamma_index_map)
       {
         return interpolate_dg0_at_facets<T>(sending_f,
                                             receiving_f,
-                                            std::span(facets.data(),facets.size()),
-                                            po);
+                                            receiving_active_els_f,
+                                            facet_tag,
+                                            std::span(cells.data(),cells.size()),
+                                            po,
+                                            gamma_index_map);
       }
       );
 }

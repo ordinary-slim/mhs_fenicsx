@@ -4,12 +4,13 @@
 #include "get_active_dofs_external.h"
 #include "compute_el_size_along_vector.h"
 #include "get_facet_integration_entities.h"
-#include "interpolate_dg0_at_facets.h"
 
 namespace nb = nanobind;
 using int_vector = std::vector<int>;
 
-//TODO: Break up into multiple wrappers
+void declare_interpolate_dg0_at_facets(nb::module_ &m);
+void declare_my_determine_point_ownership(nb::module_ &m);
+
 
 NB_MODULE(mhs_fenicsx_cpp, m) {
   nb::bind_vector<int_vector>(m, "int_vector");
@@ -21,6 +22,6 @@ NB_MODULE(mhs_fenicsx_cpp, m) {
   m.def("compute_el_size_along_vector", &compute_el_size_along_vector<float>);
   m.def("get_facet_integration_entities", &get_facet_integration_entities<double>);
   m.def("get_facet_integration_entities", &get_facet_integration_entities<float>);
-  m.def("interpolate_dg0_at_facets", &interpolate_dg0_at_facets<double>);
-  m.def("interpolate_dg0_at_facets", &interpolate_dg0_at_facets<float>);
+  declare_interpolate_dg0_at_facets(m);
+  declare_my_determine_point_ownership(m);
 }

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15...3.27)
 
-project(interpolate_dg0_at_facets)
+project(my_utils)
 include(GNUInstallDirs)
 
 # Set C++ standard
@@ -40,13 +40,18 @@ if (DOLFINX_FOUND)
   message(STATUS "Found DOLFINx C++ backend at ${DOLFINX_DIR}")
 endif()
 
-nanobind_add_module(interpolate_dg0_at_facets NOMINSIZE interpolate_dg0_at_facets.cpp)
-#target_sources(interpolate_dg0_at_facets PRIVATE locate_active_boundary.cpp)
+nanobind_add_module(my_utils
+                    NOMINSIZE
+                    my_utils.cpp
+                    interpolate_dg0_at_facets.cpp
+                    my_determine_point_ownership.cpp
+)
+#target_sources(my_utils PRIVATE locate_active_boundary.cpp)
 # Add DOLFINx C++ libraries
-target_link_libraries(interpolate_dg0_at_facets PRIVATE dolfinx)
+target_link_libraries(my_utils PRIVATE dolfinx)
 
 # Install the compiled library to the cpp subdirectory
 #set_target_properties(
-#interpolate_dg0_at_facets PROPERTIES INSTALL_RPATH_USE_LINK_PATH TRUE
+#my_utils PROPERTIES INSTALL_RPATH_USE_LINK_PATH TRUE
 #)
-#install(TARGETS interpolate_dg0_at_facets LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+#install(TARGETS my_utils LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})

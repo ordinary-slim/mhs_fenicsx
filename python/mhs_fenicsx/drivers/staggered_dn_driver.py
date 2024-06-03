@@ -4,7 +4,9 @@ import ufl
 import numpy as np
 from mpi4py import MPI
 from mhs_fenicsx.problem import Problem, interpolate_dg_at_facets, interpolate
+from mhs_fenicsx_cpp import interpolate_dg0_at_facets, cellwise_determine_point_ownership
 from line_profiler import LineProfiler
+from petsc4py import PETSc
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -66,6 +68,13 @@ class StaggeredDNDriver:
                                              pn.v,
                                              self.gamma_cells_d,
                                              padding=1e-6,)
+        midpoints_neumann_facets = mesh.compute_midpoints(pn.domain,pn.domain.topology.dim-1,pn.gamma_facets.find(1))
+        active_gamma_cells_d = self.gamma_cells_d[pd.active_els_func.x.array[self.gamma_cells_d].nonzero()[0]]
+        self.iid_d2n_border = cellwise_determine_point_ownership(
+                                    pd.domain._cpp_object,
+                                    midpoints_neumann_facets,
+                                    active_gamma_cells_d,
+                                    np.float64(1e-6))
         # Neumann Gamma funcs
         pn.neumann_flux = fem.Function(pn.dg0_vec,name="flux")
         self.ext_conductivity = fem.Function(pn.dg0_bg,name="ext_conduc")
@@ -190,6 +199,21 @@ class StaggeredDNDriver:
         (p, p_ext) = (self.p_neumann,self.p_dirichlet)
         p_ext.compute_gradient()
         # Update functions
+        interpolate_dg0_at_facets(p_ext.grad_u._cpp_object,
+                                  p.neumann_flux._cpp_object,
+                                  p.active_els_func._cpp_object,
+                                  p.gamma_facets._cpp_object,
+                                  self.gamma_cells_n,
+                                  self.iid_d2n_border,
+                                  p.gamma_facets_index_map)
+        interpolate_dg0_at_facets(p_ext.k._cpp_object,
+                                  self.ext_conductivity._cpp_object,
+                                  p.active_els_func._cpp_object,
+                                  p.gamma_facets._cpp_object,
+                                  self.gamma_cells_n,
+                                  self.iid_d2n_border,
+                                  p.gamma_facets_index_map)
+        '''
         interpolate_dg_at_facets(p_ext.grad_u,
                                  p.neumann_flux,
                                  p.gamma_facets.find(1),
@@ -205,6 +229,7 @@ class StaggeredDNDriver:
                                  p.active_els_tag,
                                  p_ext.active_els_tag,
                                  )
+        '''
 
     def iterate(self):
         (pn, pd) = (self.p_neumann,self.p_dirichlet)

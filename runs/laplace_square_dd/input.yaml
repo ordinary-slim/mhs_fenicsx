@@ -21,4 +21,4 @@ advection_speed : [0.0, 0.0, 0]
 case_name: "fruit_box"
 max_iter: 1
 max_staggered_iters: 20
-points_side: 256
+points_side: 8

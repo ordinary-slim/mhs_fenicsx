@@ -8,7 +8,8 @@ import petsc4py
 from line_profiler import LineProfiler
 import sys
 sys.path.insert(0,"./cpp/build-dir")
-from interpolate_dg0_at_facets import interpolate_dg0_at_facets as cpp_interpolate_dg0_at_facets
+from my_utils import interpolate_dg0_at_facets as cpp_interpolate_dg0_at_facets
+from my_utils import cellwise_determine_point_ownership
 
 comm = MPI.COMM_WORLD
 rank = comm.rank
@@ -84,10 +85,23 @@ def interpolate_dg0_at_facets(sending_f,
 
 def new_interpolate_dg0_at_facets(sending_f,
                                   receiving_f,
-                                  facets,bb_tree_ext,):
+                                  facets):
+    smesh = sending_f.function_space.mesh
+    rmesh = receiving_f.function_space.mesh
+    midpoints = mesh.compute_midpoints(rmesh,rmesh.topology.dim-1,facets)
+    lfacets = mesh.locate_entities_boundary(smesh,smesh.topology.dim-1,
+                                           lambda x:np.isclose(x[0],0.5),
+                                           )
+    lcells  = mesh.compute_incident_entities(smesh.topology,lfacets,smesh.topology.dim-1,smesh.topology.dim)
+    po = cellwise_determine_point_ownership(smesh._cpp_object,
+                                            midpoints,
+                                            lcells,
+                                            np.float64(1e-7)
+                                            )
     cpp_interpolate_dg0_at_facets(sending_f._cpp_object,
                                   receiving_f._cpp_object,
-                                  facets)
+                                  facets,
+                                  po)
     receiving_f.vector.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
 
 class Problem:
@@ -114,9 +128,9 @@ class Problem:
             ofile.write_function(funcs)
 
 def main():
-    el_size = 1.0/32.0
-    mesh_left  = mesh_rectangle(0, 0, 0.5, 1, elsize=el_size)
-    mesh_right = mesh_rectangle(0.5, 0, 1, 1, elsize=el_size, cell_type=mesh.CellType.quadrilateral)
+    el_size = 1.0/16.0
+    mesh_left  = mesh_rectangle(0, 0, 0.5, 1, elsize=el_size, cell_type=mesh.CellType.quadrilateral)
+    mesh_right = mesh_rectangle(0.5, 0, 1, 1, elsize=el_size)
 
     p_right = Problem(mesh_right, name="right")
     p_left  = Problem(mesh_left, name="left")
@@ -140,9 +154,12 @@ def main():
     new_interpolate_dg0_at_facets(der,
                                   der_cpp,
                                   rfacets,
-                                  p_right.bb_tree)
+                                  )
 
-    p_left.writepos(funcs=[der_python,der_cpp])
+    partition = fem.Function(p_left.dg0,name="partition")
+    partition.x.array[:] = rank
+
+    p_left.writepos(funcs=[der_python,der_cpp,partition])
     p_right.writepos(funcs=[c_f,d_f,der])
 
 if __name__=="__main__":

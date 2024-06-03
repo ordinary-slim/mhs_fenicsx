@@ -282,6 +282,7 @@ class Problem:
     def find_gamma(self,ext_active_dofs_func):
         loc_gamma_facets = []
         ghost_gamma_facets = []
+        all_gamma_facets = []
         #ext_active_dofs_func = self.get_active_in_external( p_ext )
         # Loop over boundary facets, get incident nodes,
         # if all nodes of facet are active in external --> gamma facet
@@ -297,6 +298,7 @@ class Problem:
                     all_nodes_active = False
                     break
             if all_nodes_active:
+                all_gamma_facets.append(ifacet)
                 if ifacet < self.facet_map.size_local:
                     loc_gamma_facets.append(ifacet)
                 else:
@@ -308,7 +310,9 @@ class Problem:
                                          self.gamma_facets.find(1),
                                          self.dim-1,
                                          name="gammaNodes",)
-
+        self.gamma_facets_index_map, _ = cpp.common.create_sub_index_map(self.facet_map,
+                                                               np.array(all_gamma_facets,dtype=np.int32),
+                                                               False)
 
 
     def add_dirichlet_bc(self, func, bdofs=None, bfacets_tag=None, marker=None, reset=False):

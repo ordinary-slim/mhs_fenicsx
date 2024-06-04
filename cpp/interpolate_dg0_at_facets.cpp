@@ -20,7 +20,8 @@ void interpolate_dg0_at_facets(const dolfinx::fem::Function<T> &sending_f,
                                const mesh::MeshTags<std::int32_t> &facet_tag,
                                std::span<const std::int32_t> incident_cells,
                                geometry::PointOwnershipData<T> &po,
-                               const dolfinx::common::IndexMap &gamma_index_map)
+                               const dolfinx::common::IndexMap &gamma_index_map,
+                               std::map<std::int32_t,std::int32_t> gamma_im_to_global_imap)
 {
   /*
    * Facets are local facets
@@ -77,7 +78,8 @@ void interpolate_dg0_at_facets(const dolfinx::fem::Function<T> &sending_f,
   auto active_els_array = receiving_active_els_f.x()->array();
   auto con_cell_facet = rmesh->topology()->connectivity(cdim,cdim-1);
   assert(con_cell_facet);
-  auto facet_map = rmesh->topology()->index_map(cdim-1);
+  auto rfacet_map = rmesh->topology()->index_map(cdim-1);
+  std::int32_t rnum_facets = rfacet_map->size_local();
   auto r_x = receiving_f.x()->mutable_array();
 
   std::span<const std::int32_t> facet_tag_vals = facet_tag.values();
@@ -94,8 +96,10 @@ void interpolate_dg0_at_facets(const dolfinx::fem::Function<T> &sending_f,
 
   // TODO: Clean this up
   for (int i = 0; i < facet_indices.size(); ++i) {
+    int ifacet = facet_indices[i];
+    if (ifacet >= rnum_facets)
+      continue;
     for (int j = 0; j < value_size; ++j) {
-      // TODO: Bug here in assignment
       interpolated_vals_array[i*value_size+j] = values_b[i*value_size+j];
     }
   }
@@ -107,16 +111,13 @@ void interpolate_dg0_at_facets(const dolfinx::fem::Function<T> &sending_f,
 
   for (int i = 0; i < incident_cells.size(); ++i) {
     int icell = incident_cells[i];
-    if (!active_els_array[icell])
-      continue;
     auto local_con = con_cell_facet->links(icell);
     auto it = std::find_if(local_con.begin(),local_con.end(),[&facet_tag_vals](std::int32_t ifacet){return (facet_tag_vals[ifacet]>0);});
     assert(it != std::end(local_con));
-    auto it2 = std::find(facet_indices.begin(),facet_indices.end(),*it);
-    assert(it2 != facet_indices.end());
-    int ifacet = std::distance(facet_indices.begin(),it2);
+    std::int32_t ifacet = *it;
+    std::int32_t ifacet_gamma_imap  = gamma_im_to_global_imap[ifacet];
     for (int j = 0; j < value_size; ++j) {
-      r_x[icell*value_size+j] = interpolated_vals_array[ifacet*value_size+j];
+      r_x[icell*value_size+j] = interpolated_vals_array[ifacet_gamma_imap*value_size+j];
     }
   }
 }
@@ -132,7 +133,8 @@ void templated_declare_interpolate_dg0_at_facets(nb::module_ &m) {
          const mesh::MeshTags<std::int32_t> &facet_tag,
          nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> cells,
          geometry::PointOwnershipData<T> &po,
-         const dolfinx::common::IndexMap &gamma_index_map)
+         const dolfinx::common::IndexMap &gamma_index_map,
+         std::map<std::int32_t,std::int32_t> gamma_im_to_global_imap)
       {
         return interpolate_dg0_at_facets<T>(sending_f,
                                             receiving_f,
@@ -140,7 +142,8 @@ void templated_declare_interpolate_dg0_at_facets(nb::module_ &m) {
                                             facet_tag,
                                             std::span(cells.data(),cells.size()),
                                             po,
-                                            gamma_index_map);
+                                            gamma_index_map,
+                                            gamma_im_to_global_imap);
       }
       );
 }

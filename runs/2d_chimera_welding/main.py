@@ -38,7 +38,7 @@ def main():
     domain  = mesh.create_rectangle(MPI.COMM_WORLD,
               [box[:2], box[2:]],
               [nx, ny],
-              #mesh.CellType.quadrilateral,
+              mesh.CellType.quadrilateral,
               )
     params["petsc_opts"] = params["petsc_opts_fixed"]
     p_fixed = problem.Problem(domain, params, name=params["case_name"])

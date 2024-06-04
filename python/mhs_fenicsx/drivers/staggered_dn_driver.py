@@ -49,7 +49,7 @@ class StaggeredDNDriver:
         pd.find_gamma(pd.get_active_in_external( pn ))
         self.gamma_dofs_neumann   = pn.gamma_nodes.x.array.nonzero()[0]
         self.gamma_dofs_dirichlet = pd.gamma_nodes.x.array.nonzero()[0]
-        # Interpolation data
+        # Interpolation data: TODO: Cleanup
         self.gamma_cells_d = mesh.compute_incident_entities(pd.domain.topology,
                                                             np.hstack((pd.gamma_facets.find(1),pd.gamma_facets.find(2))),
                                                             pd.dim-1,
@@ -69,11 +69,19 @@ class StaggeredDNDriver:
                                              self.gamma_cells_d,
                                              padding=1e-6,)
         midpoints_neumann_facets = mesh.compute_midpoints(pn.domain,pn.domain.topology.dim-1,pn.gamma_facets.find(1))
-        active_gamma_cells_d = self.gamma_cells_d[pd.active_els_func.x.array[self.gamma_cells_d].nonzero()[0]]
+
+        self.active_gamma_cells_d = self.gamma_cells_d[pd.active_els_func.x.array[self.gamma_cells_d].nonzero()[0]]
+        pd_index_ghost = np.searchsorted(self.active_gamma_cells_d,pd.cell_map.size_local-1,side='right')
+        self.active_gamma_cells_d = self.active_gamma_cells_d[:pd_index_ghost]
+
+        self.active_gamma_cells_n = self.gamma_cells_n[pn.active_els_func.x.array[self.gamma_cells_n].nonzero()[0]]
+        pd_index_ghost = np.searchsorted(self.active_gamma_cells_n,pn.cell_map.size_local-1,side='right')
+        self.active_gamma_cells_n = self.active_gamma_cells_n[:pd_index_ghost]
+
         self.iid_d2n_border = cellwise_determine_point_ownership(
                                     pd.domain._cpp_object,
                                     midpoints_neumann_facets,
-                                    active_gamma_cells_d,
+                                    self.active_gamma_cells_d,
                                     np.float64(1e-6))
         # Neumann Gamma funcs
         pn.neumann_flux = fem.Function(pn.dg0_vec,name="flux")
@@ -109,13 +117,16 @@ class StaggeredDNDriver:
                      pd.dirichlet_gamma,
                      pd.active_els_func,
                      pd.source_rhs,
+                     pd.grad_u,
                      self.previous_u_dirichlet,
+                     pd.k,
                      ]
         fs_neumann = [pn.u,
                     pn.neumann_flux,
                     pn.active_els_func,
                     pn.source_rhs,
                     self.previous_u_neumann,
+                    self.ext_conductivity,
                       ]
         fs_dirichlet.extend(extra_funcs_dirichlet)
         fs_neumann.extend(extra_funcs_neumann)
@@ -203,16 +214,20 @@ class StaggeredDNDriver:
                                   p.neumann_flux._cpp_object,
                                   p.active_els_func._cpp_object,
                                   p.gamma_facets._cpp_object,
-                                  self.gamma_cells_n,
+                                  self.active_gamma_cells_n,
                                   self.iid_d2n_border,
-                                  p.gamma_facets_index_map)
+                                  p.gamma_facets_index_map,
+                                  p.gamma_imap_to_global_imap)
+        p.neumann_flux.vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
         interpolate_dg0_at_facets(p_ext.k._cpp_object,
                                   self.ext_conductivity._cpp_object,
                                   p.active_els_func._cpp_object,
                                   p.gamma_facets._cpp_object,
-                                  self.gamma_cells_n,
+                                  self.active_gamma_cells_n,
                                   self.iid_d2n_border,
-                                  p.gamma_facets_index_map)
+                                  p.gamma_facets_index_map,
+                                  p.gamma_imap_to_global_imap)
+        self.ext_conductivity.vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
         '''
         interpolate_dg_at_facets(p_ext.grad_u,
                                  p.neumann_flux,

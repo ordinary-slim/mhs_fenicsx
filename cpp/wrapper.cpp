@@ -4,6 +4,7 @@
 #include "get_active_dofs_external.h"
 #include "compute_el_size_along_vector.h"
 #include "get_facet_integration_entities.h"
+#include <nanobind/stl/bind_map.h>
 
 namespace nb = nanobind;
 using int_vector = std::vector<int>;
@@ -14,6 +15,7 @@ void declare_my_determine_point_ownership(nb::module_ &m);
 
 NB_MODULE(mhs_fenicsx_cpp, m) {
   nb::bind_vector<int_vector>(m, "int_vector");
+  nb::bind_map<std::map<std::int32_t,std::int32_t>>(m,"int_map");
   m.def("locate_active_boundary", &locate_active_boundary<double>);
   m.def("locate_active_boundary", &locate_active_boundary<float>);
   m.def("get_active_dofs_external", &get_active_dofs_external<double>);

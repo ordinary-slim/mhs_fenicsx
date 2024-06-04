@@ -310,10 +310,13 @@ class Problem:
                                          self.gamma_facets.find(1),
                                          self.dim-1,
                                          name="gammaNodes",)
-        self.gamma_facets_index_map, _ = cpp.common.create_sub_index_map(self.facet_map,
-                                                               np.array(all_gamma_facets,dtype=np.int32),
-                                                               False)
-
+        self.gamma_facets_index_map, \
+        gamma_imap_to_global_imap = cpp.common.create_sub_index_map(self.facet_map,
+                                                    np.array(all_gamma_facets,dtype=np.int32),
+                                                    False)
+        self.gamma_imap_to_global_imap = mhs_fenicsx_cpp.int_map()
+        for i in range(len(gamma_imap_to_global_imap)):
+            self.gamma_imap_to_global_imap[gamma_imap_to_global_imap[i]] = i
 
     def add_dirichlet_bc(self, func, bdofs=None, bfacets_tag=None, marker=None, reset=False):
         if reset:

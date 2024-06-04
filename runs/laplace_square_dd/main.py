@@ -83,7 +83,6 @@ def main():
         driver.iterate()
         driver.post_iterate(verbose=True)
         driver.writepos(extra_funcs_neumann=[exact_left],extra_funcs_dirichlet=[exact_right])
-        exit()
         if driver.convergence_crit < driver.convergence_threshold:
             break
     driver.post_loop()

@@ -234,29 +234,17 @@ class Problem:
         '''
         Return nodal function with nodes active in p_ext
         '''
-        # Get function on p_ext
-        active_dofs_ext_func_ext = fem.Function( p_ext.v )
-        active_dofs_ext_func_ext.x.array[p_ext.active_dofs] = 1.0
-        # Interpolate to nodes of self
-        cells = np.arange(self.num_cells,dtype=np.int32)
-        nmmid = dolfinx.fem.create_interpolation_data(
-                                     self.v,
-                                     p_ext.v,
-                                     cells,
-                                     padding=1e-5,)
-        active_dofs_ext_func_self = dolfinx.fem.Function(self.v_bg,
-                                                         name="active_nodes_ext",)
-        active_dofs_ext_func_self.interpolate_nonmatching(active_dofs_ext_func_ext,
-                                                          cells=cells,
-                                                          interpolation_data=nmmid,)
-        np.round(active_dofs_ext_func_self.x.array,decimals=7,out=active_dofs_ext_func_self.x.array)
-        active_dofs_ext_func_self.x.scatter_forward()
-        return active_dofs_ext_func_self
+        po = mhs_fenicsx_cpp.cellwise_determine_point_ownership(p_ext.domain._cpp_object,
+                                                                self.domain.geometry.x,
+                                                                p_ext.active_els_tag.find(1),
+                                                                1e-7,)
+        return np.array(po.src_owner>=0,dtype=np.int32)
 
     def subtract_problem(self,p_ext:Problem):
         self.ext_nodal_activation = self.get_active_in_external(p_ext)
-        self.ext_nodal_activation.name = "ext_act"
-        ext_active_nodes = self.ext_nodal_activation.x.array.nonzero()[0]
+        ext_active_nodes = self.ext_nodal_activation.nonzero()[0]
+        active_els_cpp = mhs_fenicsx_cpp.deactivate_from_nodes(self.domain._cpp_object,
+                                                              self.ext_nodal_activation)
         incident_cells = mesh.compute_incident_entities(self.domain.topology,
                                                         ext_active_nodes,
                                                         0,
@@ -268,18 +256,18 @@ class Problem:
                 continue
             all_active_in_ext = True
             for idof in self.v.dofmap.cell_dofs(cell):
-                if self.ext_nodal_activation.x.array[idof]==0:
+                if self.ext_nodal_activation[idof]==0:
                     all_active_in_ext = False
                     break
             if all_active_in_ext:
                 active_els_mask.array[cell] = 0
         active_els_mask.scatter_forward()
         active_els = active_els_mask.array.nonzero()[0]
-        self.set_activation(active_els)
+        self.set_activation(active_els_cpp)
         self.find_gamma(self.ext_nodal_activation)
         active_els_mask.petsc_vec.destroy()
 
-    def find_gamma(self,ext_active_dofs_func):
+    def find_gamma(self,ext_active_dofs_array):
         loc_gamma_facets = []
         ghost_gamma_facets = []
         all_gamma_facets = []
@@ -294,7 +282,7 @@ class Problem:
             local_con_space = self.v_bg.dofmap.index_map.global_to_local(local_con_global)
             all_nodes_active = True
             for inode in local_con_space:
-                if not(ext_active_dofs_func.x.array[inode]):
+                if not(ext_active_dofs_array[inode]):
                     all_nodes_active = False
                     break
             if all_nodes_active:

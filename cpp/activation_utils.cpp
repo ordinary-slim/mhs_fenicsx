@@ -51,21 +51,26 @@ std::vector<int> deactivate_from_nodes(const dolfinx::mesh::Mesh<T> &domain,
                                        const std::span<const T> nodes_to_subtract) {
   // 1. Make vector
   auto topology = domain.topology();
+  auto dofmap_x = domain.geometry().dofmap();
   int cdim = topology->dim();
-  auto cell_map = domain.topology()->index_map(cdim);
-  la::Vector active_els_mask = la::Vector<T>(cell_map, 1);
+  auto cell_map = topology->index_map(cdim);
+  const std::int32_t num_local_cells = cell_map->size_local(), num_ghost_cells = cell_map->num_ghosts();
+  la::Vector active_els_mask = la::Vector<std::int32_t>(cell_map, 1);
   active_els_mask.set(1);// Start out as all active
   auto active_els_mask_vals = active_els_mask.mutable_array();
   // 2. Loop over els
   auto con_cell_nodes = topology->connectivity(cdim,0);
   assert(con_cell_nodes);
-  for (int icell = 0; icell < cell_map->size_local(); ++icell) {
-    auto incident_nodes = con_cell_nodes->links(icell);
-    bool all_active_in_ext = std::all_of(incident_nodes.begin(),
-                                         incident_nodes.end(),
-                                         [&nodes_to_subtract](auto inode){
-                                           return (nodes_to_subtract[inode]==1.0);
-                                         });
+  for (int icell = 0; icell < num_local_cells; ++icell) {
+    bool all_active_in_ext = true;
+    auto xdofs = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
+        dofmap_x, icell, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
+    for (int i = 0; i < dofmap_x.extent(1); ++i) {
+      if (nodes_to_subtract[xdofs[i]]!=1) {
+        all_active_in_ext = false;
+        break;
+      }
+    }
     if (all_active_in_ext)
       active_els_mask_vals[icell] = 0;
   }
@@ -73,8 +78,8 @@ std::vector<int> deactivate_from_nodes(const dolfinx::mesh::Mesh<T> &domain,
   active_els_mask.scatter_fwd();
   // 4. Extract indices
   std::vector<int> active_els;
-  for (int icell = 0; icell < cell_map->size_local(); ++icell) {
-    if (active_els_mask_vals[icell]==1.0)
+  for (int icell = 0; icell < (num_local_cells+num_ghost_cells); ++icell) {
+    if (active_els_mask_vals[icell]==1)
       active_els.push_back(icell);
   }
   return active_els;

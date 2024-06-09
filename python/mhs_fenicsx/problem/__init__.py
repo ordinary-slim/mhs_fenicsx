@@ -242,30 +242,10 @@ class Problem:
 
     def subtract_problem(self,p_ext:Problem):
         self.ext_nodal_activation = self.get_active_in_external(p_ext)
-        ext_active_nodes = self.ext_nodal_activation.nonzero()[0]
         active_els_cpp = mhs_fenicsx_cpp.deactivate_from_nodes(self.domain._cpp_object,
                                                               self.ext_nodal_activation)
-        incident_cells = mesh.compute_incident_entities(self.domain.topology,
-                                                        ext_active_nodes,
-                                                        0,
-                                                        self.domain.topology.dim,)
-        active_els_mask = la.vector(self.cell_map,1,dtype=np.int32)
-        active_els_mask.array[:] = np.int32(1)
-        for cell in incident_cells:
-            if cell >= self.cell_map.size_local:
-                continue
-            all_active_in_ext = True
-            for idof in self.v.dofmap.cell_dofs(cell):
-                if self.ext_nodal_activation[idof]==0:
-                    all_active_in_ext = False
-                    break
-            if all_active_in_ext:
-                active_els_mask.array[cell] = 0
-        active_els_mask.scatter_forward()
-        active_els = active_els_mask.array.nonzero()[0]
         self.set_activation(active_els_cpp)
         self.find_gamma(self.ext_nodal_activation)
-        active_els_mask.petsc_vec.destroy()
 
     def find_gamma(self,ext_active_dofs_array):
         loc_gamma_facets = []
@@ -460,6 +440,15 @@ class Problem:
             funcs.append(self.grad_u)
         if self.is_dirichlet_gamma:
             funcs.append(self.dirichlet_gamma)
+        # BDEBUG
+        try:
+            f = fem.Function(self.v,name="ext_act")
+            f.x.array[:] = self.ext_nodal_activation
+            funcs.append(f)
+        except AttributeError:
+            pass
+        #f.x.array[self.ext_nodal_activation] = 
+        # EDEBUG
         #BPARTITIONTAG
         partition = fem.Function(self.dg0_bg,name="partition")
         partition.x.array[:] = rank

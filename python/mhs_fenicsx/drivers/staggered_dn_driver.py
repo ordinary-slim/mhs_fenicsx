@@ -3,7 +3,7 @@ from mhs_fenicsx.problem.helpers import indices_to_function
 import ufl
 import numpy as np
 from mpi4py import MPI
-from mhs_fenicsx.problem import Problem, interpolate_dg_at_facets, interpolate
+from mhs_fenicsx.problem import Problem, GammaL2Dotter
 from mhs_fenicsx_cpp import interpolate_dg0_at_facets, cellwise_determine_point_ownership
 from line_profiler import LineProfiler
 from petsc4py import PETSc
@@ -99,7 +99,6 @@ class StaggeredDNDriver:
             set_bc(pn,pd)
 
         # Forms and allocation
-        # Interpolate
         self.set_dirichlet_interface()
         pd.set_forms_domain()
         pd.set_forms_boundary()
@@ -109,7 +108,9 @@ class StaggeredDNDriver:
         pn.set_forms_boundary()
         self.set_neumann_interface()
         pn.compile_forms()
-        self.p_neumann.pre_assemble()
+        pn.pre_assemble()
+        self.l2_dot_neumann = GammaL2Dotter(pn)
+        self.l2_dot_dirichlet = GammaL2Dotter(pd)
 
     def writepos(self,extra_funcs_dirichlet=[],extra_funcs_neumann=[]):
         (pn, pd) = (self.p_neumann, self.p_dirichlet)
@@ -147,10 +148,11 @@ class StaggeredDNDriver:
 
     def post_iterate(self, verbose=False):
         (pn, pd) = (self.p_neumann, self.p_dirichlet)
-        norm_diff_neumann    = pn.l2_dot_gamma(pn.u-self.previous_u_neumann)
-        norm_current_neumann = pn.l2_dot_gamma(pn.u)
+        self.neumann_res.x.array[:] = pn.u.x.array-self.previous_u_neumann.x.array
+        norm_diff_neumann    = self.l2_dot_neumann(self.neumann_res)
+        norm_current_neumann = self.l2_dot_neumann(pn.u)
         self.convergence_crit = np.sqrt(norm_diff_neumann) / np.sqrt(norm_current_neumann)
-        norm_res = pd.l2_dot_gamma(self.dirichlet_res)
+        norm_res = self.l2_dot_dirichlet(self.dirichlet_res)
         if rank==0:
             if verbose:
                 print(f"Staggered iteration #{self.iter}, omega = {self.relaxation_factor}, relative norm of difference: {self.convergence_crit}, norm residual: {norm_res}")
@@ -181,8 +183,8 @@ class StaggeredDNDriver:
             self.dirichlet_res_diff.x.array[self.gamma_dofs_dirichlet] = self.dirichlet_res.x.array[self.gamma_dofs_dirichlet] - \
                     self.dirichlet_prev_res.x.array[self.gamma_dofs_dirichlet]
             self.dirichlet_res_diff.x.scatter_forward()
-            self.relaxation_factor = - self.relaxation_factor * pd.l2_dot_gamma(self.dirichlet_prev_res,self.dirichlet_res_diff)
-            self.relaxation_factor /= pd.l2_dot_gamma(self.dirichlet_res_diff)
+            self.relaxation_factor = - self.relaxation_factor * self.l2_dot_dirichlet(self.dirichlet_prev_res,self.dirichlet_res_diff)
+            self.relaxation_factor /= self.l2_dot_dirichlet(self.dirichlet_res_diff)
             #self.relaxation_factor = self.initial_relaxation_factor
             #self.relaxation_factor = np.sign(self.relaxation_factor)*min(abs(self.relaxation_factor),abs(self.initial_relaxation_factor))
 

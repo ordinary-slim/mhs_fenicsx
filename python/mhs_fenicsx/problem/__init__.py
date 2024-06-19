@@ -440,24 +440,11 @@ class Problem:
             funcs.append(self.grad_u)
         if self.is_dirichlet_gamma:
             funcs.append(self.dirichlet_gamma)
-        # BDEBUG
-        try:
-            f = fem.Function(self.v,name="ext_act")
-            f.x.array[:] = self.ext_nodal_activation
-            funcs.append(f)
-        except AttributeError:
-            pass
-        #f.x.array[self.ext_nodal_activation] = 
-        # EDEBUG
         #BPARTITIONTAG
         partition = fem.Function(self.dg0_bg,name="partition")
         partition.x.array[:] = rank
         funcs.append(partition)
         #EPARTITIONTAG
-        #BDEBUG
-        if self.supg_elwise_coeff is not None:
-            funcs.append(self.supg_elwise_coeff)
-        #EDEBUG
 
         bnodes = indices_to_function(self.v,self.bfacets_tag.find(1),self.dim-1,name="bnodes")
         funcs.append(bnodes)
@@ -476,13 +463,22 @@ class Problem:
         with io.VTKFile(bmesh.comm, f"out/bmesh_{self.name}.pvd", "w") as ofile:
             ofile.write_mesh(bmesh)
 
-    def l2_dot_gamma( self, f : dolfinx.fem.Function, g : typing.Optional[dolfinx.fem.Function] = None ):
+class GammaL2Dotter:
+    def __init__(self,p:Problem):
+        gamma_ents = p.get_facet_integrations_entities()
+        ds_neumann = ufl.Measure('ds', domain=p.domain, subdomain_data=[
+            (8,np.asarray(gamma_ents, dtype=np.int32))])
+        self.f, self.g = (fem.Function(p.v),fem.Function(p.v))
+        l_ufl = self.f*self.g*ds_neumann(8)
+        self.l_compiled = fem.form(l_ufl)
+
+    def __call__(self,f:fem.Function,g:typing.Optional[fem.Function] = None):
+        #TODO: Assert f,self.f and g,self.g share same functionspace
+        #TODO: Copy only gamma nodes
+        self.f.x.array[:] = f.x.array
         if g is None:
             g = f
-        gamma_ents = self.get_facet_integrations_entities()
-        ds_neumann = ufl.Measure('ds', domain=self.domain, subdomain_data=[
-            (8,np.asarray(gamma_ents, dtype=np.int32))])
-        l_ufl = f*g*ds_neumann(8)
-        l2_norm = dolfinx.fem.assemble_scalar(fem.form(l_ufl))
+        self.g.x.array[:] = g.x.array
+        l2_norm = dolfinx.fem.assemble_scalar(self.l_compiled)
         l2_norm = comm.allreduce(l2_norm, op=MPI.SUM)
         return l2_norm

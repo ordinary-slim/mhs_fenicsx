@@ -24,9 +24,14 @@ class Track:
         self.power = power
         self.index = index
         self.length = np.linalg.norm(p1-p0)
-    def get_speed(self):
+
+    def get_direction(self):
         step = (self.p1-self.p0)
-        return self.speed*step/np.linalg.norm(step)
+        return step/np.linalg.norm(step)
+
+    def get_speed(self):
+        return self.speed*self.get_direction()
+
     def get_position(self,time):
         if (time < self.t0 or time > self.t1):
             raise Exception( "Time is out of bounds for this track.")

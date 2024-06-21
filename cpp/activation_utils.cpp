@@ -6,6 +6,8 @@
 #include <vector>
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <dolfinx/mesh/MeshTags.h>
+#include <numeric>
 
 template <std::floating_point T>
 std::vector<int> locate_active_boundary(const dolfinx::mesh::Mesh<T> &domain,
@@ -49,6 +51,7 @@ std::vector<int> locate_active_boundary(const dolfinx::mesh::Mesh<T> &domain,
 template <std::floating_point T>
 std::vector<int> deactivate_from_nodes(const dolfinx::mesh::Mesh<T> &domain,
                                        const std::span<const T> nodes_to_subtract) {
+  // TODO: Check if type of nodes_to_subtract should really be T ? Probably not
   // 1. Make vector
   auto topology = domain.topology();
   auto dofmap_x = domain.geometry().dofmap();
@@ -59,8 +62,6 @@ std::vector<int> deactivate_from_nodes(const dolfinx::mesh::Mesh<T> &domain,
   active_els_mask.set(1);// Start out as all active
   auto active_els_mask_vals = active_els_mask.mutable_array();
   // 2. Loop over els
-  auto con_cell_nodes = topology->connectivity(cdim,0);
-  assert(con_cell_nodes);
   for (int icell = 0; icell < num_local_cells; ++icell) {
     bool all_active_in_ext = true;
     auto xdofs = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
@@ -85,6 +86,48 @@ std::vector<int> deactivate_from_nodes(const dolfinx::mesh::Mesh<T> &domain,
   return active_els;
 }
 
+template <std::floating_point T>
+mesh::MeshTags<std::int32_t> find_interface(const dolfinx::mesh::Mesh<T> &domain,
+                                            mesh::MeshTags<std::int32_t> &bfacet_tag,
+                                            const dolfinx::common::IndexMap& dofs_index_map,
+                                            const std::span<const std::int32_t> &ext_active_dofs_flags) {
+  // Initialize arrays
+  auto topology = domain.topology();
+  int cdim = topology->dim();
+  auto node_map = topology->index_map(0);
+  auto facet_map = topology->index_map(cdim-1);
+  auto con_facet_nodes = topology->connectivity(cdim-1,0);
+
+  size_t total_facet_count = facet_map->size_local() + facet_map->num_ghosts();
+  std::vector<std::int32_t> tags(total_facet_count,0);
+  std::vector<std::int32_t> bfacets = bfacet_tag.find(1);
+  size_t num_nodes_facet = con_facet_nodes->num_links(0);// num links of first facet
+                                                         // assuming constant
+  std::vector<std::int64_t> global_indices_local_con(num_nodes_facet);
+  std::vector<std::int32_t> local_dofs(num_nodes_facet);
+  for (std::int32_t ifacet : bfacets) {
+    auto local_con = con_facet_nodes->links(ifacet);
+    node_map->local_to_global(local_con,global_indices_local_con);
+    dofs_index_map.global_to_local(global_indices_local_con,local_dofs);
+    bool all_active = std::all_of(local_dofs.begin(),
+                                  local_dofs.end(),
+                                  [&ext_active_dofs_flags](std::int32_t idof){
+                                    return ext_active_dofs_flags[idof];
+                                  });
+    if (all_active) {
+      if (ifacet < facet_map->size_local()) {
+        tags[ifacet] = 1;
+      } else {
+        tags[ifacet] = 2;
+      }
+    }
+  }
+
+  std::vector<std::int32_t> ents(total_facet_count);
+  std::iota(ents.begin(),ents.end(),0);
+  return mesh::MeshTags<std::int32_t>(topology,cdim-1,std::move(ents),std::move(tags));
+}
+
 
 namespace nb = nanobind;
 template <std::floating_point T>
@@ -97,6 +140,18 @@ void templated_declare_activation_utils(nb::module_ &m) {
       {
         return deactivate_from_nodes<T>(domain,
                                         std::span(nodes_to_subtract.data(),nodes_to_subtract.size()));
+      }
+      );
+  m.def("find_interface",
+      [](const dolfinx::mesh::Mesh<T> &domain,
+         mesh::MeshTags<std::int32_t> &bfacet_tag,
+         const dolfinx::common::IndexMap& dofs_index_map,
+         nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> ext_active_dofs_flags)
+      {
+        return find_interface(domain,
+                              bfacet_tag,
+                              dofs_index_map,
+                              std::span(ext_active_dofs_flags.data(),ext_active_dofs_flags.size()));
       }
       );
 }

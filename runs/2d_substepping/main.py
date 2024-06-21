@@ -46,6 +46,8 @@ def main():
     big_p.solve()
     big_p.post_iterate()
 
+    big_p.writepos()
+
     t1_macro_step = big_p.time
     # MICRO-STEP
     # Determine geometry of subproblem
@@ -64,16 +66,29 @@ def main():
                                    shrink=False)
     obb_mesh = obb.get_dolfinx_mesh()
     subproblem_els = mhs_fenicsx.geometry.mesh_collision(big_p.domain,obb_mesh,bb_tree_mesh_big=big_p.bb_tree)
-    # Extract subproblem
-    submesh, _, _, _ = mesh.create_submesh(big_mesh,big_p.dim,subproblem_els)
+    # Extract subproblem: TODO: Extract necessary functions
+    submesh, entity_map, vertex_map, xdof_map = mesh.create_submesh(big_mesh,big_p.dim,subproblem_els)
     micro_params = params.copy()
     micro_params["dt"] = get_dt(params["micro_adim_dt"])
     small_p = Problem(submesh,micro_params, name="small")
 
-    # TODO 1: Solve on micro problem
-    big_p.writepos()
-    small_p.writepos()
+    # Time-loop subproblem
+    small_p.set_forms_domain()
+    small_p.compile_forms()
+    # Add Dirichlet condition
+    small_p.u_prev.x.array[:] = big_p.u_prev.x.array[xdof_map]
+    small_p.add_dirichlet_bc(small_p.u_prev)
+    while (big_p.time - small_p.time) > 1e-7:
+        small_p.pre_iterate()
+        small_p.pre_assemble()
+        small_p.assemble()
+        small_p.solve()
+        small_p.post_iterate()
+        small_p.writepos()
 
+    # TODO: Sketch out last corrector step
+    import pdb
+    pdb.set_trace()
 
 if __name__=="__main__":
     main()

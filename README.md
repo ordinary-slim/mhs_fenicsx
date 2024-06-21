@@ -1,6 +1,3 @@
-#TODO:
-1. find_gamma to c++
-
 From this directory, run:
 
 ```

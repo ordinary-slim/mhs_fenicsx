@@ -248,39 +248,18 @@ class Problem:
         self.find_gamma(self.ext_nodal_activation)
 
     def find_gamma(self,ext_active_dofs_array):
-        loc_gamma_facets = []
-        ghost_gamma_facets = []
-        all_gamma_facets = []
-        #ext_active_dofs_func = self.get_active_in_external( p_ext )
-        # Loop over boundary facets, get incident nodes,
-        # if all nodes of facet are active in external --> gamma facet
-        self.domain.topology.create_connectivity(self.dim-1, 0)
-        con_facet_nodes = self.domain.topology.connectivity(self.dim-1, 0)
-        for ifacet in self.bfacets_tag.find(1):
-            local_con = con_facet_nodes.links(ifacet)
-            local_con_global = self.domain.topology.index_map(0).local_to_global(local_con)
-            local_con_space = self.v_bg.dofmap.index_map.global_to_local(local_con_global)
-            all_nodes_active = True
-            for inode in local_con_space:
-                if not(ext_active_dofs_array[inode]):
-                    all_nodes_active = False
-                    break
-            if all_nodes_active:
-                all_gamma_facets.append(ifacet)
-                if ifacet < self.facet_map.size_local:
-                    loc_gamma_facets.append(ifacet)
-                else:
-                    ghost_gamma_facets.append(ifacet)
-        self.gamma_facets = mesh.meshtags(self.domain, self.dim-1,
-                                         np.arange(self.num_facets, dtype=np.int32),
-                                         get_mask(self.num_facets, [loc_gamma_facets,ghost_gamma_facets], val=[1,2]),)
+        self.gamma_facets = mesh.MeshTags(mhs_fenicsx_cpp.find_interface(self.domain._cpp_object,
+                                                       self.bfacets_tag._cpp_object,
+                                                       self.v_bg.dofmap.index_map,
+                                                       ext_active_dofs_array))
+
         self.gamma_nodes = indices_to_function(self.v,
                                          self.gamma_facets.find(1),
                                          self.dim-1,
                                          name="gammaNodes",)
         self.gamma_facets_index_map, \
         gamma_imap_to_global_imap = cpp.common.create_sub_index_map(self.facet_map,
-                                                    np.array(all_gamma_facets,dtype=np.int32),
+                                                    self.gamma_facets.values.nonzero()[0],
                                                     False)
         self.gamma_imap_to_global_imap = mhs_fenicsx_cpp.int_map()
         for i in range(len(gamma_imap_to_global_imap)):

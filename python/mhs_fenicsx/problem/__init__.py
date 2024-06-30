@@ -224,6 +224,7 @@ class Problem:
                                          get_mask(self.num_facets,
                                                   bfacets_indices, dtype=np.int32),
                                          )
+        # If needed, we are creating bnodes_tag in find_interface with child problem
 
     def compute_gradient(self):
         if not(self.is_grad_computed):
@@ -269,12 +270,13 @@ class Problem:
         if reset:
             self.dirichlet_bcs = []
         if bdofs is None:
-            if bfacets_tag is None:
-                if marker==None:
+            if (marker is not None):
+                bdofs  = fem.locate_dofs_geometrical(self.v,marker)
+            else:
+                if bfacets_tag is None:
                     bfacets_tag = self.bfacets_tag
-                    bdofs = fem.locate_dofs_topological(self.v, self.dim-1, bfacets_tag.find(1),)
-                else:
-                    bdofs  = fem.locate_dofs_geometrical(self.v,marker)
+                bdofs = fem.locate_dofs_topological(self.v, self.dim-1, bfacets_tag.find(1),)
+
         u_bc = fem.Function(self.v)
         u_bc.interpolate(func)
         bc = fem.dirichletbc(u_bc, bdofs)
@@ -317,6 +319,7 @@ class Problem:
         rn must be called after set_forms_domain
         since a_ufl and l_ufl not initialized before
         '''
+        #TODO: Exclude Gamma facets from this!
         boun_integral_entities = self.get_facet_integrations_entities(self.bfacets_tag.find(1))
         ds = ufl.Measure('ds', domain=self.domain, subdomain_data=[
                          (1,np.asarray(boun_integral_entities, dtype=np.int32))],

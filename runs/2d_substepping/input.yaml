@@ -19,7 +19,7 @@ material_metal : {
 environment_temperature : 25
 # END_ESSENTIAL
 case_name: "cranberries"
-els_per_radius: 16
+els_per_radius: 4
 #petsc_opts_fixed: {
 #  "ksp_type" : "cg",
 #  "ksp_rtol" : 1e-10,

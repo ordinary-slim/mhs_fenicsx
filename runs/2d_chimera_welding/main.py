@@ -8,7 +8,7 @@ import yaml
 from helpers import interpolate_solution_to_inactive, mesh_around_hs, build_moving_problem, get_active_in_external_trees
 from line_profiler import LineProfiler
 from mhs_fenicsx.geometry import mesh_containment
-from mhs_fenicsx.drivers.staggered_dn_driver import StaggeredDNDriver
+from mhs_fenicsx.drivers.staggered_dn_driver import StaggeredDNDriver, StaggeredRRDriver
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()

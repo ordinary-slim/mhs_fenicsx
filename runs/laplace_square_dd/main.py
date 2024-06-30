@@ -6,7 +6,7 @@ from mpi4py import MPI
 from mhs_fenicsx.problem import Problem, interpolate_dg_at_facets, interpolate
 from line_profiler import LineProfiler
 import yaml
-from mhs_fenicsx.drivers.staggered_dn_driver import StaggeredDNDriver
+from mhs_fenicsx.drivers.staggered_dn_driver import StaggeredDNDriver, StaggeredRRDriver
 import trace, sys
 
 comm = MPI.COMM_WORLD
@@ -49,10 +49,10 @@ def getPartition(p:Problem):
     f.x.array.fill(rank)
     return f
 
-def set_bc(pn,pd):
+def set_bc(pd,pn):
     # Set outside Dirichlet
-    pn.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
     pd.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
+    pn.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
 
 def main():
     # Mesh and problems
@@ -75,14 +75,14 @@ def main():
     p_left.set_rhs(rhs)
     p_right.set_rhs(rhs)
 
-    driver = StaggeredDNDriver(p_right,p_left,max_staggered_iters=params["max_staggered_iters"])
+    driver = StaggeredRRDriver(p_right,p_left,max_staggered_iters=params["max_staggered_iters"])
 
     driver.pre_loop(set_bc=set_bc)
     for _ in range(driver.max_staggered_iters):
         driver.pre_iterate()
         driver.iterate()
         driver.post_iterate(verbose=True)
-        driver.writepos(extra_funcs_neumann=[exact_left],extra_funcs_dirichlet=[exact_right])
+        driver.writepos(extra_funcs_p2=[exact_left],extra_funcs_p1=[exact_right])
         if driver.convergence_crit < driver.convergence_threshold:
             break
     driver.post_loop()
@@ -99,9 +99,8 @@ if __name__=="__main__":
         lp.add_function(interpolate_dg_at_facets)
         lp_wrapper = lp(main)
         lp_wrapper()
-        if rank==0:
-            with open("profiling.txt", 'w') as pf:
-                lp.print_stats(stream=pf)
+        with open(f"profiling_rank{rank}.txt", 'w') as pf:
+            lp.print_stats(stream=pf)
     elif tracing:
         # define Trace object: trace line numbers at runtime, exclude some modules
         tracer = trace.Trace(

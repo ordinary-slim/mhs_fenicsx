@@ -47,7 +47,7 @@ def main():
     p_fixed.set_initial_condition(T_env)
     p_moving.set_initial_condition(T_env)
 
-    driver = StaggeredDNDriver(p_moving,p_fixed,params["max_staggered_iters"],
+    driver = StaggeredRRDriver(p_moving,p_fixed,params["max_staggered_iters"],
                                initial_relaxation_factor=0.5)
 
     for _ in range(max_temporal_iters):

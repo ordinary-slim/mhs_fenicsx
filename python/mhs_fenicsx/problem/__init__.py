@@ -39,7 +39,8 @@ class Problem:
                                                            shape=(self.dim,)))
         self.restriction = None
 
-        self.domain.topology.create_entities(self.dim-1)
+        if self.domain.topology.index_map(self.dim-1) is None:
+            self.domain.topology.create_entities(self.dim-1)
         self.domain.topology.create_connectivity(self.dim,self.dim)
         self.domain.topology.create_connectivity(domain.topology.dim-1, domain.topology.dim)
         # Set num cells per processor

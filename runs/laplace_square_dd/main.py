@@ -6,7 +6,7 @@ from mpi4py import MPI
 from mhs_fenicsx.problem import Problem, interpolate_dg_at_facets, interpolate
 from line_profiler import LineProfiler
 import yaml
-from mhs_fenicsx.drivers.staggered_dn_driver import StaggeredDNDriver, StaggeredRRDriver
+from mhs_fenicsx.drivers.staggered_drivers import StaggeredDNDriver, StaggeredRRDriver
 import trace, sys
 
 comm = MPI.COMM_WORLD
@@ -93,6 +93,7 @@ if __name__=="__main__":
     if profiling:
         lp = LineProfiler()
         lp.add_module(StaggeredDNDriver)
+        lp.add_module(StaggeredRRDriver)
         lp.add_module(Problem)
         lp.add_function(interpolate)
         lp.add_function(fem.Function.interpolate)

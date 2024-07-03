@@ -113,14 +113,14 @@ class MHSSubsteppingDriver:
                                                                submesh,
                                                                self.subcell_map,
                                                                self.subvertex_map)
+        self.find_interface()
         self.bc_from_predictor = fem.Function(self.fast_problem.v,name="predictor_bc")
         # Extract necessary functions
         self.inherit_functions([self.bc_from_predictor,pf.u],[ps.u,ps.u_prev])
         self.u_prev_macro = pf.u.copy()
 
-    def inherit_functions(self,fs_sub:list[fem.Function],fs_par:list[fem.Function]):
-        (ps,pf) = (self.slow_problem,self.fast_problem)
-        for fr,fs in zip(fs_sub,fs_par):
+    def inherit_functions(self,fr_sub:list[fem.Function],fs_par:list[fem.Function]):
+        for fr,fs in zip(fr_sub,fs_par):
             fr.interpolate(fs,cells0=self.subcell_map,cells1=np.arange(len(self.subcell_map)))
 
     def find_interface(self):
@@ -133,6 +133,28 @@ class MHSSubsteppingDriver:
         self.gamma_fast =  mesh.meshtags(pf.domain, cdim-1,
                                          np.arange(pf.num_facets, dtype=np.int32),
                                          mask)
+        # Build interpolation data dg0 boundary
+        tdim = self.fast_problem.domain.topology.dim
+        ccon_f2c = self.fast_problem.domain.topology.connectivity(tdim-1,tdim)
+        pcon_f2c = self.slow_problem.domain.topology.connectivity(tdim-1,tdim)
+        indices_gamma_facets = self.gamma_fast.values.nonzero()[0]
+        num_gamma_facets = len(indices_gamma_facets)
+        self.cinterface_cells = np.full(num_gamma_facets,-1)
+        self.pinterface_cells = np.full(num_gamma_facets,-1)
+        for idx in range(num_gamma_facets):
+            ifacet = indices_gamma_facets[idx]
+            ccell = ccon_f2c.links(ifacet)
+            assert(len(ccell)==1)
+            ccell = ccell[0]
+            if ccell >= self.fast_problem.cell_map.size_local:
+                continue
+            self.cinterface_cells[idx] = ccell
+            pifacet = self.subfacet_map[ifacet]
+            pcells = pcon_f2c.links(pifacet)
+            if pcells[0] == self.subcell_map[ccell]:
+                self.pinterface_cells[idx] = pcells[1]
+            else:
+                self.pinterface_cells[idx] = pcells[0]
         # TODO: Mark interface in parent mesh
 
     def set_dirichlet_interface(self):
@@ -173,6 +195,11 @@ class MHSSubsteppingDriver:
             print(f"Percentage of completion of micro-steps: {100*self.fraction_macro_step}%")
             pf.writepos(extra_funcs=[gamma_nodes,self.bc_from_predictor])
 
+def interpolate_dg0_cells_to_cells(fs,fr,scells,rcells):
+    block_size = fr.function_space.value_size
+    for rcell,scell in zip(rcells,scells):
+        fr.x.array[rcell*block_size:rcell*block_size+block_size] = fs.x.array[scell*block_size:scell*block_size+block_size]
+    fr.x.scatter_forward()
 
 def main():
     write_gcode()
@@ -191,48 +218,16 @@ def main():
     driver = MHSSubsteppingDriver(big_p)
     driver.predictor_step()
     driver.extract_subproblem() # generates driver.fast_problem
-    driver.find_interface()
     driver.micro_steps()
     big_p.writepos()
 
-    #TODO: Move this to functino
-    # Build interpolation data dg0 boundary
-    tdim = driver.fast_problem.domain.topology.dim
-    ccon_f2c = driver.fast_problem.domain.topology.connectivity(tdim-1,tdim)
-    pcon_f2c = driver.slow_problem.domain.topology.connectivity(tdim-1,tdim)
-    indices_gamma_facets = driver.gamma_fast.values.nonzero()[0]
-    num_gamma_facets = len(indices_gamma_facets)
-    cells_interface = np.full(num_gamma_facets,-1)
-    neighbour_cells_interface = np.full(num_gamma_facets,-1)
-    for idx in range(num_gamma_facets):
-        ifacet = indices_gamma_facets[idx]
-        ccell = ccon_f2c.links(ifacet)
-        assert(len(ccell)==1)
-        ccell = ccell[0]
-        if ccell >= driver.fast_problem.cell_map.size_local:
-            continue
-        cells_interface[idx] = ccell
-        pifacet = driver.subfacet_map[ifacet]
-        pcells = pcon_f2c.links(pifacet)
-        pcells_computed = mesh.compute_incident_entities(big_p.domain.topology,np.array([pifacet],dtype=np.int32),big_p.dim-1,big_p.dim)
-        if pcells[0] == driver.subcell_map[ccell]:
-            try:
-                neighbour_cells_interface[idx] = pcells[1]
-            except IndexError:
-                print(f"rank: {rank}, ifacet: {ifacet}, size local: {driver.fast_problem.facet_map.size_local}, ccell: {ccell}, pifacet: {pifacet}, size local: {driver.slow_problem.facet_map.size_local}, pcells: {pcells}, pcells_compute_inc: {pcells_computed}")
-                exit()
-        else:
-            neighbour_cells_interface[idx] = pcells[0]
 
     # Interpolate
     big_p.u.interpolate(lambda x : np.power(x[0],2))
+    grad_u_fast = driver.fast_problem.grad_u
     big_p.is_grad_computed = False
     big_p.compute_gradient()
-    grad_u_fast = driver.fast_problem.grad_u
-    block_size = driver.fast_problem.grad_u.function_space.value_size
-    for cell,pcell in zip(cells_interface,neighbour_cells_interface):
-        grad_u_fast.x.array[cell*block_size:cell*block_size+block_size] = big_p.grad_u.x.array[pcell*block_size:pcell*block_size+block_size]
-    grad_u_fast.x.scatter_forward()
+    interpolate_dg0_cells_to_cells(big_p.grad_u,grad_u_fast,driver.pinterface_cells,driver.cinterface_cells)
     grad_u_fast.is_grad_computed = True
 
     driver.fast_problem.time = 999

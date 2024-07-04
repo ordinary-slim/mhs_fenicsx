@@ -54,35 +54,39 @@ def set_bc(pd,pn):
     pd.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
     pn.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
 
-def main():
+def run(dd_type="dn"):
+    if dd_type=="robin":
+        driver_type = StaggeredRRDriver
+    elif dd_type=="dn":
+        driver_type = StaggeredDNDriver
+    else:
+        raise ValueError("dd_type must be 'dn' or 'robin'")
     # Mesh and problems
     points_side = params["points_side"]
     left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.quadrilateral)
     right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.triangle)
-    p_left = Problem(left_mesh, params, name="left")
-    p_right = Problem(right_mesh, params, name="right")
+    p_left = Problem(left_mesh, params, name=f"left_{dd_type}")
+    p_right = Problem(right_mesh, params, name=f"right_{dd_type}")
     # Activation
-    active_els_left = fem.locate_dofs_geometrical(p_left.dg0_bg, lambda x : x[0] <= 0.5 )
-    active_els_right = fem.locate_dofs_geometrical(p_right.dg0_bg, lambda x : x[0] >= 0.5 )
+    active_els = dict()
+    active_els[p_left] = fem.locate_dofs_geometrical(p_left.dg0_bg, lambda x : x[0] <= 0.5 )
+    active_els[p_right] = fem.locate_dofs_geometrical(p_right.dg0_bg, lambda x : x[0] >= 0.5 )
 
-    p_left.set_activation( active_els_left )
-    p_right.set_activation( active_els_right )
+    f_exact = dict()
+    for p in [p_left,p_right]:
+        p.set_activation(active_els[p])
+        f_exact[p] = fem.Function(p.v,name="exact")
+        f_exact[p].interpolate(exact_sol)
+        p.set_rhs(rhs)
 
-    exact_left = fem.Function(p_left.v,name="exact")
-    exact_right = fem.Function(p_right.v,name="exact")
-    exact_left.interpolate(exact_sol)
-    exact_right.interpolate(exact_sol)
-    p_left.set_rhs(rhs)
-    p_right.set_rhs(rhs)
-
-    driver = StaggeredRRDriver(p_right,p_left,max_staggered_iters=params["max_staggered_iters"])
+    driver = driver_type(p_right,p_left,max_staggered_iters=params["max_staggered_iters"])
 
     driver.pre_loop(set_bc=set_bc)
     for _ in range(driver.max_staggered_iters):
         driver.pre_iterate()
         driver.iterate()
         driver.post_iterate(verbose=True)
-        driver.writepos(extra_funcs_p2=[exact_left],extra_funcs_p1=[exact_right])
+        driver.writepos(extra_funcs_p1=[f_exact[p_right]],extra_funcs_p2=[f_exact[p_left]])
         if driver.convergence_crit < driver.convergence_threshold:
             break
     driver.post_loop()
@@ -98,7 +102,7 @@ if __name__=="__main__":
         lp.add_function(interpolate)
         lp.add_function(fem.Function.interpolate)
         lp.add_function(interpolate_dg_at_facets)
-        lp_wrapper = lp(main)
+        lp_wrapper = lp(run)
         lp_wrapper()
         with open(f"profiling_rank{rank}.txt", 'w') as pf:
             lp.print_stats(stream=pf)

@@ -183,7 +183,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         # Interpolate
         pd.dirichlet_gamma.interpolate_nonmatching(pn.u,
                                                   cells=self.gamma_cells[pd],
-                                                  interpolation_data=self.iid[p2][p1])
+                                                  interpolation_data=self.iid[pn][pd])
         pd.dirichlet_gamma.x.scatter_forward()
         if self.iter > 1:
             self.dirichlet_prev_res.x.array[self.gamma_dofs[self.p1]] = self.dirichlet_res.x.array[self.gamma_dofs[self.p1]]

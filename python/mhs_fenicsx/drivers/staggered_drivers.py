@@ -7,6 +7,7 @@ from mhs_fenicsx.problem import Problem, GammaL2Dotter
 from mhs_fenicsx_cpp import interpolate_dg0_at_facets, cellwise_determine_point_ownership
 from line_profiler import LineProfiler
 from petsc4py import PETSc
+import shutil
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -28,8 +29,10 @@ class StaggeredDomainDecompositionDriver:
             w.close()
 
     def initialize_post(self):
+        self.result_folder = f"staggered_out"
+        shutil.rmtree(self.result_folder,ignore_errors=True)
         for p in [self.p1,self.p2]:
-            self.writers[p] = io.VTKFile(p.domain.comm, f"staggered_out/staggered_iters_{p.name}.pvd", "wb")
+            self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/staggered_iters_{p.name}.pvd", "wb")
 
     def post_loop(self):
         for p in [self.p1, self.p2]:
@@ -286,6 +289,8 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
 
     def writepos(self,extra_funcs_p1=[],extra_funcs_p2=[]):
         (p1,p2) = (self.p1,self.p2)
+        if not(self.is_post_initialized):
+            self.initialize_post()
         extra_funcs_p1 = [p1.dirichlet_gamma, p1.neumann_flux, self.ext_conductivity[p1],] + extra_funcs_p1
         extra_funcs_p2 = [p2.dirichlet_gamma, p2.neumann_flux, self.ext_conductivity[p2],] + extra_funcs_p2
         StaggeredDomainDecompositionDriver.write_results(self,extra_funcs_p1=extra_funcs_p1,extra_funcs_p2=extra_funcs_p2)

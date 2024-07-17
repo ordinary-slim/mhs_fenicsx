@@ -55,6 +55,7 @@ def set_bc(pd,pn):
     pn.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
 
 def run(dd_type="dn"):
+    dd_type=params["dd_type"] if "dd_type" in params else dd_type
     if dd_type=="robin":
         driver_type = StaggeredRRDriver
     elif dd_type=="dn":

@@ -19,46 +19,60 @@ class StaggeredDomainDecompositionDriver:
         self.max_staggered_iters = max_staggered_iters
         self.convergence_crit = 1e9
         self.convergence_threshold = 1e-6
-        self.writer1 = io.VTKFile(self.p1.domain.comm, f"staggered_out/staggered_iters_{self.p1.name}.pvd", "wb")
-        self.writer2 = io.VTKFile(self.p2.domain.comm, f"staggered_out/staggered_iters_{self.p2.name}.pvd", "wb")
+        self.writers = dict()
         self.iter = -1
+        self.is_post_initialized = False
+
+    def __del__(self):
+        for w in self.writers.values():
+            w.close()
+
+    def initialize_post(self):
+        for p in [self.p1,self.p2]:
+            self.writers[p] = io.VTKFile(p.domain.comm, f"staggered_out/staggered_iters_{p.name}.pvd", "wb")
 
     def post_loop(self):
-        self.p1.post_iterate()
-        self.p2.post_iterate()
+        for p in [self.p1, self.p2]:
+            p.post_iterate()
 
     def pre_iterate(self):
+        (p1,p2) = (self.p1, self.p2)
         if self.iter == 0:
-            self.previous_u1 = self.p1.u.copy();self.previous_u1.name="previous_u"
-            self.previous_u2 = self.p2.u.copy();self.previous_u2.name="previous_u"
+            self.previous_u = dict()
+            for p in [p1,p2]:
+                self.previous_u[p] = p.u.copy();self.previous_u[p].name="previous_u"
         else:
-            self.previous_u1.x.array[:] = self.p1.u.x.array
-            self.previous_u2.x.array[:] = self.p2.u.x.array
+            for p in [p1,p2]:
+                self.previous_u[p].x.array[:] = p.u.x.array
         self.iter += 1
 
     def write_results(self,extra_funcs_p1=[],extra_funcs_p2=[]):
         (p1, p2) = (self.p1, self.p2)
-        pos_functions_p1 = [p1.u,
+        pos_funs = dict()
+
+        # PARTITION
+        ranks = dict()
+        for p in [self.p1,self.p2]:
+            ranks[p] = fem.Function(p.dg0_bg,name="partition")
+            ranks[p].x.array[:] = rank
+
+        pos_funs[self.p1] = [p1.u,
                             p1.active_els_func,
                             p1.source_rhs,
-                            self.previous_u1,]
-        pos_functions_p2 = [p2.u,
+                            self.previous_u[self.p1],
+                            ranks[p1],]
+
+        pos_funs[self.p2] = [p2.u,
                             p2.active_els_func,
                             p2.source_rhs,
-                            self.previous_u2,]
+                            self.previous_u[self.p2],
+                            ranks[p2],]
 
-        pos_functions_p1.extend(extra_funcs_p1)
-        pos_functions_p2.extend(extra_funcs_p2)
-        # PARTITION
-        ranks1 = fem.Function(p1.dg0_bg,name="partition")
-        ranks2 = fem.Function(p2.dg0_bg,name="partition")
-        ranks1.x.array[:] = rank
-        ranks2.x.array[:] = rank
-        pos_functions_p1.append(ranks1)
-        pos_functions_p2.append(ranks2)
+        for p,extra_funs in zip([self.p1,self.p2],[extra_funcs_p1,extra_funcs_p2]):
+            pos_funs[p].extend(extra_funs)
         # EPARTITION
-        self.writer1.write_function(pos_functions_p1,t=self.iter)
-        self.writer2.write_function(pos_functions_p2,t=self.iter)
+        for p in [self.p1,self.p2]:
+            self.writers[p].write_function(pos_funs[p],t=self.iter)
 
     def set_interface(self):
         (p1, p2) = (self.p1, self.p2)
@@ -115,6 +129,8 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
 
     def writepos(self,extra_funcs_p1=[],extra_funcs_p2=[]):
         (pd,pn) = (self.p_dirichlet,self.p_neumann)
+        if not(self.is_post_initialized):
+            self.initialize_post()
         extra_funcs_p1 = [pd.dirichlet_gamma, pd.grad_u] + extra_funcs_p1
         extra_funcs_p2 = [pn.neumann_flux, self.ext_conductivity,] + extra_funcs_p2
                             
@@ -160,7 +176,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
 
     def post_iterate(self, verbose=False):
         (pn, pd) = (self.p_neumann, self.p_dirichlet)
-        self.neumann_res.x.array[:] = pn.u.x.array-self.previous_u2.x.array
+        self.neumann_res.x.array[:] = pn.u.x.array-self.previous_u[self.p2].x.array
         norm_diff_neumann    = self.l2_dot_neumann(self.neumann_res)
         norm_current_neumann = self.l2_dot_neumann(pn.u)
         self.convergence_crit = np.sqrt(norm_diff_neumann) / np.sqrt(norm_current_neumann)
@@ -307,7 +323,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
 
     def post_iterate(self, verbose=False):
         (p2, p1) = (self.p2, self.p1)
-        self.gamma_residual[p2].x.array[:] = p2.u.x.array-self.previous_u2.x.array
+        self.gamma_residual[p2].x.array[:] = p2.u.x.array-self.previous_u[self.p2].x.array
         norm_diff_neumann    = self.l2_dot[p2](self.gamma_residual[p2])
         norm_current_neumann = self.l2_dot[p2](p2.u)
         self.convergence_crit = np.sqrt(norm_diff_neumann) / np.sqrt(norm_current_neumann)

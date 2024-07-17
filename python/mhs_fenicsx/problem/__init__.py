@@ -84,6 +84,12 @@ class Problem:
         self.domain_speed     = np.array(parameters["domain_speed"]) if "domain_speed" in parameters else None
         advection_speed = parameters["advection_speed"][:self.domain.topology.dim] if "advection_speed" in parameters else np.zeros(self.domain.topology.dim)
         self.advection_speed = fem.Constant(self.domain,advection_speed)
+        angular_advection_speed = parameters["angular_advection_speed"] if "angular_advection_speed" in parameters else np.zeros(3)
+        if self.domain.topology.dim < 3:
+            angular_advection_speed = np.sum(angular_advection_speed)
+        self.angular_advection_speed = fem.Constant(self.domain,angular_advection_speed)
+        rotation_center = parameters["rotation_center"][:self.domain.topology.dim] if "rotation_center" in parameters else np.zeros(self.domain.topology.dim)
+        self.rotation_center = fem.Constant(self.domain,rotation_center)
         # Stabilization
         self.is_supg = False
         if ("supg" in parameters):
@@ -94,12 +100,13 @@ class Problem:
         # Integration
         self.quadrature_metadata = {"quadrature_rule":"vertex",
                                     "quadrature_degree":1, }
-        self.initialize_post()
+        self.writers = dict()
+        self.is_post_initialized = False
         self.set_linear_solver(parameters["petsc_opts"] if "petsc_opts" in parameters else None)
 
     def __del__(self):
-        self.writer.close()
-        self.writer_vtx.close()
+        for writer in self.writers.values():
+            writer.close()
 
     def set_initial_condition( self, expression ):
         try:
@@ -314,6 +321,14 @@ class Problem:
                                 self.supg_elwise_coeff * self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(1)
                 self.l_ufl += self.source_rhs * \
                         self.supg_elwise_coeff * self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(1)
+        if np.linalg.norm(self.angular_advection_speed.value):
+            x = ufl.SpatialCoordinate(self.domain)
+            if self.dim < 3:
+                pointwise_advection_speed = (self.angular_advection_speed)*ufl.perp(x-self.rotation_center)
+            else:
+                pointwise_advection_speed = ufl.cross(self.angular_advection_speed,x-self.rotation_center)
+            self.a_ufl += self.rho*self.cp*ufl.dot(pointwise_advection_speed,ufl.grad(u))*v*dx(1)
+
 
     def set_forms_boundary(self):
         '''
@@ -405,10 +420,13 @@ class Problem:
     def initialize_post(self):
         self.result_folder = f"post_{self.name}"
         shutil.rmtree(self.result_folder,ignore_errors=True)
-        self.writer = io.VTKFile(self.domain.comm, f"{self.result_folder}/{self.name}.pvd", "wb")
-        self.writer_vtx = io.VTXWriter(self.domain.comm, f"{self.result_folder}/{self.name}.bp",output=[self.u,self.source_rhs,self.active_nodes_func])
+        self.writers["vtk"] = io.VTKFile(self.domain.comm, f"{self.result_folder}/{self.name}.pvd", "wb")
+        self.writers["vtx"] = io.VTXWriter(self.domain.comm, f"{self.result_folder}/{self.name}.bp",output=[self.u,self.source_rhs,self.active_nodes_func])
+        self.is_post_initialized = True
 
     def writepos(self,extra_funcs=[]):
+        if not(self.is_post_initialized):
+            self.initialize_post()
         funcs = [self.u,
                  #self.u_prev,
                  self.active_els_func,
@@ -432,10 +450,10 @@ class Problem:
         bnodes = indices_to_function(self.v,self.bfacets_tag.find(1),self.dim-1,name="bnodes")
         funcs.append(bnodes)
         funcs.extend(extra_funcs)
-        self.writer.write_function(funcs,t=np.round(self.time,7))
+        self.writers["vtk"].write_function(funcs,t=np.round(self.time,7))
 
     def writepos_vtx(self):
-        self.writer_vtx.write(self.time)
+        self.writers["vtx"].write(self.time)
 
     def clear_dirchlet_bcs(self):
         self.dirichlet_bcs = []

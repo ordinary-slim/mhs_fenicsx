@@ -60,10 +60,10 @@ class Problem:
         self.dirichlet_bcs = []
 
         # BCs / Interface
+        # Ideally remove this from here and driver takes care of this
         self.gamma_nodes = None
         self.neumann_flux = None
-        self.dirichlet_gamma = fem.Function(self.v,name="dirichlet_gamma")
-        self.is_dirichlet_gamma = False
+        self.dirichlet_gamma = None
 
         # Source term
         if self.dim == 1:
@@ -79,7 +79,7 @@ class Problem:
         self.is_steady = parameters["isSteady"]
         self.iter     = 0
         self.time     = 0.0
-        self.dt       = fem.Constant(self.domain, parameters["dt"]) if not(self.is_steady) else -1
+        self.dt       = fem.Constant(self.domain, parameters["dt"]) if not(self.is_steady) else fem.Constant(self.domain, -1.0)
         # Motion
         self.domain_speed     = np.array(parameters["domain_speed"]) if "domain_speed" in parameters else None
         advection_speed = parameters["advection_speed"][:self.domain.topology.dim] if "advection_speed" in parameters else np.zeros(self.domain.topology.dim)
@@ -169,7 +169,7 @@ class Problem:
                 2 * self.supg_elwise_coeff.x.array[:] * self.rho.x.array[:] * self.cp.x.array[:]*advection_norm + \
                  4 * self.k.x.array[:])
 
-    def pre_iterate(self):
+    def pre_iterate(self,forced_time_derivative=False):
         # Pre-iterate source first, current track is tn's
         if rank==0:
             print(f"\nProblem {self.name} about to solve for iter {self.iter+1}, time {self.time+self.dt.value}")
@@ -183,7 +183,8 @@ class Problem:
         self.source_rhs.interpolate(self.source)
         self.iter += 1
         self.time += self.dt.value
-        self.u_prev.x.array[:] = self.u.x.array
+        if not(forced_time_derivative):
+            self.u_prev.x.array[:] = self.u.x.array
 
     def post_iterate(self):
         self._destroy()
@@ -201,6 +202,7 @@ class Problem:
         self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
         self.update_boundary()
 
+    # TODO: Overload this function
     def set_activation(self, active_els=None):
         '''
         TODO: Refactor so that if arg None, do nothing.
@@ -215,7 +217,7 @@ class Problem:
         #self.active_els_func.x.scatter_forward()
 
         old_active_dofs_array  = self.active_nodes_func.x.array.copy()
-        self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,remote=False)
+        self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,remote=True)
         self.active_nodes_func.x.array[:] = np.float64(0.0)
         self.active_nodes_func.x.array[self.active_dofs] = np.float64(1.0)
         #self.active_nodes_func.x.scatter_forward()
@@ -257,11 +259,21 @@ class Problem:
         self.find_gamma(self.ext_nodal_activation)
 
     def find_gamma(self,ext_active_dofs_array):
+        # TODO: Add p_ext as argument
         self.gamma_facets = mesh.MeshTags(mhs_fenicsx_cpp.find_interface(self.domain._cpp_object,
                                                        self.bfacets_tag._cpp_object,
                                                        self.v_bg.dofmap.index_map,
                                                        ext_active_dofs_array))
+        self.update_gamma_data()
 
+    def set_gamma(self,gamma_facets_tag):
+        assert(gamma_facets_tag.dim==self.dim-1)
+        assert(self.domain.topology==gamma_facets_tag.topology)
+        self.gamma_facets = gamma_facets_tag
+        self.update_gamma_data()
+
+    def update_gamma_data(self,p_ext=None):
+        # TODO: Add p_ext as argument
         self.gamma_nodes = indices_to_function(self.v,
                                          self.gamma_facets.find(1),
                                          self.dim-1,
@@ -439,7 +451,7 @@ class Problem:
             funcs.append(self.gamma_nodes)
         if self.is_grad_computed:
             funcs.append(self.grad_u)
-        if self.is_dirichlet_gamma:
+        if self.dirichlet_gamma is not None:
             funcs.append(self.dirichlet_gamma)
         #BPARTITIONTAG
         partition = fem.Function(self.dg0_bg,name="partition")
@@ -457,7 +469,6 @@ class Problem:
 
     def clear_dirchlet_bcs(self):
         self.dirichlet_bcs = []
-        self.is_dirichlet_gamma = False
 
     def write_bmesh(self):
         bmesh = dolfinx.mesh.create_submesh(self.domain,self.dim-1,self.bfacets_tag.find(1))[0]

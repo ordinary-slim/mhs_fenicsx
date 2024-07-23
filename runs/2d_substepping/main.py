@@ -1,12 +1,13 @@
 from line_profiler import LineProfiler
 from mhs_fenicsx.problem.helpers import indices_to_function
 from mpi4py import MPI
-from dolfinx import mesh, fem, cpp
+from dolfinx import mesh, fem, cpp, io
 from mhs_fenicsx.problem import Problem, get_mask
 from mhs_fenicsx.drivers.staggered_drivers import StaggeredRRDriver, interpolate_dg0_cells_to_cells
 import mhs_fenicsx.geometry
 import yaml
 import numpy as np
+import shutil
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -62,12 +63,37 @@ def build_subentity_to_parent_mapping(edim:int,pdomain:mesh.Mesh,cdomain:mesh.Me
 
 
 class MHSSubsteppingDriver:
-    def __init__(self,macro_problem:Problem):
-        self.slow_problem = macro_problem
+    def __init__(self,slow_problem:Problem):
+        self.ps = slow_problem
         self.fraction_macro_step = 0
+        self.writers = dict()
+
+    def __del__(self):
+        for w in self.writers.values():
+            w.close()
+
+    def initialize_post(self):
+        self.name = "staggered_substepper"
+        self.result_folder = f"post_{self.name}"
+        shutil.rmtree(self.result_folder,ignore_errors=True)
+        for p in [self.ps,self.pf]:
+            self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{self.name}_{p.name}.pvd", "wb")
+
+    def writepos(self,case="micro_step"):
+        (ps,pf) = (self.ps,self.pf)
+        if not(self.writers):
+            self.initialize_post()
+        funs = {}
+        for p in [pf,ps]:
+            funs[p] = [p.u,p.gamma_nodes,p.source_rhs,p.active_els_func]
+        if case=="micro":
+            self.writers[pf].write_function(funs[pf],t=self.macro_iter + self.fraction_macro_step)
+        else:
+            self.writers[ps].write_function(funs[ps],t=self.macro_iter)
+
 
     def predictor_step(self):
-        ps = self.slow_problem
+        ps = self.ps
 
         # MACRO-STEP
         ps.pre_iterate()
@@ -79,7 +105,7 @@ class MHSSubsteppingDriver:
         ps.post_iterate()
 
     def micro_steps(self,rr_driver:StaggeredRRDriver):
-        (ps,pf) = (self.slow_problem,self.fast_problem)
+        (ps,pf) = (self.ps,self.pf)
         self.micro_iter = 0
         while (self.t1_macro_step - pf.time) > 1e-7:
             forced_time_derivative = (self.micro_iter==0)
@@ -92,14 +118,10 @@ class MHSSubsteppingDriver:
             pf.solve()
             pf.post_iterate()
 
-
-            tmp = pf.time
-            pf.time = self.macro_iter*100 + self.micro_iter
-            pf.writepos()
-            pf.time = tmp
+            self.writepos(case="micro")
 
     def extract_subproblem(self):
-        ps = self.slow_problem
+        ps = self.ps
         self.t0_macro_step = ps.time
         self.t1_macro_step = ps.time + ps.dt.value
         cdim = ps.dim
@@ -128,8 +150,8 @@ class MHSSubsteppingDriver:
         self.submesh_data["subgeom_map"] = submesh_data[3]
         micro_params = ps.input_parameters.copy()
         micro_params["dt"] = get_dt(params["micro_adim_dt"])
-        self.fast_problem = Problem(submesh_data[0],micro_params, name="small")
-        pf = self.fast_problem
+        self.pf = Problem(submesh_data[0],micro_params, name="small")
+        pf = self.pf
         self.submesh_data["parent"] = ps
         self.submesh_data["child"] = pf
         self.subfacet_map = build_subentity_to_parent_mapping(cdim-1,
@@ -145,7 +167,7 @@ class MHSSubsteppingDriver:
         # Subtract child from parent
         # TODO: Make this more efficient, redundancy in setting active_els_func
         # here and inside of set_activation
-        (ps,pf) = self.slow_problem, self.fast_problem
+        (ps,pf) = self.ps, self.pf
         ps.active_els_func.x.array[self.submesh_data["subcell_map"]] = 0
         ps.active_els_func.x.scatter_forward()
         active_els = ps.active_els_func.x.array.nonzero()[0]
@@ -153,7 +175,7 @@ class MHSSubsteppingDriver:
         ps.set_activation(active_els)
 
     def find_interface(self):
-        (ps,pf) = self.slow_problem, self.fast_problem
+        (ps,pf) = self.ps, self.pf
         cdim = ps.domain.topology.dim
         cmask = np.zeros(pf.num_facets, dtype=np.int32)
         fast_bfacet_indices = pf.bfacets_tag.values.nonzero()[0]
@@ -169,9 +191,9 @@ class MHSSubsteppingDriver:
                                    np.arange(ps.num_facets, dtype=np.int32),
                                    pmask))
         # Build interpolation data dg0 boundary
-        tdim = self.fast_problem.domain.topology.dim
-        ccon_f2c = self.fast_problem.domain.topology.connectivity(tdim-1,tdim)
-        pcon_f2c = self.slow_problem.domain.topology.connectivity(tdim-1,tdim)
+        tdim = self.pf.domain.topology.dim
+        ccon_f2c = self.pf.domain.topology.connectivity(tdim-1,tdim)
+        pcon_f2c = self.ps.domain.topology.connectivity(tdim-1,tdim)
         indices_gamma_facets = pf.gamma_facets.values.nonzero()[0]
         num_gamma_facets = len(indices_gamma_facets)
         self.submesh_data["cinterface_cells"] = np.full(num_gamma_facets,-1)
@@ -181,7 +203,7 @@ class MHSSubsteppingDriver:
             ccell = ccon_f2c.links(ifacet)
             assert(len(ccell)==1)
             ccell = ccell[0]
-            if ccell >= self.fast_problem.cell_map.size_local:
+            if ccell >= self.pf.cell_map.size_local:
                 continue
             self.submesh_data["cinterface_cells"][idx] = ccell
             pifacet = self.subfacet_map[ifacet]
@@ -192,7 +214,7 @@ class MHSSubsteppingDriver:
                 self.submesh_data["pinterface_cells"][idx] = pcells[0]
 
     def iterate_substepped_rr(self,rr_driver:StaggeredRRDriver):
-        (ps,pf) = (self.slow_problem,self.fast_problem)
+        (ps,pf) = (self.ps,self.pf)
 
         rr_driver.update_robin(pf)
         self.micro_steps(rr_driver)
@@ -205,8 +227,10 @@ class MHSSubsteppingDriver:
         ps.assemble()
         ps.solve()
 
+        self.writepos(case="macro")
+
     def pre_iterate(self):
-        (ps,pf) = (self.slow_problem,self.fast_problem)
+        (ps,pf) = (self.ps,self.pf)
         self.macro_iter += 1
         for p in [ps,pf]:
             p.time = self.t0_macro_step
@@ -217,7 +241,7 @@ class MHSSubsteppingDriver:
         # TODO: Undo post-iterate of problem
 
     def pre_loop(self,rr_driver:StaggeredRRDriver):
-        (ps,pf) = (self.slow_problem,self.fast_problem)
+        (ps,pf) = (self.ps,self.pf)
         self.macro_iter = 0
         self.prev_iter = {ps:ps.iter,pf:pf.iter}
         self.u_prev = {ps:ps.u.copy(),pf:pf.u.copy()}
@@ -243,29 +267,28 @@ def main():
     substeppin_driver = MHSSubsteppingDriver(big_p)
 
     substeppin_driver.extract_subproblem() # generates driver.fast_problem
-    (ps,pf) = (substeppin_driver.slow_problem,substeppin_driver.fast_problem)
+    (ps,pf) = (substeppin_driver.ps,substeppin_driver.pf)
     rr_driver = StaggeredRRDriver(ps,pf,
                                   submesh_data=substeppin_driver.submesh_data,
-                                  max_staggered_iters=3,
+                                  max_staggered_iters=params["max_staggered_iters"],
                                   is_relaxed=[False,True],)
     # Move extra_subproblem here
     rr_driver.pre_loop()
     substeppin_driver.pre_loop(rr_driver)
     substeppin_driver.predictor_step()
+    substeppin_driver.writepos(case="macro")
     substeppin_driver.subtract_child()
     for _ in range(rr_driver.max_staggered_iters):
         substeppin_driver.pre_iterate()
         rr_driver.pre_iterate()
         substeppin_driver.iterate_substepped_rr(rr_driver)
         rr_driver.post_iterate(verbose=True)
-        #rr_driver.writepos()
         if rr_driver.convergence_crit < rr_driver.convergence_threshold:
             break
     #TODO: Interpolate solution to inactive ps
     ps.u.interpolate(pf.u,
                      cells0=np.arange(pf.num_cells),
                      cells1=substeppin_driver.submesh_data["subcell_map"])
-    ps.writepos()
 
 if __name__=="__main__":
     profiling = True

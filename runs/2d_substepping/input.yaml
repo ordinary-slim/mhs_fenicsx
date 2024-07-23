@@ -32,3 +32,4 @@ els_per_radius: 2
 #}
 L: 0.5
 path: "Path.gcode"
+max_staggered_iters: 10

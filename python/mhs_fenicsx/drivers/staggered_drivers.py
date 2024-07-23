@@ -22,7 +22,6 @@ class StaggeredDomainDecompositionDriver:
         self.convergence_threshold = 1e-6
         self.writers = dict()
         self.iter = -1
-        self.is_post_initialized = False
         self.is_chimera = not(bool(submesh_data)) # Different meshes
         self.active_gamma_cells = dict()
         if self.is_chimera:
@@ -149,7 +148,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
 
     def writepos(self,extra_funcs_p1=[],extra_funcs_p2=[]):
         (pd,pn) = (self.p_dirichlet,self.p_neumann)
-        if not(self.is_post_initialized):
+        if not(self.writers):
             self.initialize_post()
         extra_funcs_p1 = [pd.dirichlet_gamma, pd.grad_u] + extra_funcs_p1
         extra_funcs_p2 = [pn.neumann_flux, self.ext_conductivity,] + extra_funcs_p2
@@ -315,7 +314,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
     def writepos(self,extra_funcs_p1=[],extra_funcs_p2=[]):
         (p1,p2) = (self.p1,self.p2)
         extra_funcs = {p1:extra_funcs_p1,p2:extra_funcs_p2}
-        if not(self.is_post_initialized):
+        if not(self.writers):
             self.initialize_post()
         for p in [p1,p2]:
             extra_funcs[p] = [self.ext_sol[p], self.ext_grad[p], self.ext_conductivity[p],] + extra_funcs[p]

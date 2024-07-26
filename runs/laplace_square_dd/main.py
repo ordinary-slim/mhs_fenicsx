@@ -4,6 +4,8 @@ import ufl
 import numpy as np
 from mpi4py import MPI
 from mhs_fenicsx.problem import Problem, interpolate_dg_at_facets, interpolate
+from mhs_fenicsx.submesh import build_subentity_to_parent_mapping,compute_dg0_interpolation_data,\
+        find_submesh_interface
 from line_profiler import LineProfiler
 import yaml
 from mhs_fenicsx.drivers.staggered_drivers import StaggeredDNDriver, StaggeredRRDriver
@@ -54,20 +56,43 @@ def set_bc(pd,pn):
     pd.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
     pn.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
 
-def run(dd_type="dn"):
+def run(dd_type="dn",submesh=False):
     dd_type=params["dd_type"] if "dd_type" in params else dd_type
+    submesh=params["submesh"] if "submesh" in params else submesh
     if dd_type=="robin":
         driver_type = StaggeredRRDriver
     elif dd_type=="dn":
         driver_type = StaggeredDNDriver
     else:
         raise ValueError("dd_type must be 'dn' or 'robin'")
+
     # Mesh and problems
     points_side = params["points_side"]
     left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.quadrilateral)
-    right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.triangle)
+    if submesh:
+        dd_type += "_submesh"
     p_left = Problem(left_mesh, params, name=f"left_{dd_type}")
+    submesh_data = {}
+    if submesh:
+        right_els = fem.locate_dofs_geometrical(p_left.dg0_bg, lambda x : x[0] >= 0.5 )
+        submesh = mesh.create_submesh(left_mesh,2,right_els)
+        right_mesh = submesh[0]
+        submesh_data["subcell_map"] = submesh[1]
+        submesh_data["subvertex_map"] = submesh[2]
+        submesh_data["subgeom_map"] = submesh[3]
+    else:
+        right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.triangle)
     p_right = Problem(right_mesh, params, name=f"right_{dd_type}")
+
+    if submesh:
+        submesh_data["parent"] = p_left
+        submesh_data["child"] = p_right
+        submesh_data["subfacet_map"] = build_subentity_to_parent_mapping(1,p_left.domain,p_right.domain,
+                                                                         submesh_data["subcell_map"],
+                                                                         submesh_data["subvertex_map"],)
+        find_submesh_interface(p_left,p_right,submesh_data)
+        compute_dg0_interpolation_data(p_left,p_right,submesh_data)
+
     # Activation
     active_els = dict()
     active_els[p_left] = fem.locate_dofs_geometrical(p_left.dg0_bg, lambda x : x[0] <= 0.5 )
@@ -80,7 +105,8 @@ def run(dd_type="dn"):
         f_exact[p].interpolate(exact_sol)
         p.set_rhs(rhs)
 
-    driver = driver_type(p_right,p_left,max_staggered_iters=params["max_staggered_iters"])
+    driver = driver_type(p_right,p_left,max_staggered_iters=params["max_staggered_iters"],
+                         submesh_data=submesh_data)
 
     driver.pre_loop(set_bc=set_bc)
     for _ in range(driver.max_staggered_iters):

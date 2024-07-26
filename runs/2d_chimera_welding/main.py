@@ -48,7 +48,7 @@ def main():
     p_moving.set_initial_condition(T_env)
 
     driver = StaggeredRRDriver(p_moving,p_fixed,params["max_staggered_iters"],
-                               initial_relaxation_factor=0.5)
+                               initial_relaxation_factors=[0.5,0.5])
 
     for _ in range(max_temporal_iters):
         p_fixed.pre_iterate()

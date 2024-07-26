@@ -2,12 +2,15 @@ from line_profiler import LineProfiler
 from mhs_fenicsx.problem.helpers import indices_to_function
 from mpi4py import MPI
 from dolfinx import mesh, fem, cpp, io
-from mhs_fenicsx.problem import Problem, get_mask
-from mhs_fenicsx.drivers.staggered_drivers import StaggeredRRDriver, interpolate_dg0_cells_to_cells
+from mhs_fenicsx.problem import Problem
+from mhs_fenicsx.submesh import build_subentity_to_parent_mapping, find_submesh_interface, \
+compute_dg0_interpolation_data
+from mhs_fenicsx.drivers.staggered_drivers import StaggeredRRDriver, StaggeredDNDriver, interpolate_dg0_cells_to_cells
 import mhs_fenicsx.geometry
 import yaml
 import numpy as np
 import shutil
+import typing
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -29,39 +32,6 @@ def write_gcode():
     with open(params["path"],'w') as f:
         f.writelines(gcode_lines)
 
-def build_subentity_to_parent_mapping(edim:int,pdomain:mesh.Mesh,cdomain:mesh.Mesh,subcell_map,subvertex_map):
-    tdim = cdomain.topology.dim
-    centity_map = cdomain.topology.index_map(edim)
-    num_cents = centity_map.size_local + centity_map.num_ghosts
-    subentity_map = np.full(num_cents,-1,dtype=np.int32)
-
-    cdomain.topology.create_connectivity(edim,tdim)
-    ccon_e2c = cdomain.topology.connectivity(edim,tdim)
-    ccon_e2v = cdomain.topology.connectivity(edim,0)
-
-    pdomain.topology.create_connectivity(tdim,edim)
-    pdomain.topology.create_connectivity(edim,tdim)
-    pcon_e2v = pdomain.topology.connectivity(edim,0)
-    pcon_c2e = pdomain.topology.connectivity(tdim,edim)
-
-    for ient in range(num_cents):
-        entity_found = False
-        cicells = ccon_e2c.links(ient)#child incident cells
-        picells = subcell_map[cicells]#parent incident cells
-        pinodes = subvertex_map[ccon_e2v.links(ient)]#parent incident nodes
-        pinodes.sort()
-        for picell in picells:
-            if not(entity_found):
-                for pient in pcon_c2e.links(picell):
-                    pinodes2compare = pcon_e2v.links(pient).copy()
-                    pinodes2compare.sort()
-                    entity_found = (pinodes==pinodes2compare).all()
-                    if entity_found:
-                        subentity_map[ient] = pient
-                        break
-    return subentity_map
-
-
 class MHSSubsteppingDriver:
     def __init__(self,slow_problem:Problem):
         self.ps = slow_problem
@@ -79,17 +49,28 @@ class MHSSubsteppingDriver:
         for p in [self.ps,self.pf]:
             self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{self.name}_{p.name}.pvd", "wb")
 
-    def writepos(self,case="micro_step"):
+    def writepos(self,case="macro"):
         (ps,pf) = (self.ps,self.pf)
+        sd = self.staggered_driver
         if not(self.writers):
             self.initialize_post()
-        funs = {}
-        for p in [pf,ps]:
-            funs[p] = [p.u,p.gamma_nodes,p.source_rhs,p.active_els_func]
         if case=="micro":
-            self.writers[pf].write_function(funs[pf],t=self.macro_iter + self.fraction_macro_step)
+            p = pf
+            time = (self.macro_iter-1) + self.fraction_macro_step
         else:
-            self.writers[ps].write_function(funs[ps],t=self.macro_iter)
+            p = ps
+            time = self.macro_iter
+        funs = [p.u,p.gamma_nodes,p.source_rhs,p.active_els_func,p.grad_u,
+                p.u_prev,self.u_prev[p]]
+        for fun_dic in [sd.ext_grad,sd.ext_conductivity,sd.ext_sol,
+                        sd.prev_ext_conductivity,sd.prev_ext_grad,sd.prev_ext_sol]:
+            try:
+                funs.append(fun_dic[p])
+            except (AttributeError,KeyError):
+                pass
+
+        p.compute_gradient()
+        self.writers[p].write_function(funs,t=time)
 
 
     def predictor_step(self):
@@ -98,14 +79,17 @@ class MHSSubsteppingDriver:
         # MACRO-STEP
         ps.pre_iterate()
         ps.set_forms_domain()
+        if ps.convection_coeff:
+            ps.set_forms_boundary()
         ps.compile_forms()
         ps.pre_assemble()
         ps.assemble()
         ps.solve()
         ps.post_iterate()
 
-    def micro_steps(self,rr_driver:StaggeredRRDriver):
+    def micro_steps(self):
         (ps,pf) = (self.ps,self.pf)
+        sd = self.staggered_driver
         self.micro_iter = 0
         while (self.t1_macro_step - pf.time) > 1e-7:
             forced_time_derivative = (self.micro_iter==0)
@@ -113,11 +97,18 @@ class MHSSubsteppingDriver:
             pf.pre_iterate(forced_time_derivative=forced_time_derivative)
             self.micro_iter += 1
             self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
-            rr_driver.relaxation_coeff[pf].value = self.fraction_macro_step
+            if type(sd)==StaggeredRRDriver:
+                sd.relaxation_coeff[pf].value = self.fraction_macro_step
+            elif type(sd)==StaggeredDNDriver and sd.p_dirichlet==pf:
+                sd.dirichlet_tcon.g.x.array[:] = (1-sd.relaxation_coeff[pf].value)*pf.u.x.array[:] + \
+                                                 sd.relaxation_coeff[pf].value*((1-self.fraction_macro_step)*\
+                                                 sd.prev_ext_sol[pf].x.array[:] + self.fraction_macro_step*\
+                                                 sd.ext_sol[pf].x.array[:])
+            elif type(sd)==StaggeredDNDriver and sd.p_neumann==pf:
+                sd.relaxation_coeff[pf].value = self.fraction_macro_step
             pf.assemble()
             pf.solve()
             pf.post_iterate()
-
             self.writepos(case="micro")
 
     def extract_subproblem(self):
@@ -154,14 +145,14 @@ class MHSSubsteppingDriver:
         pf = self.pf
         self.submesh_data["parent"] = ps
         self.submesh_data["child"] = pf
-        self.subfacet_map = build_subentity_to_parent_mapping(cdim-1,
+        self.submesh_data["subfacet_map"] = build_subentity_to_parent_mapping(cdim-1,
                                                                ps.domain,
                                                                submesh,
                                                                self.submesh_data["subcell_map"],
                                                                self.submesh_data["subvertex_map"])
-        self.find_interface()
+        find_submesh_interface(ps,pf,self.submesh_data)
+        compute_dg0_interpolation_data(ps,pf,self.submesh_data)
         pf.u.interpolate(ps.u_prev,cells0=self.submesh_data["subcell_map"],cells1=np.arange(len(self.submesh_data["subcell_map"])))
-        self.u_prev_macro = pf.u.copy()
 
     def subtract_child(self):
         # Subtract child from parent
@@ -174,60 +165,36 @@ class MHSSubsteppingDriver:
         active_els = [el for el in active_els if el < ps.cell_map.size_local]
         ps.set_activation(active_els)
 
-    def find_interface(self):
-        (ps,pf) = self.ps, self.pf
-        cdim = ps.domain.topology.dim
-        cmask = np.zeros(pf.num_facets, dtype=np.int32)
-        fast_bfacet_indices = pf.bfacets_tag.values.nonzero()[0]
-        bfacets_gamma_tag = np.int32(1) - ps.bfacets_tag.values[self.subfacet_map[fast_bfacet_indices]]
-        fgamma_facets_indices = fast_bfacet_indices[bfacets_gamma_tag.nonzero()[0]]
-        cmask[fgamma_facets_indices] = 1
-        pf.set_gamma(mesh.meshtags(pf.domain, cdim-1,
-                                   np.arange(pf.num_facets, dtype=np.int32),
-                                   cmask))
-        pmask = np.zeros(ps.num_facets, dtype=np.int32)
-        pmask[self.subfacet_map[fgamma_facets_indices]] = 1
-        ps.set_gamma(mesh.meshtags(ps.domain, cdim-1,
-                                   np.arange(ps.num_facets, dtype=np.int32),
-                                   pmask))
-        # Build interpolation data dg0 boundary
-        tdim = self.pf.domain.topology.dim
-        ccon_f2c = self.pf.domain.topology.connectivity(tdim-1,tdim)
-        pcon_f2c = self.ps.domain.topology.connectivity(tdim-1,tdim)
-        indices_gamma_facets = pf.gamma_facets.values.nonzero()[0]
-        num_gamma_facets = len(indices_gamma_facets)
-        self.submesh_data["cinterface_cells"] = np.full(num_gamma_facets,-1)
-        self.submesh_data["pinterface_cells"] = np.full(num_gamma_facets,-1)
-        for idx in range(num_gamma_facets):
-            ifacet = indices_gamma_facets[idx]
-            ccell = ccon_f2c.links(ifacet)
-            assert(len(ccell)==1)
-            ccell = ccell[0]
-            if ccell >= self.pf.cell_map.size_local:
-                continue
-            self.submesh_data["cinterface_cells"][idx] = ccell
-            pifacet = self.subfacet_map[ifacet]
-            pcells = pcon_f2c.links(pifacet)
-            if pcells[0] == self.submesh_data["subcell_map"][ccell]:
-                self.submesh_data["pinterface_cells"][idx] = pcells[1]
-            else:
-                self.submesh_data["pinterface_cells"][idx] = pcells[0]
-
-    def iterate_substepped_rr(self,rr_driver:StaggeredRRDriver):
+    def iterate_substepped_rr(self):
         (ps,pf) = (self.ps,self.pf)
-
+        rr_driver = self.staggered_driver
+        assert(type(rr_driver)==StaggeredRRDriver)
         rr_driver.update_robin(pf)
-        self.micro_steps(rr_driver)
+        self.micro_steps()
         # have solution at tnp1
         # Updated sol, grad, conduc from n+1
         # I have to apply curr sol, grad, conduc from n+1 weighted with the one from n
 
         rr_driver.update_robin(ps)
-        ps.pre_iterate()
+        ps.pre_iterate(forced_time_derivative=True)
         ps.assemble()
         ps.solve()
 
-        self.writepos(case="macro")
+    def iterate_substepped_dn(self):
+        dn_driver = self.staggered_driver
+        assert(type(dn_driver)==StaggeredDNDriver)
+        (pn,pd) = (self.ps,self.pf)
+
+        # Solve fast/Dirichlet problem
+        self.micro_steps()
+
+        dn_driver.update_neumann_interface()
+        # Solve slow/Neumann problem
+        pn.pre_iterate(forced_time_derivative=True)
+        pn.assemble()
+        pn.solve()
+        dn_driver.update_relaxation_factor()
+        dn_driver.update_dirichlet_interface()
 
     def pre_iterate(self):
         (ps,pf) = (self.ps,self.pf)
@@ -240,17 +207,94 @@ class MHSSubsteppingDriver:
         # TODO: Undo pre-iterate of domain
         # TODO: Undo post-iterate of problem
 
-    def pre_loop(self,rr_driver:StaggeredRRDriver):
+    def pre_loop(self,sd:typing.Union[StaggeredDNDriver,StaggeredRRDriver]):
         (ps,pf) = (self.ps,self.pf)
+        self.staggered_driver = sd
+        if type(sd)==StaggeredRRDriver:
+            self.iterate = self.iterate_substepped_rr
+        elif type(sd)==StaggeredDNDriver:
+            self.iterate = self.iterate_substepped_dn
+        else:
+            raise ValueError("Unknown staggered driver type.")
         self.macro_iter = 0
         self.prev_iter = {ps:ps.iter,pf:pf.iter}
         self.u_prev = {ps:ps.u.copy(),pf:pf.u.copy()}
-        for p,p_ext in zip([pf],[ps]):
-            interpolate_dg0_cells_to_cells(p_ext.grad_u,rr_driver.prev_ext_grad[p],rr_driver.active_gamma_cells[p_ext],rr_driver.active_gamma_cells[p])
-            interpolate_dg0_cells_to_cells(p_ext.k,rr_driver.prev_ext_conductivity[p],rr_driver.active_gamma_cells[p_ext],rr_driver.active_gamma_cells[p])
-            rr_driver.prev_ext_sol[p].interpolate(p_ext.u,cells0=rr_driver.submesh_cells[p_ext],cells1=rr_driver.submesh_cells[p])
+        for u in self.u_prev.values():
+            u.name = "u_prev_driver"
+        # Add a compute gradient around here!
+        (p,p_ext) = (pf,ps)
+        p_ext.compute_gradient()
+        # TODO: Are these necessary? Can I get them from my own data?
+        if type(sd)==StaggeredRRDriver:
+            interpolate_dg0_cells_to_cells(sd.prev_ext_grad[p],p_ext.grad_u,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
+            interpolate_dg0_cells_to_cells(sd.prev_ext_conductivity[p],p_ext.k,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
+            sd.prev_ext_sol[p].interpolate(p_ext.u,cells0=sd.submesh_cells[p_ext],cells1=sd.submesh_cells[p])
+            sd.prev_ext_sol[p].x.scatter_forward()
+        elif type(sd)==StaggeredDNDriver:
+            if sd.p_dirichlet==pf:
+                sd.prev_ext_sol[p].interpolate(p_ext.u,cells0=sd.submesh_cells[p_ext],cells1=sd.submesh_cells[p])
+            else:
+                interpolate_dg0_cells_to_cells(sd.prev_ext_grad[p],p_ext.grad_u,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
+                interpolate_dg0_cells_to_cells(sd.prev_ext_conductivity[p],p_ext.k,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
 
-def main():
+def main(initial_condition=True):
+    write_gcode()
+    els_per_radius = params["els_per_radius"]
+    driver_type = params["driver_type"]
+    if   driver_type=="robin":
+        driver_constructor = StaggeredRRDriver
+        initial_relaxation_factors=[0.5,1]
+    elif driver_type=="dn":
+        driver_constructor = StaggeredDNDriver
+        initial_relaxation_factors=[0.5,1]
+    else:
+        raise ValueError("Undefined staggered driver type.")
+    points_side = np.round(1.0 / radius * els_per_radius).astype(int) + 1
+    big_mesh  = mesh.create_unit_square(MPI.COMM_WORLD,
+                                        points_side,
+                                        points_side,
+                                        #mesh.CellType.quadrilateral,
+                                        )
+
+    macro_params = params.copy()
+    macro_params["dt"] = get_dt(params["macro_adim_dt"])
+    big_p = Problem(big_mesh, macro_params, name="big_sta")
+    if initial_condition:
+        initial_condition = lambda x : 100*np.cos(4*(x[0]-0.5)*(x[1]-0.5))
+        big_p.set_initial_condition(  initial_condition )
+
+    substeppin_driver = MHSSubsteppingDriver(big_p)
+
+    substeppin_driver.extract_subproblem() # generates driver.fast_problem
+    (ps,pf) = (substeppin_driver.ps,substeppin_driver.pf)
+    staggered_driver = driver_constructor(pf,ps,
+                                   submesh_data=substeppin_driver.submesh_data,
+                                   max_staggered_iters=params["max_staggered_iters"],
+                                   initial_relaxation_factors=initial_relaxation_factors,)
+    # Move extra_subproblem here
+    #TODO: Check on pre_iterate / post_iterate of problems
+    #TODO: Check where predictor_step should be done
+    staggered_driver.pre_loop(prepare_subproblems=False)
+    substeppin_driver.pre_loop(staggered_driver)
+    substeppin_driver.predictor_step()
+    substeppin_driver.subtract_child()
+    staggered_driver.prepare_subproblems()
+    for _ in range(staggered_driver.max_staggered_iters):
+        substeppin_driver.pre_iterate()
+        staggered_driver.pre_iterate()
+        substeppin_driver.iterate()
+        staggered_driver.post_iterate(verbose=True)
+        substeppin_driver.writepos(case="macro")
+
+        if staggered_driver.convergence_crit < staggered_driver.convergence_threshold:
+            break
+    #TODO: Interpolate solution to inactive ps
+    ps.u.interpolate(pf.u,
+                     cells0=np.arange(pf.num_cells),
+                     cells1=substeppin_driver.submesh_data["subcell_map"])
+    big_p.writepos()
+
+def run_reference(initial_condition=True):
     write_gcode()
     els_per_radius = params["els_per_radius"]
     points_side = np.round(1.0 / radius * els_per_radius).astype(int) + 1
@@ -261,34 +305,24 @@ def main():
                                         )
 
     macro_params = params.copy()
-    macro_params["dt"] = get_dt(params["macro_adim_dt"])
+    macro_params["dt"] = get_dt(params["micro_adim_dt"])
+    final_t = get_dt(params["macro_adim_dt"])
     big_p = Problem(big_mesh, macro_params, name="big")
 
-    substeppin_driver = MHSSubsteppingDriver(big_p)
+    if initial_condition:
+        initial_condition = lambda x : 100*np.cos(4*(x[0]-0.5)*(x[1]-0.5))
+        big_p.set_initial_condition(  initial_condition )
 
-    substeppin_driver.extract_subproblem() # generates driver.fast_problem
-    (ps,pf) = (substeppin_driver.ps,substeppin_driver.pf)
-    rr_driver = StaggeredRRDriver(ps,pf,
-                                  submesh_data=substeppin_driver.submesh_data,
-                                  max_staggered_iters=params["max_staggered_iters"],
-                                  is_relaxed=[False,True],)
-    # Move extra_subproblem here
-    rr_driver.pre_loop()
-    substeppin_driver.pre_loop(rr_driver)
-    substeppin_driver.predictor_step()
-    substeppin_driver.writepos(case="macro")
-    substeppin_driver.subtract_child()
-    for _ in range(rr_driver.max_staggered_iters):
-        substeppin_driver.pre_iterate()
-        rr_driver.pre_iterate()
-        substeppin_driver.iterate_substepped_rr(rr_driver)
-        rr_driver.post_iterate(verbose=True)
-        if rr_driver.convergence_crit < rr_driver.convergence_threshold:
-            break
-    #TODO: Interpolate solution to inactive ps
-    ps.u.interpolate(pf.u,
-                     cells0=np.arange(pf.num_cells),
-                     cells1=substeppin_driver.submesh_data["subcell_map"])
+    big_p.set_forms_domain()
+    big_p.set_forms_boundary()
+    big_p.compile_forms()
+    while (final_t - big_p.time) > 1e-7:
+        big_p.pre_iterate()
+        big_p.pre_assemble()
+        big_p.assemble()
+        big_p.solve()
+        big_p.post_iterate()
+        big_p.writepos()
 
 if __name__=="__main__":
     profiling = True
@@ -302,3 +336,5 @@ if __name__=="__main__":
         lp_wrapper()
         with open(f"profiling_{rank}.txt", 'w') as pf:
             lp.print_stats(stream=pf)
+    else:
+        run_reference()

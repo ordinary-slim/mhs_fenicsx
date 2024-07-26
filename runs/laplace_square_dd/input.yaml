@@ -22,4 +22,5 @@ case_name: "poisson_square"
 max_iter: 1
 max_staggered_iters: 20
 points_side: 32
-dd_type: "robin"
+dd_type: "dn"
+submesh: True

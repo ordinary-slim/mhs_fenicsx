@@ -18,8 +18,7 @@ material_metal : {
 #convection_coeff : 1.0E-00
 environment_temperature : 25
 # END_ESSENTIAL
-case_name: "cranberries"
-els_per_radius: 2
+els_per_radius: 4
 #petsc_opts_fixed: {
 #  "ksp_type" : "cg",
 #  "ksp_rtol" : 1e-10,
@@ -32,4 +31,5 @@ els_per_radius: 2
 #}
 L: 0.5
 path: "Path.gcode"
-max_staggered_iters: 10
+max_staggered_iters: 15
+driver_type: "robin"

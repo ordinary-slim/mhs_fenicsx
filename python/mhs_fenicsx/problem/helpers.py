@@ -137,4 +137,3 @@ def indices_to_function(space, indices, dim, name="f", remote=True, f = None):
         f.x.array[:] = 0
     f.x.array[dofs] = 1
     return f
-

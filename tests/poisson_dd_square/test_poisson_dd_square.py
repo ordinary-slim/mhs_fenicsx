@@ -53,8 +53,10 @@ def run(dd_type="dn"):
               params["advection_speed"])
     if dd_type=="robin":
         driver_type = StaggeredRRDriver
+        initial_relaxation_factors=[1.0,1.0]
     elif dd_type=="dn":
         driver_type = StaggeredDNDriver
+        initial_relaxation_factors=[0.5,1.0]
     else:
         raise ValueError("dd_type must be 'dn' or 'robin'")
     # Mesh and problems
@@ -75,7 +77,8 @@ def run(dd_type="dn"):
         f_exact[p].interpolate(exact_sol)
         p.set_rhs(rhs)
 
-    driver = driver_type(p_right,p_left,max_staggered_iters=params["max_staggered_iters"])
+    driver = driver_type(p_right,p_left,max_staggered_iters=params["max_staggered_iters"],
+                         initial_relaxation_factors=initial_relaxation_factors)
 
     driver.pre_loop(set_bc=set_bc)
     for _ in range(driver.max_staggered_iters):

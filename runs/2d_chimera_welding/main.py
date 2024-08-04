@@ -48,7 +48,13 @@ def main():
     p_moving.set_initial_condition(T_env)
 
     driver = StaggeredRRDriver(p_moving,p_fixed,params["max_staggered_iters"],
-                               initial_relaxation_factors=[0.5,0.5])
+                               initial_relaxation_factors=[1.0,1.0])
+    if (type(driver)==StaggeredRRDriver):
+        h = get_el_size(els_per_radius)
+        k = float(params["material_metal"]["conductivity"])
+        driver.dirichlet_coeff[driver.p1] = 1/2.0
+        driver.dirichlet_coeff[driver.p2] = k / h
+        driver.relaxation_coeff[driver.p1].value = 1.0
 
     for _ in range(max_temporal_iters):
         p_fixed.pre_iterate()

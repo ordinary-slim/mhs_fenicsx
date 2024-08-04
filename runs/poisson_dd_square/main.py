@@ -67,8 +67,8 @@ def run(dd_type="dn",submesh=False):
         raise ValueError("dd_type must be 'dn' or 'robin'")
 
     # Mesh and problems
-    points_side = params["points_side"]
-    left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.quadrilateral)
+    els_side = params["els_side"]
+    left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, els_side, els_side, mesh.CellType.quadrilateral)
     if submesh:
         dd_type += "_submesh"
     p_left = Problem(left_mesh, params, name=f"left_{dd_type}")
@@ -81,7 +81,7 @@ def run(dd_type="dn",submesh=False):
         submesh_data["subvertex_map"] = submesh[2]
         submesh_data["subgeom_map"] = submesh[3]
     else:
-        right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.triangle)
+        right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, els_side, els_side, mesh.CellType.triangle)
     p_right = Problem(right_mesh, params, name=f"right_{dd_type}")
 
     if submesh:
@@ -106,7 +106,14 @@ def run(dd_type="dn",submesh=False):
         p.set_rhs(rhs)
 
     driver = driver_type(p_right,p_left,max_staggered_iters=params["max_staggered_iters"],
-                         submesh_data=submesh_data)
+                         submesh_data=submesh_data,
+                         initial_relaxation_factors=[0.5,1.0])
+    if (type(driver)==StaggeredRRDriver):
+        h = 1.0 / els_side
+        k = float(params["material"]["conductivity"])
+        driver.dirichlet_coeff[driver.p1] = 4.0
+        driver.dirichlet_coeff[driver.p2] =  k / (4 * h)
+        driver.relaxation_coeff[driver.p1].value = 2.0 / 3.0
 
     driver.pre_loop(set_bc=set_bc)
     for _ in range(driver.max_staggered_iters):

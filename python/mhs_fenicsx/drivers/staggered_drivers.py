@@ -125,10 +125,11 @@ class StaggeredDomainDecompositionDriver:
     def pre_loop(self,set_bc=None):
         (p1, p2) = (self.p1, self.p2)
         self.ext_conductivity = dict()
-        self.ext_grad = dict()
+        self.ext_flux = dict()
+        self.net_ext_flux = dict()
         self.ext_sol = dict()
-        self.prev_ext_conductivity = dict()
-        self.prev_ext_grad = dict()
+        self.net_ext_sol = dict()
+        self.prev_ext_flux = dict()
         self.prev_ext_sol = dict()
         self.gamma_residual = dict()
         self.iter = 0
@@ -167,7 +168,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         if not(self.writers):
             self.initialize_post()
         extra_funcs_p1 = [self.ext_sol[pd], pd.grad_u] + extra_funcs_p1
-        extra_funcs_p2 = [self.ext_grad[pn], self.ext_conductivity[pn],] + extra_funcs_p2
+        extra_funcs_p2 = [self.ext_flux[pn]] + extra_funcs_p2
                             
 
         StaggeredDomainDecompositionDriver.write_results(self,extra_funcs_p1=extra_funcs_p1,extra_funcs_p2=extra_funcs_p2)
@@ -189,10 +190,10 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
 
         # Neumann Gamma funcs
         self.ext_conductivity[pn] = fem.Function(pn.dg0_bg,name="ext_conduc")
-        self.ext_grad[pn] = fem.Function(pn.dg0_vec,name="ext_grad")
+        self.ext_flux[pn] = fem.Function(pn.dg0_vec,name="ext_grad")
+        self.net_ext_flux[pn] = fem.Function(pn.dg0_vec,name="net_ext_flux")
         if self.relaxation_coeff[pn].value < 1.0:
-            self.prev_ext_grad[pn] = fem.Function(pn.dg0_vec,name="prev_flux")
-            self.prev_ext_conductivity[pn] = fem.Function(pn.dg0_bg,name="prev_ext_conduc")
+            self.prev_ext_flux[pn] = fem.Function(pn.dg0_vec,name="prev_flux")
 
         self.ext_sol[pd] = fem.Function(pd.v,name="ext_sol")
         self.update_ext_sol()
@@ -250,6 +251,10 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
 
     def pre_iterate(self):
         super().pre_iterate()
+        pn = self.p_neumann
+        if self.relaxation_coeff[pn].value < 1.0:
+            self.prev_ext_flux[pn].x.array[:] = self.ext_flux[pn].x.array[:]
+
 
     def update_ext_sol(self):
         (pd,pn) = (self.p_dirichlet,self.p_neumann)
@@ -296,12 +301,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
             (8,np.asarray(gammaIntegralEntities, dtype=np.int32))])
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
-        neumann_con = +self.ext_conductivity[p] * ufl.inner(n,self.ext_grad[p])
-        if self.relaxation_coeff[p].value < 1.0:
-            neumann_con *= self.relaxation_coeff[p]
-            prev_neumann_con  = +self.prev_ext_conductivity[p] * ufl.inner(n,self.prev_ext_grad[p])
-            prev_neumann_con *= (1.0 - self.relaxation_coeff[p])
-            neumann_con += prev_neumann_con
+        neumann_con = +ufl.inner(n,self.net_ext_flux[p])
         p.l_ufl += neumann_con * v * dS(8)
 
     def update_neumann_interface(self):
@@ -310,14 +310,13 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         # Update functions
         if self.is_chimera:
             interpolate_dg0_at_facets(p_ext.grad_u._cpp_object,
-                                      self.ext_grad[p]._cpp_object,
+                                      self.ext_flux[p]._cpp_object,
                                       p.active_els_func._cpp_object,
                                       p.gamma_facets._cpp_object,
                                       self.active_gamma_cells[p],
                                       self.iid_d2n_border,
                                       p.gamma_facets_index_map,
                                       p.gamma_imap_to_global_imap)
-            self.ext_grad[p].vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
             interpolate_dg0_at_facets(p_ext.k._cpp_object,
                                       self.ext_conductivity[p]._cpp_object,
                                       p.active_els_func._cpp_object,
@@ -326,10 +325,21 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
                                       self.iid_d2n_border,
                                       p.gamma_facets_index_map,
                                       p.gamma_imap_to_global_imap)
-            self.ext_conductivity[p].vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
         else:
-            interpolate_dg0_cells_to_cells(self.ext_grad[p],p_ext.grad_u,self.active_gamma_cells[p_ext],self.active_gamma_cells[p])
+            interpolate_dg0_cells_to_cells(self.ext_flux[p],p_ext.grad_u,self.active_gamma_cells[p_ext],self.active_gamma_cells[p])
             interpolate_dg0_cells_to_cells(self.ext_conductivity[p],p_ext.k,self.active_gamma_cells[p_ext],self.active_gamma_cells[p])
+
+        # TODO: Pass this to c++
+        dim = self.ext_flux[p].function_space.value_size
+        for cell in self.active_gamma_cells[p]:
+            self.ext_flux[p].x.array[cell*dim:cell*dim+dim] *= self.ext_conductivity[p].x.array[cell]
+        self.ext_flux[p].vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+
+        self.net_ext_flux[p].x.array[:] = self.ext_flux[p].x.array[:]
+        if self.relaxation_coeff[p].value < 1.0:
+            theta = self.relaxation_coeff[p].value
+            self.net_ext_flux[p].x.array[:] *= theta
+            self.net_ext_flux[p].x.array[:] += (1-theta)*self.prev_ext_flux[p].x.array[:]
 
     def iterate(self):
         (pn, pd) = (self.p_neumann,self.p_dirichlet)
@@ -358,6 +368,8 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
                                                     submesh_data,
                                                     initial_relaxation_factors)
         self.dirichlet_tcon = None
+        # Dirichlet coeffs
+        self.dirichlet_coeff = {p1:fem.Constant(p1.domain, 1.0),p2:fem.Constant(p2.domain, 1.0)}
 
     def writepos(self,extra_funcs_p1=[],extra_funcs_p2=[]):
         (p1,p2) = (self.p1,self.p2)
@@ -365,8 +377,16 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         if not(self.writers):
             self.initialize_post()
         for p in [p1,p2]:
-            extra_funcs[p] = [self.ext_sol[p], self.ext_grad[p], self.ext_conductivity[p],] + extra_funcs[p]
+            extra_funcs[p] = [self.ext_sol[p], self.ext_flux[p]] + extra_funcs[p]
         StaggeredDomainDecompositionDriver.write_results(self,extra_funcs_p1=extra_funcs[p1],extra_funcs_p2=extra_funcs[p2])
+
+    def pre_iterate(self):
+        super().pre_iterate()
+        (p1,p2) = (self.p1,self.p2)
+        for p in [p1,p2]:
+            if self.relaxation_coeff[p].value < 1.0:
+                self.prev_ext_flux[p].x.array[:] = self.ext_flux[p].x.array[:]
+                self.prev_ext_sol[p].x.array[:] = self.ext_sol[p].x.array[:]
 
     def pre_loop(self,set_bc=None,prepare_subproblems=True):
         '''
@@ -387,12 +407,13 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
                                             self.active_gamma_cells[p_ext],
                                             np.float64(1e-6))
             # Flux funcs
-            self.ext_grad[p] = fem.Function(p.dg0_vec,name="ext_grad")
+            self.ext_flux[p] = fem.Function(p.dg0_vec,name="ext_grad")
+            self.net_ext_flux[p] = fem.Function(p.dg0_vec,name="net_ext_flux")
             self.ext_conductivity[p] = fem.Function(p.dg0_bg,name="ext_conduc")
             self.ext_sol[p] = fem.Function(p.v,name="ext_sol")
+            self.net_ext_sol[p] = fem.Function(p.v,name="net_ext_sol")
             if self.relaxation_coeff[p].value < 1.0:
-                self.prev_ext_grad[p] = fem.Function(p.dg0_vec,name="prev_ext_grad")
-                self.prev_ext_conductivity[p] = fem.Function(p.dg0_bg,name="prev_ext_conduc")
+                self.prev_ext_flux[p] = fem.Function(p.dg0_vec,name="prev_ext_grad")
                 self.prev_ext_sol[p] = fem.Function(p.v,name="prev_ext_sol")
 
             self.gamma_residual[p] = fem.Function(p.v,name="residual")
@@ -428,13 +449,8 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
         (u, v) = (ufl.TrialFunction(p.v),ufl.TestFunction(p.v))
-        p.a_ufl += + u * v * dS(8)
-        robin_con = self.ext_sol[p] + ufl.inner(n,self.ext_conductivity[p]*self.ext_grad[p])
-        if self.relaxation_coeff[p].value < 1.0:
-            robin_con  *= self.relaxation_coeff[p]
-            prev_robin  = self.prev_ext_sol[p] + ufl.inner(n,self.prev_ext_conductivity[p]*self.prev_ext_grad[p])
-            prev_robin *= (1.0-self.relaxation_coeff[p])
-            robin_con += prev_robin
+        p.a_ufl += + self.dirichlet_coeff[p] * u * v * dS(8)
+        robin_con = self.dirichlet_coeff[p]*self.net_ext_sol[p] + ufl.inner(n,self.net_ext_flux[p])
         p.l_ufl += robin_con * v * dS(8)
 
     def update_robin(self,p):
@@ -442,18 +458,19 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
             p_ext=self.p2
         else:
             p_ext=self.p1
+
         p_ext.compute_gradient()
+
         if self.is_chimera:
             # Update flux
             interpolate_dg0_at_facets(p_ext.grad_u._cpp_object,
-                                      self.ext_grad[p]._cpp_object,
+                                      self.ext_flux[p]._cpp_object,
                                       p.active_els_func._cpp_object,
                                       p.gamma_facets._cpp_object,
                                       self.active_gamma_cells[p],
                                       self.iid_border[p_ext][p],
                                       p.gamma_facets_index_map,
                                       p.gamma_imap_to_global_imap)
-            self.ext_grad[p].vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
             interpolate_dg0_at_facets(p_ext.k._cpp_object,
                                       self.ext_conductivity[p]._cpp_object,
                                       p.active_els_func._cpp_object,
@@ -462,17 +479,32 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
                                       self.iid_border[p_ext][p],
                                       p.gamma_facets_index_map,
                                       p.gamma_imap_to_global_imap)
-            self.ext_conductivity[p].vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
             # Update ext solution
             self.ext_sol[p].interpolate_nonmatching(p_ext.u,
                                                       cells=self.gamma_cells[p],
                                                       interpolation_data=self.iid[p_ext][p])
             self.ext_sol[p].x.scatter_forward()
         else:
-            interpolate_dg0_cells_to_cells(self.ext_grad[p],p_ext.grad_u,self.active_gamma_cells[p_ext],self.active_gamma_cells[p])
+            interpolate_dg0_cells_to_cells(self.ext_flux[p],p_ext.grad_u,self.active_gamma_cells[p_ext],self.active_gamma_cells[p])
             interpolate_dg0_cells_to_cells(self.ext_conductivity[p],p_ext.k,self.active_gamma_cells[p_ext],self.active_gamma_cells[p])
             self.ext_sol[p].interpolate(p_ext.u,cells0=self.submesh_cells[p_ext],cells1=self.submesh_cells[p])
             self.ext_sol[p].x.scatter_forward()
+
+        # Compute flux
+        dim = self.ext_flux[p].function_space.value_size
+        for cell in self.active_gamma_cells[p]:
+            self.ext_flux[p].x.array[cell*dim:cell*dim+dim] *= self.ext_conductivity[p].x.array[cell]
+        self.ext_flux[p].vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+
+        self.net_ext_sol[p].x.array[:] = self.ext_sol[p].x.array[:]
+        self.net_ext_flux[p].x.array[:] = self.ext_flux[p].x.array[:]
+
+        if self.relaxation_coeff[p].value < 1.0:
+            theta = self.relaxation_coeff[p].value
+            self.net_ext_sol[p].x.array[:] *= theta
+            self.net_ext_sol[p].x.array[:] += (1-theta)*self.prev_ext_sol[p].x.array[:]
+            self.net_ext_flux[p].x.array[:] *= theta
+            self.net_ext_flux[p].x.array[:] += (1-theta)*self.prev_ext_flux[p].x.array[:]
 
     def iterate(self):
         (p1, p2) = (self.p1,self.p2)

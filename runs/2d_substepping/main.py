@@ -11,6 +11,7 @@ import yaml
 import numpy as np
 import shutil
 import typing
+from petsc4py import PETSc
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -62,8 +63,8 @@ class MHSSubsteppingDriver:
             time = self.macro_iter
         funs = [p.u,p.gamma_nodes,p.source_rhs,p.active_els_func,p.grad_u,
                 p.u_prev,self.u_prev[p]]
-        for fun_dic in [sd.ext_grad,sd.ext_conductivity,sd.ext_sol,
-                        sd.prev_ext_conductivity,sd.prev_ext_grad,sd.prev_ext_sol]:
+        for fun_dic in [sd.ext_flux,sd.ext_conductivity,sd.ext_sol,
+                        sd.prev_ext_flux,sd.prev_ext_sol]:
             try:
                 funs.append(fun_dic[p])
             except (AttributeError,KeyError):
@@ -98,7 +99,11 @@ class MHSSubsteppingDriver:
             self.micro_iter += 1
             self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
             if type(sd)==StaggeredRRDriver:
-                sd.relaxation_coeff[pf].value = self.fraction_macro_step
+                f = self.fraction_macro_step
+                sd.net_ext_sol[pf].x.array[:] = (1-f)*self.ext_sol_tn[pf].x.array[:] + \
+                        f*self.ext_sol_array_tnp1[:]
+                sd.net_ext_flux[pf].x.array[:] = (1-f)*self.ext_flux_tn[pf].x.array[:] + \
+                        f*self.ext_flux_array_tnp1[:]
             elif type(sd)==StaggeredDNDriver and sd.p_dirichlet==pf:
                 sd.dirichlet_tcon.g.x.array[:] = (1-sd.relaxation_coeff[pf].value)*pf.u.x.array[:] + \
                                                  sd.relaxation_coeff[pf].value*((1-self.fraction_macro_step)*\
@@ -169,7 +174,7 @@ class MHSSubsteppingDriver:
         (ps,pf) = (self.ps,self.pf)
         rr_driver = self.staggered_driver
         assert(type(rr_driver)==StaggeredRRDriver)
-        rr_driver.update_robin(pf)
+        self.update_robin_fast()
         self.micro_steps()
         # have solution at tnp1
         # Updated sol, grad, conduc from n+1
@@ -203,9 +208,25 @@ class MHSSubsteppingDriver:
             p.time = self.t0_macro_step
             p.iter = self.prev_iter[p]
             p.u_prev.x.array[:] = self.u_prev[p].x.array[:]
+        self.relaxation_coeff_pf = self.staggered_driver.relaxation_coeff[pf].value
         # TODO: Undo pre-iterate of source
         # TODO: Undo pre-iterate of domain
         # TODO: Undo post-iterate of problem
+
+    def update_robin_fast(self):
+        '''
+        Update Robin condition of fast problem before micro-steps
+        '''
+        sd = self.staggered_driver
+        pf = self.pf
+        assert(type(sd)==StaggeredRRDriver)
+        sd.update_robin(pf)
+        self.ext_sol_array_tnp1 = sd.net_ext_sol[pf].x.array.copy()
+        self.ext_flux_array_tnp1 = sd.net_ext_flux[pf].x.array.copy()
+
+    def post_iterate(self):
+        (ps,pf) = (self.ps,self.pf)
+        self.staggered_driver.relaxation_coeff[pf].value = self.relaxation_coeff_pf
 
     def pre_loop(self,sd:typing.Union[StaggeredDNDriver,StaggeredRRDriver]):
         (ps,pf) = (self.ps,self.pf)
@@ -223,19 +244,27 @@ class MHSSubsteppingDriver:
             u.name = "u_prev_driver"
         # Add a compute gradient around here!
         (p,p_ext) = (pf,ps)
+        self.ext_flux_tn = {p:fem.Function(p.dg0_vec,name="ext_flux_tn")}
+        self.ext_conductivity_tn = {p:fem.Function(p.dg0_bg,name="ext_conduc_tn")}
         p_ext.compute_gradient()
         # TODO: Are these necessary? Can I get them from my own data?
         if type(sd)==StaggeredRRDriver:
-            interpolate_dg0_cells_to_cells(sd.prev_ext_grad[p],p_ext.grad_u,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
-            interpolate_dg0_cells_to_cells(sd.prev_ext_conductivity[p],p_ext.k,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
-            sd.prev_ext_sol[p].interpolate(p_ext.u,cells0=sd.submesh_cells[p_ext],cells1=sd.submesh_cells[p])
-            sd.prev_ext_sol[p].x.scatter_forward()
+            self.ext_sol_tn = {p:fem.Function(p.v,name="ext_sol_tn")}
+            interpolate_dg0_cells_to_cells(self.ext_flux_tn[p],p_ext.grad_u,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
+            interpolate_dg0_cells_to_cells(self.ext_conductivity_tn[p],p_ext.k,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
+            self.ext_sol_tn[p].interpolate(p_ext.u,cells0=sd.submesh_cells[p_ext],cells1=sd.submesh_cells[p])
+            self.ext_sol_tn[p].x.scatter_forward()
         elif type(sd)==StaggeredDNDriver:
             if sd.p_dirichlet==pf:
-                sd.prev_ext_sol[p].interpolate(p_ext.u,cells0=sd.submesh_cells[p_ext],cells1=sd.submesh_cells[p])
+                self.ext_sol_tn[p].interpolate(p_ext.u,cells0=sd.submesh_cells[p_ext],cells1=sd.submesh_cells[p])
             else:
-                interpolate_dg0_cells_to_cells(sd.prev_ext_grad[p],p_ext.grad_u,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
-                interpolate_dg0_cells_to_cells(sd.prev_ext_conductivity[p],p_ext.k,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
+                interpolate_dg0_cells_to_cells(self.ext_flux_tn[p],p_ext.grad_u,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
+                interpolate_dg0_cells_to_cells(self.ext_conductivity_tn[p],p_ext.k,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
+
+        dim = self.ext_flux_tn[p].function_space.value_size
+        for cell in sd.active_gamma_cells[p]:
+            self.ext_flux_tn[p].x.array[cell*dim:cell*dim+dim] *= self.ext_conductivity_tn[p].x.array[cell]
+        self.ext_flux_tn[p].vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
 
 def main(initial_condition=True):
     write_gcode()
@@ -243,7 +272,7 @@ def main(initial_condition=True):
     driver_type = params["driver_type"]
     if   driver_type=="robin":
         driver_constructor = StaggeredRRDriver
-        initial_relaxation_factors=[0.5,1]
+        initial_relaxation_factors=[1.0,1.0]
     elif driver_type=="dn":
         driver_constructor = StaggeredDNDriver
         initial_relaxation_factors=[0.5,1]
@@ -332,6 +361,7 @@ if __name__=="__main__":
         lp.add_module(StaggeredRRDriver)
         lp.add_function(build_subentity_to_parent_mapping)
         lp.add_function(mhs_fenicsx.geometry.mesh_collision)
+        lp.add_function(Problem.pre_iterate)
         lp_wrapper = lp(main)
         lp_wrapper()
         with open(f"profiling_{rank}.txt", 'w') as pf:

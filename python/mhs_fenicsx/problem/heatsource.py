@@ -25,7 +25,7 @@ class HeatSource(ABC):
     @abstractmethod
     def __call__(self,x):
         pass
-    def pre_iterate(self,tn,dt):
+    def pre_iterate(self,tn,dt,verbose=True):
         self.x_prev[:] = self.x[:]
         if self.path is None:
             self.x += self.speed*dt
@@ -35,7 +35,7 @@ class HeatSource(ABC):
             self.x     = self.path.current_track.get_position(tnp1)
             self.speed = self.path.current_track.get_speed()
             self.power = self.path.current_track.power
-            if rank==0:
+            if rank==0 and verbose:
                 print(f"Current track is {self.path.current_track}")
 
 class Gaussian1D(HeatSource):

@@ -14,3 +14,4 @@ TODO
 - [ ] Stop storing ext_conductivity
 - [ ] Bug fix parallel substepping case with certain numbers of els. Most likely empty partitions.
 - [ ] Interpolate dg0 product directly
+- [ ] Add test for get_active_dofs_external!

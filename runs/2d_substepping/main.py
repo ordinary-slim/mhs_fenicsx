@@ -5,6 +5,7 @@ from dolfinx import mesh, fem, cpp, io
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.submesh import build_subentity_to_parent_mapping, find_submesh_interface, \
 compute_dg0_interpolation_data
+from mhs_fenicsx_cpp import mesh_collision
 from mhs_fenicsx.drivers.staggered_drivers import StaggeredRRDriver, StaggeredDNDriver, interpolate_dg0_cells_to_cells
 import mhs_fenicsx.geometry
 import yaml
@@ -12,6 +13,7 @@ import numpy as np
 import shutil
 import typing
 from petsc4py import PETSc
+import argparse
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -94,8 +96,7 @@ class MHSSubsteppingDriver:
         self.micro_iter = 0
         while (self.t1_macro_step - pf.time) > 1e-7:
             forced_time_derivative = (self.micro_iter==0)
-            print(f"forced_time_derivative = {forced_time_derivative}")
-            pf.pre_iterate(forced_time_derivative=forced_time_derivative)
+            pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
             self.micro_iter += 1
             self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
             if type(sd)==StaggeredRRDriver:
@@ -113,7 +114,7 @@ class MHSSubsteppingDriver:
                 sd.relaxation_coeff[pf].value = self.fraction_macro_step
             pf.assemble()
             pf.solve()
-            pf.post_iterate()
+            #pf.post_iterate()
             self.writepos(case="micro")
 
     def extract_subproblem(self):
@@ -127,7 +128,7 @@ class MHSSubsteppingDriver:
         # Here we just do a single collision test
         initial_track_macro_step = ps.source.path.get_track(self.t0_macro_step)
         assert(initial_track_macro_step==ps.source.path.current_track)
-        pad = 3*radius
+        pad = 4*radius
         p0 = initial_track_macro_step.get_position(self.t0_macro_step)
         p1 = initial_track_macro_step.get_position(self.t1_macro_step)
         direction = initial_track_macro_step.get_direction()
@@ -136,7 +137,9 @@ class MHSSubsteppingDriver:
         obb = mhs_fenicsx.geometry.OBB(p0,p1,width=pad,height=pad,depth=pad,dim=cdim,
                                        shrink=False)
         obb_mesh = obb.get_dolfinx_mesh()
-        subproblem_els = mhs_fenicsx.geometry.mesh_collision(ps.domain,obb_mesh,bb_tree_mesh_big=ps.bb_tree)
+        #subproblem_els = mhs_fenicsx.geometry.mesh_collision(ps.domain,obb_mesh,bb_tree_mesh_big=ps.bb_tree)
+        subproblem_els = mesh_collision(ps.domain._cpp_object,obb_mesh._cpp_object,bb_tree_big=ps.bb_tree._cpp_object)
+        subproblem_els = np.array(subproblem_els)
         # Extract subproblem:
         self.submesh_data = {}
         submesh_data = mesh.create_submesh(ps.domain,cdim,subproblem_els)
@@ -227,6 +230,8 @@ class MHSSubsteppingDriver:
     def post_iterate(self):
         (ps,pf) = (self.ps,self.pf)
         self.staggered_driver.relaxation_coeff[pf].value = self.relaxation_coeff_pf
+        for p in [ps,pf]:
+            p.post_iterate()
 
     def pre_loop(self,sd:typing.Union[StaggeredDNDriver,StaggeredRRDriver]):
         (ps,pf) = (self.ps,self.pf)
@@ -266,7 +271,7 @@ class MHSSubsteppingDriver:
             self.ext_flux_tn[p].x.array[cell*dim:cell*dim+dim] *= self.ext_conductivity_tn[p].x.array[cell]
         self.ext_flux_tn[p].vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
 
-def main(initial_condition=True):
+def main(initial_condition=False):
     write_gcode()
     els_per_radius = params["els_per_radius"]
     driver_type = params["driver_type"]
@@ -300,18 +305,24 @@ def main(initial_condition=True):
                                    submesh_data=substeppin_driver.submesh_data,
                                    max_staggered_iters=params["max_staggered_iters"],
                                    initial_relaxation_factors=initial_relaxation_factors,)
+    if (type(staggered_driver)==StaggeredRRDriver):
+        h = 1.0 / (points_side-1)
+        k = float(params["material_metal"]["conductivity"])
+        staggered_driver.dirichlet_coeff[staggered_driver.p1] = 1.0/4.0
+        staggered_driver.dirichlet_coeff[staggered_driver.p2] =  k / (2 * h)
+        staggered_driver.relaxation_coeff[staggered_driver.p1].value = 3.0 / 3.0
     # Move extra_subproblem here
     #TODO: Check on pre_iterate / post_iterate of problems
-    #TODO: Check where predictor_step should be done
     staggered_driver.pre_loop(prepare_subproblems=False)
     substeppin_driver.pre_loop(staggered_driver)
-    substeppin_driver.predictor_step()
+    #substeppin_driver.predictor_step()
     substeppin_driver.subtract_child()
     staggered_driver.prepare_subproblems()
     for _ in range(staggered_driver.max_staggered_iters):
         substeppin_driver.pre_iterate()
         staggered_driver.pre_iterate()
         substeppin_driver.iterate()
+        substeppin_driver.post_iterate()
         staggered_driver.post_iterate(verbose=True)
         substeppin_driver.writepos(case="macro")
 
@@ -354,17 +365,28 @@ def run_reference(initial_condition=True):
         big_p.writepos()
 
 if __name__=="__main__":
-    profiling = True
-    if profiling:
-        lp = LineProfiler()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-s','--run-sub',action='store_true')
+    parser.add_argument('-r','--run-ref',action='store_true')
+    args = parser.parse_args()
+    lp = LineProfiler()
+    lp.add_module(Problem)
+    if args.run_sub:
         lp.add_module(MHSSubsteppingDriver)
         lp.add_module(StaggeredRRDriver)
-        lp.add_function(build_subentity_to_parent_mapping)
         lp.add_function(mhs_fenicsx.geometry.mesh_collision)
-        lp.add_function(Problem.pre_iterate)
+        lp.add_function(build_subentity_to_parent_mapping)
+        lp.add_function(compute_dg0_interpolation_data)
+        lp.add_function(find_submesh_interface)
+        lp.add_function(indices_to_function)
         lp_wrapper = lp(main)
         lp_wrapper()
-        with open(f"profiling_{rank}.txt", 'w') as pf:
-            lp.print_stats(stream=pf)
+        profiling_file = f"profiling_sub_{rank}.txt"
+    elif args.run_ref:
+        lp_wrapper = lp(run_reference)
+        lp_wrapper()
+        profiling_file = f"profiling_ref_{rank}.txt"
     else:
-        run_reference()
+        exit()
+    with open(profiling_file, 'w') as pf:
+        lp.print_stats(stream=pf)

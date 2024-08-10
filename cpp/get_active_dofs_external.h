@@ -43,6 +43,7 @@ std::vector<int> get_active_dofs_external(dolfinx::fem::Function<T> &loc_active_
     T d2 = std::reduce(d.begin(), d.end(), T(0),
                        [](auto d, auto e) { return d + e * e; });
     //if (d2 < 1e-7) active_nodes.push_back(inode);
+    //TODO: This looks very wrong!
     active_nodes.push_back(inode);
   }
   return active_nodes;

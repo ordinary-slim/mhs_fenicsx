@@ -169,11 +169,11 @@ class Problem:
                 2 * self.supg_elwise_coeff.x.array[:] * self.rho.x.array[:] * self.cp.x.array[:]*advection_norm + \
                  4 * self.k.x.array[:])
 
-    def pre_iterate(self,forced_time_derivative=False):
+    def pre_iterate(self,forced_time_derivative=False,verbose=True):
         # Pre-iterate source first, current track is tn's
-        if rank==0:
+        if rank==0 and verbose:
             print(f"\nProblem {self.name} about to solve for iter {self.iter+1}, time {self.time+self.dt.value}")
-        self.source.pre_iterate(self.time,self.dt.value)
+        self.source.pre_iterate(self.time,self.dt.value,verbose=verbose)
         # Mesh motion
         if self.domain_speed is not None:
             self.domain.geometry.x[:] += np.round(self.domain_speed*self.dt.value,7)

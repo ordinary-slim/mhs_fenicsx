@@ -139,7 +139,7 @@ class MHSSubsteppingDriver:
         obb_mesh = obb.get_dolfinx_mesh()
         #subproblem_els = mhs_fenicsx.geometry.mesh_collision(ps.domain,obb_mesh,bb_tree_mesh_big=ps.bb_tree)
         subproblem_els = mesh_collision(ps.domain._cpp_object,obb_mesh._cpp_object,bb_tree_big=ps.bb_tree._cpp_object)
-        subproblem_els = np.array(subproblem_els)
+        subproblem_els = np.array(subproblem_els,dtype=np.int32)
         # Extract subproblem:
         self.submesh_data = {}
         submesh_data = mesh.create_submesh(ps.domain,cdim,subproblem_els)
@@ -271,7 +271,7 @@ class MHSSubsteppingDriver:
             self.ext_flux_tn[p].x.array[cell*dim:cell*dim+dim] *= self.ext_conductivity_tn[p].x.array[cell]
         self.ext_flux_tn[p].vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
 
-def main(initial_condition=False):
+def main(initial_condition=True):
     write_gcode()
     els_per_radius = params["els_per_radius"]
     driver_type = params["driver_type"]

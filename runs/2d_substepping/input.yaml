@@ -18,7 +18,7 @@ material_metal : {
 #convection_coeff : 1.0E-00
 environment_temperature : 25
 # END_ESSENTIAL
-els_per_radius: 8
+els_per_radius: 20
 #petsc_opts_fixed: {
 #  "ksp_type" : "cg",
 #  "ksp_rtol" : 1e-10,

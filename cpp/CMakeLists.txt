@@ -47,6 +47,7 @@ nanobind_add_module(mhs_fenicsx_cpp
                     interpolate_dg0_at_facets.cpp
                     activation_utils.cpp
                     geometry_utils.cpp
+                    submesh_utils.cpp
                     )
 #target_sources(mhs_fenicsx_cpp PRIVATE locate_active_boundary.cpp)
 # Add DOLFINx C++ libraries

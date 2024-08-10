@@ -1,38 +1,20 @@
 from dolfinx import fem, mesh, geometry
 from mhs_fenicsx.problem import Problem
+from mhs_fenicsx_cpp import build_subentity_to_parent_mapping as build_subentity_to_parent_mapping_cpp
 import numpy as np
 
+# removable
+from mpi4py import MPI
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+
 def build_subentity_to_parent_mapping(edim:int,pdomain:mesh.Mesh,cdomain:mesh.Mesh,subcell_map,subvertex_map):
-    tdim = cdomain.topology.dim
-    centity_map = cdomain.topology.index_map(edim)
-    num_cents = centity_map.size_local + centity_map.num_ghosts
-    subentity_map = np.full(num_cents,-1,dtype=np.int32)
-
-    cdomain.topology.create_connectivity(edim,tdim)
-    ccon_e2c = cdomain.topology.connectivity(edim,tdim)
-    ccon_e2v = cdomain.topology.connectivity(edim,0)
-
-    pdomain.topology.create_connectivity(tdim,edim)
-    pdomain.topology.create_connectivity(edim,tdim)
-    pcon_e2v = pdomain.topology.connectivity(edim,0)
-    pcon_c2e = pdomain.topology.connectivity(tdim,edim)
-
-    for ient in range(num_cents):
-        entity_found = False
-        cicells = ccon_e2c.links(ient)#child incident cells
-        picells = subcell_map[cicells]#parent incident cells
-        pinodes = subvertex_map[ccon_e2v.links(ient)]#parent incident nodes
-        pinodes.sort()
-        for picell in picells:
-            if not(entity_found):
-                for pient in pcon_c2e.links(picell):
-                    pinodes2compare = pcon_e2v.links(pient).copy()
-                    pinodes2compare.sort()
-                    entity_found = (pinodes==pinodes2compare).all()
-                    if entity_found:
-                        subentity_map[ient] = pient
-                        break
-    return subentity_map
+    subentity_map_cpp = build_subentity_to_parent_mapping_cpp(edim,
+                                                              pdomain._cpp_object,
+                                                              cdomain._cpp_object,
+                                                              subcell_map,
+                                                              subvertex_map)
+    return np.array(subentity_map_cpp,dtype=np.int32)
 
 def find_submesh_interface(parent_problem:Problem,child_problem:Problem,submesh_data):
     (pp,cp) = (parent_problem,child_problem)

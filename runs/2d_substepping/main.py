@@ -169,8 +169,7 @@ class MHSSubsteppingDriver:
         (ps,pf) = self.ps, self.pf
         ps.active_els_func.x.array[self.submesh_data["subcell_map"]] = 0
         ps.active_els_func.x.scatter_forward()
-        active_els = ps.active_els_func.x.array.nonzero()[0]
-        active_els = [el for el in active_els if el < ps.cell_map.size_local]
+        active_els = ps.active_els_func.x.array[:ps.cell_map.size_local].nonzero()[0]
         ps.set_activation(active_els)
 
     def iterate_substepped_rr(self):

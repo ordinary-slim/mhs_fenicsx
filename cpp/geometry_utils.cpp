@@ -35,7 +35,7 @@ std::vector<int> mesh_collision(
     throw std::runtime_error("Expected valid ptr to bb_tree_big");
   }
   int cdim = mesh_small.topology()->dim();
-  assert(cdim==mesh_big.topology.dim());
+  assert(cdim==mesh_big.topology()->dim());
   auto cmap_small = mesh_small.topology_mutable()->index_map(cdim);
   const std::int32_t num_entities_small = cmap_small->size_local() + cmap_small->num_ghosts();
   std::vector<std::int32_t> ents_small(num_entities_small);

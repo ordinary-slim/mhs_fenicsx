@@ -15,11 +15,12 @@ std::vector<int> locate_active_boundary(const dolfinx::mesh::Mesh<T> &domain,
   std::vector<int> bfacets_indices;
   // Values of function
   std::span<const T> func_vals = active_els_func.x()->array();
-  int cdim = domain.topology()->dim();
+  auto topology = domain.topology();
+  int cdim = topology->dim();
   domain.topology_mutable()->create_connectivity(cdim-1,cdim);
-  auto con_facet_cell = domain.topology()->connectivity(cdim-1,cdim);
+  auto con_facet_cell = topology->connectivity(cdim-1,cdim);
   assert(con_facet_cell);
-  auto facet_map = domain.topology()->index_map(cdim-1);
+  auto facet_map = topology->index_map(cdim-1);
   std::int32_t num_facets = facet_map->size_local();
   la::Vector<int> bfacet_marker = la::Vector<int>(facet_map, 1);
   auto bfacet_marker_vals = bfacet_marker.mutable_array();

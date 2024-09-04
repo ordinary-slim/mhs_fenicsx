@@ -228,7 +228,7 @@ class Problem:
         self.update_boundary()
 
     def update_boundary(self):
-        bfacets_indices  = locate_active_boundary( self.domain, self.active_els_func)
+        bfacets_indices  = locate_active_boundary(self.domain, self.active_els_func)
         self.bfacets_tag  = mesh.meshtags(self.domain, self.dim-1,
                                          np.arange(self.num_facets, dtype=np.int32),
                                          get_mask(self.num_facets,

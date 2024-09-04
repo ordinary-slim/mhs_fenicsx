@@ -12,7 +12,7 @@ class Track:
     def __init__(self, p0:np.ndarray, p1:np.ndarray,
                        t0:float,t1:float,
                        track_type:TrackType,
-                       speed:np.ndarray,power:float,
+                       speed:float,power:float,
                        index=-1,
                        ):
         self.p0 = p0

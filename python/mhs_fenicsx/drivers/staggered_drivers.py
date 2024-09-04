@@ -13,7 +13,7 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
 class StaggeredDomainDecompositionDriver:
-    def __init__(self,sub_problem_1,sub_problem_2,
+    def __init__(self,sub_problem_1:Problem,sub_problem_2:Problem,
                  max_staggered_iters=40,submesh_data={},
                  initial_relaxation_factors=[1.0,1.0]):
         (p1,p2) = (sub_problem_1,sub_problem_2)
@@ -309,16 +309,8 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         p_ext.compute_gradient()
         # Update functions
         if self.is_chimera:
-            interpolate_dg0_at_facets(p_ext.grad_u._cpp_object,
-                                      self.ext_flux[p]._cpp_object,
-                                      p.active_els_func._cpp_object,
-                                      p.gamma_facets._cpp_object,
-                                      self.active_gamma_cells[p],
-                                      self.iid_d2n_border,
-                                      p.gamma_facets_index_map,
-                                      p.gamma_imap_to_global_imap)
-            interpolate_dg0_at_facets(p_ext.k._cpp_object,
-                                      self.ext_conductivity[p]._cpp_object,
+            interpolate_dg0_at_facets([p_ext.grad_u._cpp_object,p_ext.k._cpp_object],
+                                      [self.ext_flux[p]._cpp_object,self.ext_conductivity[p]._cpp_object],
                                       p.active_els_func._cpp_object,
                                       p.gamma_facets._cpp_object,
                                       self.active_gamma_cells[p],
@@ -463,16 +455,8 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
 
         if self.is_chimera:
             # Update flux
-            interpolate_dg0_at_facets(p_ext.grad_u._cpp_object,
-                                      self.ext_flux[p]._cpp_object,
-                                      p.active_els_func._cpp_object,
-                                      p.gamma_facets._cpp_object,
-                                      self.active_gamma_cells[p],
-                                      self.iid_border[p_ext][p],
-                                      p.gamma_facets_index_map,
-                                      p.gamma_imap_to_global_imap)
-            interpolate_dg0_at_facets(p_ext.k._cpp_object,
-                                      self.ext_conductivity[p]._cpp_object,
+            interpolate_dg0_at_facets([p_ext.grad_u._cpp_object,p_ext.k._cpp_object],
+                                      [self.ext_flux[p]._cpp_object,self.ext_conductivity[p]._cpp_object],
                                       p.active_els_func._cpp_object,
                                       p.gamma_facets._cpp_object,
                                       self.active_gamma_cells[p],

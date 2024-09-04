@@ -20,7 +20,7 @@ int_vector get_facet_integration_entities(const dolfinx::mesh::Mesh<T> &domain,
   std::int32_t num_local_facets = domain.topology()->index_map(cdim-1)->size_local();
 
   for (int &ifacet : facets) {
-    if (ifacet > num_local_facets) {
+    if (ifacet >= num_local_facets) {
       continue;
     }
     auto incident_cells = con_facet_cell->links(ifacet);

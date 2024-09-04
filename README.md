@@ -12,7 +12,7 @@ TODO
 ====
 
 - [ ] Stop storing ext_conductivity
-- [ ] Bug fix parallel substepping case with certain numbers of els. Most likely empty partitions.
-- [ ] Interpolate dg0 product directly
 - [ ] Add test for get_active_dofs_external!
 - [ ] Unify extract_cell_geo of get_active_dofs_external and geometry_utils
+- [x] Interpolate list of dg0 funcs simulatenously
+- [x] Bug fix parallel substepping case with certain numbers of els. Most likely empty partitions.

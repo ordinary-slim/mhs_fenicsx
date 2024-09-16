@@ -66,14 +66,27 @@ class Problem:
         self.dirichlet_gamma = None
 
         # Source term
-        if self.dim == 1:
-            self.source = Gaussian1D(self)
-        elif self.dim == 2:
-            self.source = Gaussian2D(self)
-        else:
-            self.source = Gaussian3D(self)
+        try:
+            hs_type = self.input_parameters["heat_source"]["type"]
+            if hs_type == 1:
+                self.source = Gaussian1D(self)
+            elif hs_type == 2:
+                self.source = Gaussian2D(self)
+            elif hs_type == 3:
+                self.source = Gaussian3D(self)
+            elif hs_type == 4:
+                self.source = LumpedHeatSource(self)
+            else:
+                raise Exception(f"Unknown heat source type {hs_type}.")
+        except KeyError:
+            if self.dim == 1:
+                self.source = Gaussian1D(self)
+            elif self.dim == 2:
+                self.source = Gaussian2D(self)
+            else:
+                self.source = Gaussian3D(self)
+
         self.rhs = None # For python functions
-        self.source_rhs   = fem.Function(self.v, name="source")   # For moving hs
 
         # Time
         self.is_steady = parameters["isSteady"]
@@ -180,7 +193,7 @@ class Problem:
             # This can be done more efficiently C++ level
             self.set_bb_trees()
 
-        self.source_rhs.interpolate(self.source)
+        self.source.set_fem_function()
         self.iter += 1
         self.time += self.dt.value
         if not(forced_time_derivative):
@@ -315,8 +328,8 @@ class Problem:
         (u, v) = (ufl.TrialFunction(self.v),ufl.TestFunction(self.v))
         self.a_ufl = self.k*ufl.dot(ufl.grad(u), ufl.grad(v))*dx(1)
         if self.rhs is not None:
-            self.source_rhs.interpolate(self.rhs)
-        self.l_ufl = self.source_rhs*v*dx(1)
+            self.source.fem_function.interpolate(self.rhs)
+        self.l_ufl = self.source.fem_function*v*dx(1)
         if not(self.is_steady):
             self.a_ufl += (self.rho*self.cp/self.dt)*u*v*dx(1)
             self.l_ufl += (self.rho*self.cp/self.dt)*self.u_prev*v*dx(1)
@@ -331,7 +344,7 @@ class Problem:
                                     self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(1)
                 self.a_ufl += (self.rho * self.cp) * ufl.dot(self.advection_speed,ufl.grad(u)) * \
                                 self.supg_elwise_coeff * self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(1)
-                self.l_ufl += self.source_rhs * \
+                self.l_ufl += self.source.fem_function * \
                         self.supg_elwise_coeff * self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(1)
         if np.linalg.norm(self.angular_advection_speed.value):
             x = ufl.SpatialCoordinate(self.domain)
@@ -433,7 +446,7 @@ class Problem:
         self.result_folder = f"post_{self.name}"
         shutil.rmtree(self.result_folder,ignore_errors=True)
         self.writers["vtk"] = io.VTKFile(self.domain.comm, f"{self.result_folder}/{self.name}.pvd", "wb")
-        self.writers["vtx"] = io.VTXWriter(self.domain.comm, f"{self.result_folder}/{self.name}.bp",output=[self.u,self.source_rhs,self.active_nodes_func])
+        self.writers["vtx"] = io.VTXWriter(self.domain.comm, f"{self.result_folder}/{self.name}.bp",output=[self.u,self.source.fem_function,self.active_nodes_func])
         self.is_post_initialized = True
 
     def writepos(self,extra_funcs=[]):
@@ -444,7 +457,7 @@ class Problem:
                  self.active_els_func,
                  self.active_nodes_func,
                  self.material_id,
-                 self.source_rhs,
+                 self.source.fem_function,
                  #self.k,
                  ]
         if self.gamma_nodes is not None:

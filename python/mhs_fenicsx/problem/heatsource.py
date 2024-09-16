@@ -36,10 +36,16 @@ class HeatSource(ABC):
     @abstractmethod
     def __call__(self,x):
         pass
+
     def set_fem_function(self):
+        '''
+        Has to be done after domain motion.
+        '''
         self.fem_function.interpolate(self)
+
     def initialize_fem_function(self,p:'Problem'):
         self.fem_function = fem.Function(p.v,name="source")
+
     def pre_iterate(self,tn,dt,verbose=True):
         self.x_prev[:] = self.x[:]
         if self.path is None:
@@ -52,7 +58,6 @@ class HeatSource(ABC):
             self.power = self.path.current_track.power
             if rank==0 and verbose:
                 print(f"Current track is {self.path.current_track}")
-        self.set_fem_function()
 
 class Gaussian1D(HeatSource):
     def __call__(self,x):
@@ -86,7 +91,7 @@ class LumpedHeatSource(HeatSource):
     def set_fem_function(self):
         # Mark heated elements
         # Collision
-        obb = OBB(self.x,self.x_prev,self.mdwidth,self.mdheight, 0.0, self.domain.topology.dim)
+        obb = OBB(self.x_prev,self.x,self.mdwidth,self.mdheight, 0.0, self.domain.topology.dim)
         obb_mesh = obb.get_dolfinx_mesh()
         self.heated_els = mesh_collision(self.domain._cpp_object,obb_mesh._cpp_object,bb_tree_big=self.bb_tree._cpp_object)
         self.heated_els = np.array(self.heated_els,dtype=np.int32)
@@ -105,6 +110,7 @@ class LumpedHeatSource(HeatSource):
         heated_volume = np.round(heated_volume,9)
         # Compute power density
         pd = self.power / heated_volume
+        self.fem_function.x.array[:] = 0.0
         self.fem_function.x.array[self.heated_els] = pd
 
     def __call__(self,x):

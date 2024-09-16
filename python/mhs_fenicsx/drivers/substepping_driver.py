@@ -14,9 +14,10 @@ import typing
 from petsc4py import PETSc
 
 class MHSSubsteppingDriver:
-    def __init__(self,slow_problem:Problem):
+    def __init__(self,slow_problem:Problem,writepos=True):
         self.ps = slow_problem
         self.fraction_macro_step = 0
+        self.do_writepos = writepos
         self.writers = dict()
 
     def __del__(self):
@@ -24,13 +25,17 @@ class MHSSubsteppingDriver:
             w.close()
 
     def initialize_post(self):
+        if not(self.do_writepos):
+            return
         self.name = "staggered_substepper"
-        self.result_folder = f"post_{self.name}"
+        self.result_folder = f"post_{self.name}_tstep#{self.ps.iter}"
         shutil.rmtree(self.result_folder,ignore_errors=True)
         for p in [self.ps,self.pf]:
             self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{self.name}_{p.name}.pvd", "wb")
 
     def writepos(self,case="macro"):
+        if not(self.do_writepos):
+            return
         (ps,pf) = (self.ps,self.pf)
         sd = self.staggered_driver
         if not(self.writers):
@@ -41,9 +46,9 @@ class MHSSubsteppingDriver:
         else:
             p = ps
             time = self.macro_iter
-        funs = [p.u,p.gamma_nodes,p.source_rhs,p.active_els_func,p.grad_u,
+        funs = [p.u,p.gamma_nodes,p.source.fem_function,p.active_els_func,p.grad_u,
                 p.u_prev,self.u_prev[p]]
-        for fun_dic in [sd.ext_flux,sd.ext_conductivity,sd.ext_sol,
+        for fun_dic in [sd.ext_flux,sd.net_ext_flux,sd.ext_conductivity,sd.ext_sol,
                         sd.prev_ext_flux,sd.prev_ext_sol]:
             try:
                 funs.append(fun_dic[p])
@@ -93,6 +98,7 @@ class MHSSubsteppingDriver:
             pf.assemble()
             pf.solve()
             #pf.post_iterate()
+            self.micro_post_iterate()
             self.writepos(case="micro")
 
     def extract_subproblem(self):
@@ -104,18 +110,21 @@ class MHSSubsteppingDriver:
         # To do it properly, get initial time of macro step, final time of macro step
         # Do collision tests across track and accumulate elements to extract
         # Here we just do a single collision test
-        initial_track_macro_step = ps.source.path.get_track(self.t0_macro_step)
-        assert(initial_track_macro_step==ps.source.path.current_track)
+        track_t0 = ps.source.path.get_track(self.t0_macro_step)
+        track_t1 = ps.source.path.get_track(self.t1_macro_step)
+        #assert(track_t0==ps.source.path.current_track)
         hs_radius = ps.source.R
         # TODO: Can't use this speed!
-        hs_speed  = initial_track_macro_step.speed
-        pad = 4*hs_radius
-        p0 = initial_track_macro_step.get_position(self.t0_macro_step)
-        p1 = initial_track_macro_step.get_position(self.t1_macro_step)
-        direction = initial_track_macro_step.get_direction()
-        p0 -= direction*pad
-        p1 += direction*pad
-        obb = mhs_fenicsx.geometry.OBB(p0,p1,width=pad,height=pad,depth=pad,dim=cdim,
+        hs_speed  = track_t0.speed
+        back_pad = 5*hs_radius
+        front_pad = 2*hs_radius
+        side_pad = 3*hs_radius
+        p0 = track_t0.get_position(self.t0_macro_step)
+        p1 = track_t1.get_position(self.t1_macro_step)
+        direction = track_t0.get_direction()
+        p0 -= direction*back_pad
+        p1 += direction*front_pad
+        obb = mhs_fenicsx.geometry.OBB(p0,p1,width=back_pad,height=side_pad,depth=side_pad,dim=cdim,
                                        shrink=False)
         obb_mesh = obb.get_dolfinx_mesh()
         #subproblem_els = mhs_fenicsx.geometry.mesh_collision(ps.domain,obb_mesh,bb_tree_mesh_big=ps.bb_tree)
@@ -130,6 +139,7 @@ class MHSSubsteppingDriver:
         self.submesh_data["subgeom_map"] = submesh_data[3]
         micro_params = ps.input_parameters.copy()
         micro_params["dt"] = micro_params["micro_adim_dt"] * (hs_radius / hs_speed)
+        micro_params["petsc_opts"] = micro_params["petsc_opts_micro"]
         self.pf = Problem(submesh_data[0],micro_params, name="small")
         pf = self.pf
         self.submesh_data["parent"] = ps
@@ -141,7 +151,7 @@ class MHSSubsteppingDriver:
                                                                self.submesh_data["subvertex_map"])
         find_submesh_interface(ps,pf,self.submesh_data)
         compute_dg0_interpolation_data(ps,pf,self.submesh_data)
-        pf.u.interpolate(ps.u_prev,cells0=self.submesh_data["subcell_map"],cells1=np.arange(len(self.submesh_data["subcell_map"])))
+        pf.u.interpolate(ps.u,cells0=self.submesh_data["subcell_map"],cells1=np.arange(len(self.submesh_data["subcell_map"])))
 
     def subtract_child(self):
         # Subtract child from parent
@@ -213,6 +223,17 @@ class MHSSubsteppingDriver:
         for p in [ps,pf]:
             p.post_iterate()
 
+    def micro_post_iterate(self):
+        '''
+        post_iterate of micro_step
+        TODO: Maybe refactor? Seems like ps needs the same thing
+        '''
+        pf = self.pf
+        current_track = pf.source.path.get_track(pf.time)
+        dt2track_end = current_track.t1 - pf.time
+        if abs(pf.dt.value - dt2track_end) < 1e-9:
+            pf.dt.value = dt2track_end
+
     def pre_loop(self,sd:typing.Union[StaggeredDNDriver,StaggeredRRDriver]):
         (ps,pf) = (self.ps,self.pf)
         self.staggered_driver = sd
@@ -251,3 +272,5 @@ class MHSSubsteppingDriver:
             self.ext_flux_tn[p].x.array[cell*dim:cell*dim+dim] *= self.ext_conductivity_tn[p].x.array[cell]
         self.ext_flux_tn[p].vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
 
+    def post_loop(self):
+        self.ps.initialize_activation()

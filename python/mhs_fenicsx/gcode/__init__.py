@@ -2,6 +2,8 @@ from __future__ import annotations
 import numpy as np
 from enum import Enum, IntEnum
 
+tol = 1e-9
+
 class TrackType(Enum):
     PRINTING  = 0
     COOLING   = 1
@@ -49,22 +51,26 @@ class Path:
         self.times[-1] = tracks[-1].t1
         self.current_track = tracks[0]
 
+    def final_time(self) -> float:
+        return self.times[-1]
+
     def update(self,time):
         self.current_track = self.get_track(time)
 
     def get_track(self,t:float):
         assert (t >= self.tracks[0].t0 and t <= self.tracks[-1].t1), "Time is out of bounds for this path."
         idx_track = 0
-        for idx, track in enumerate(self.tracks):
-            if t < track.t1 - 1e-7:
-                idx_track = idx
+        for track in self.tracks:
+            if t < track.t1 - tol:
                 break
+            idx_track += 1
+        idx_track = min(idx_track,len(self.tracks)-1)
         return self.tracks[idx_track]
 
     def __repr__(self):
         return str([str(t) for t in self.tracks])
 
-def gcode_to_path(gcodeFile,default_power=100.0):
+def gcode_to_path(gcodeFile,default_power=100.0) -> Path:
     class Index(IntEnum):
         X = 0
         Y = 1

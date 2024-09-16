@@ -206,6 +206,7 @@ def mesh_containment(nodal_bb_tree,loc_mesh,cell_bb_tree,ext_mesh):
 
     return nodes
 
+# TODO: Remove this?
 class Hatch:
     def __init__(self,x0,x1,width,height,depth):
         self.x0 = x0
@@ -245,11 +246,11 @@ class OBB:
         Set y and z axes depending on dimension
         '''
         if (dim==2):
-            self.z_axis = np.array([0.0,1.0,0.0])
+            self.z_axis = np.array([-self.x_axis[1],self.x_axis[0],0.0])
         else:
             self.z_axis = np.array([0.0,0.0,1.0])
-        self.z_axis -= self.z_axis.dot(self.x_axis)*self.x_axis
-        self.z_axis /= np.linalg.norm(self.z_axis)
+            self.z_axis -= self.z_axis.dot(self.x_axis)*self.x_axis
+            self.z_axis /= np.linalg.norm(self.z_axis)
         assert np.linalg.norm(self.z_axis)>0, "Steps along z-axis are not allowed."
         self.y_axis = np.cross(self.z_axis,self.x_axis)
 

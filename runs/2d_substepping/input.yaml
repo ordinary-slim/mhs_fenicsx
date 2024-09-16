@@ -1,7 +1,6 @@
 # BEG_ESSENTIAL
 isSteady: False
 heat_source : {
-  type : 0,
   initial_position : [-5.0, 0.0, 0.0],
   initial_speed : [1000.0, 0.0, 0],
   radius : 0.05,
@@ -18,18 +17,21 @@ material_metal : {
 #convection_coeff : 1.0E-00
 environment_temperature : 25
 # END_ESSENTIAL
-els_per_radius: 20
-#petsc_opts_fixed: {
-#  "ksp_type" : "cg",
-#  "ksp_rtol" : 1e-10,
-#  "pc_type" : "jacobi",
-#}
-#petsc_opts_moving: {
-#  "ksp_type" : "bcgs",
-#  "ksp_rtol" : 1e-10,
-#  "pc_type" : "jacobi",
-#}
-L: 0.5
+els_per_radius: 1
+petsc_opts_micro: {
+  "ksp_type" : "cg",
+  "ksp_rtol" : 1e-10,
+  "pc_type" : "jacobi",
+}
+petsc_opts_macro: {
+  "ksp_type" : "cg",
+  "ksp_rtol" : 1e-10,
+  "pc_type" : "jacobi",
+}
+domain_width: 1
+domain_height: 1
 path: "Path.gcode"
-max_staggered_iters: 1
+max_staggered_iters: 2
+num_timesteps: 12
 driver_type: "robin"
+initial_condition: False

@@ -84,13 +84,13 @@ class StaggeredDomainDecompositionDriver:
 
         pos_funs[self.p1] = [p1.u,
                             p1.active_els_func,
-                            p1.source_rhs,
+                            p1.source.fem_function,
                             self.previous_u[self.p1],
                             ranks[p1],]
 
         pos_funs[self.p2] = [p2.u,
                             p2.active_els_func,
-                            p2.source_rhs,
+                            p2.source.fem_function,
                             self.previous_u[self.p2],
                             ranks[p2],]
 

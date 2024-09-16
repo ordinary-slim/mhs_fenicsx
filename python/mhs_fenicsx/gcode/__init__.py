@@ -35,7 +35,7 @@ class Track:
         return self.speed*self.get_direction()
 
     def get_position(self,time):
-        if (time < self.t0 or time > self.t1):
+        if (time < self.t0 or time > self.t1 + tol):
             raise Exception( "Time is out of bounds for this track.")
         return self.p0 + (time-self.t0)/(self.t1-self.t0)*(self.p1-self.p0)
 
@@ -58,7 +58,7 @@ class Path:
         self.current_track = self.get_track(time)
 
     def get_track(self,t:float):
-        assert (t >= self.tracks[0].t0 and t <= self.tracks[-1].t1), "Time is out of bounds for this path."
+        assert (t >= self.tracks[0].t0 and t <= self.tracks[-1].t1 + tol), "Time is out of bounds for this path."
         idx_track = 0
         for track in self.tracks:
             if t < track.t1 - tol:

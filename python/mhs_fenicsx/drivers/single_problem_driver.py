@@ -89,7 +89,7 @@ class SingleProblemDriver:
         self.p.post_iterate()
 
     def deactivate_below_surface(self, set_inactive_to_powder=False):
-        active_els = fem.locate_dofs_geometrical(self.p.dg0_bg, lambda x : x[self.p.domain.topology.dim-1] < 0.0 )
+        active_els = fem.locate_dofs_geometrical(self.p.dg0, lambda x : x[self.p.domain.topology.dim-1] < 0.0 )
         self.p.set_activation(active_els)
         if set_inactive_to_powder:
             assert len(self.p.materials)>1, "At least 2 materials for LPBF simulation."

@@ -29,9 +29,8 @@ class Problem:
         self.dim = self.domain.topology.dim
         self.name = name
         # Function spaces
-        self.v_bg    = fem.functionspace(domain, ("Lagrange", 1),)
-        self.v       = self.v_bg.clone()
-        self.dg0_bg  = fem.functionspace(domain, ("Discontinuous Lagrange", 0),)
+        self.v       = fem.functionspace(domain, ("Lagrange", 1),)
+        self.dg0  = fem.functionspace(domain, ("Discontinuous Lagrange", 0),)
         self.dg0_vec = fem.functionspace(self.domain,
                                          basix.ufl.element("DG",
                                                            self.domain.basix_cell(),
@@ -62,13 +61,11 @@ class Problem:
         # BCs / Interface
         # Ideally remove this from here and driver takes care of this
         self.gamma_nodes = None
-        self.neumann_flux = None
-        self.dirichlet_gamma = None
 
         # Source term
         try:
             hs_type = self.input_parameters["heat_source"]["type"]
-            if hs_type == 1:
+            if   hs_type == 1:
                 self.source = Gaussian1D(self)
             elif hs_type == 2:
                 self.source = Gaussian2D(self)
@@ -77,7 +74,7 @@ class Problem:
             elif hs_type == 4:
                 self.source = LumpedHeatSource(self)
             else:
-                raise Exception(f"Unknown heat source type {hs_type}.")
+                raise ValueError(f"Unknown heat source type {hs_type}.")
         except KeyError:
             if self.dim == 1:
                 self.source = Gaussian1D(self)
@@ -107,7 +104,7 @@ class Problem:
         self.is_supg = False
         if ("supg" in parameters):
             self.is_supg = bool(parameters["supg"])
-        self.supg_elwise_coeff = fem.Function(self.dg0_bg,name="supg_tau") if self.is_supg else None
+        self.supg_elwise_coeff = fem.Function(self.dg0,name="supg_tau") if self.is_supg else None
         # Material parameters
         self.define_materials(parameters)
         # Integration
@@ -120,6 +117,12 @@ class Problem:
     def __del__(self):
         for writer in self.writers.values():
             writer.close()
+
+    def copy(self):
+        to_be_deep_copied = {
+                }
+        result = object.__new__(self.__class__)
+        return result
 
     def set_initial_condition( self, expression ):
         try:
@@ -152,12 +155,12 @@ class Problem:
                 self.materials.append(Material(parameters[key]))
         assert len(self.materials) > 0, "No materials defined!"
         # All domain starts out covered by material #0
-        self.material_id = fem.Function(self.dg0_bg,name="material_id")
+        self.material_id = fem.Function(self.dg0,name="material_id")
         self.material_id.x.array[:] = 0.0
         # Initialize material funcs
-        self.k   = fem.Function(self.dg0_bg,name="conductivity")
-        self.cp  = fem.Function(self.dg0_bg,name="specific_heat")
-        self.rho = fem.Function(self.dg0_bg,name="density")
+        self.k   = fem.Function(self.dg0,name="conductivity")
+        self.cp  = fem.Function(self.dg0,name="specific_heat")
+        self.rho = fem.Function(self.dg0,name="density")
         self.set_material_funcs()
 
     def update_material_funcs(self,cells,new_id):
@@ -175,7 +178,7 @@ class Problem:
 
     def compute_supg_coeff(self):
         if self.supg_elwise_coeff is None:
-            self.supg_elwise_coeff = fem.Function(self.dg0_bg,name="supg_tau")
+            self.supg_elwise_coeff = fem.Function(self.dg0,name="supg_tau")
         mhs_fenicsx_cpp.compute_el_size_along_vector(self.supg_elwise_coeff._cpp_object,self.advection_speed._cpp_object)
         advection_norm = np.linalg.norm(self.advection_speed.value)
         self.supg_elwise_coeff.x.array[:] = self.supg_elwise_coeff.x.array[:]**2 / (
@@ -207,7 +210,7 @@ class Problem:
         self.active_els_tag = mesh.meshtags(self.domain, self.dim,
                                             np.arange(self.num_cells, dtype=np.int32),
                                             np.ones(self.num_cells,dtype=np.int32))
-        self.active_els_func= fem.Function(self.dg0_bg,name="active_els")
+        self.active_els_func= fem.Function(self.dg0,name="active_els")
         self.active_els_func.x.array[:] = 1.0
         self.active_nodes_func = fem.Function(self.v,name="active_nodes")
         self.active_nodes_func.x.array[:] = 1.0
@@ -226,7 +229,7 @@ class Problem:
         self.active_els_tag = mesh.meshtags(self.domain, self.dim,
                                             np.arange(self.num_cells, dtype=np.int32),
                                             get_mask(self.num_cells, active_els),)
-        indices_to_function(self.dg0_bg,active_els,self.dim,name="active_els",remote=False, f=self.active_els_func)
+        indices_to_function(self.dg0,active_els,self.dim,name="active_els",remote=False, f=self.active_els_func)
         #self.active_els_func.x.scatter_forward()
 
         old_active_dofs_array  = self.active_nodes_func.x.array.copy()
@@ -275,7 +278,7 @@ class Problem:
         # TODO: Add p_ext as argument
         self.gamma_facets = mesh.MeshTags(mhs_fenicsx_cpp.find_interface(self.domain._cpp_object,
                                                        self.bfacets_tag._cpp_object,
-                                                       self.v_bg.dofmap.index_map,
+                                                       self.v.dofmap.index_map,
                                                        ext_active_dofs_array))
         self.update_gamma_data()
 
@@ -464,10 +467,8 @@ class Problem:
             funcs.append(self.gamma_nodes)
         if self.is_grad_computed:
             funcs.append(self.grad_u)
-        if self.dirichlet_gamma is not None:
-            funcs.append(self.dirichlet_gamma)
         #BPARTITIONTAG
-        partition = fem.Function(self.dg0_bg,name="partition")
+        partition = fem.Function(self.dg0,name="partition")
         partition.x.array[:] = rank
         funcs.append(partition)
         #EPARTITIONTAG

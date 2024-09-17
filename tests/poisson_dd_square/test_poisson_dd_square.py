@@ -35,7 +35,7 @@ def right_marker_neumann(x):
     return np.isclose( x[0],0.5 )
 
 def getPartition(p:Problem):
-    f = fem.Function(p.dg0_bg,name="partition")
+    f = fem.Function(p.dg0,name="partition")
     f.x.array.fill(rank)
     return f
 
@@ -67,8 +67,8 @@ def run(dd_type="dn"):
     p_right = Problem(right_mesh, params, name=f"right_{dd_type}")
     # Activation
     active_els = dict()
-    active_els[p_left] = fem.locate_dofs_geometrical(p_left.dg0_bg, lambda x : x[0] <= 0.5 )
-    active_els[p_right] = fem.locate_dofs_geometrical(p_right.dg0_bg, lambda x : x[0] >= 0.5 )
+    active_els[p_left] = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] <= 0.5 )
+    active_els[p_right] = fem.locate_dofs_geometrical(p_right.dg0, lambda x : x[0] >= 0.5 )
 
     f_exact = dict()
     for p in [p_left,p_right]:

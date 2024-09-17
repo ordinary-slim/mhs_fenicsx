@@ -251,7 +251,7 @@ class MHSSubsteppingDriver:
         # Add a compute gradient around here!
         (p,p_ext) = (pf,ps)
         self.ext_flux_tn = {p:fem.Function(p.dg0_vec,name="ext_flux_tn")}
-        self.ext_conductivity_tn = {p:fem.Function(p.dg0_bg,name="ext_conduc_tn")}
+        self.ext_conductivity_tn = {p:fem.Function(p.dg0,name="ext_conduc_tn")}
         p_ext.compute_gradient()
         # TODO: Are these necessary? Can I get them from my own data?
         if type(sd)==StaggeredRRDriver:

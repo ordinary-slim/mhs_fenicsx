@@ -54,7 +54,7 @@ def run():
     problem = Problem(domain,params,name="5on5")
     
     problem.u.x.array[:] = problem.T_env
-    active_els = fem.locate_dofs_geometrical(problem.dg0_bg, lambda x : x[problem.domain.topology.dim-1] < 0.01 )
+    active_els = fem.locate_dofs_geometrical(problem.dg0, lambda x : x[problem.domain.topology.dim-1] < 0.01 )
     problem.set_activation(active_els)
 
     problem.set_forms_domain()

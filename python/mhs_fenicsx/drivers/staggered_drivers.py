@@ -79,7 +79,7 @@ class StaggeredDomainDecompositionDriver:
         # PARTITION
         ranks = dict()
         for p in [self.p1,self.p2]:
-            ranks[p] = fem.Function(p.dg0_bg,name="partition")
+            ranks[p] = fem.Function(p.dg0,name="partition")
             ranks[p].x.array[:] = rank
 
         pos_funs[self.p1] = [p1.u,
@@ -189,7 +189,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
                                         np.float64(1e-6))
 
         # Neumann Gamma funcs
-        self.ext_conductivity[pn] = fem.Function(pn.dg0_bg,name="ext_conduc")
+        self.ext_conductivity[pn] = fem.Function(pn.dg0,name="ext_conduc")
         self.ext_flux[pn] = fem.Function(pn.dg0_vec,name="ext_grad")
         self.net_ext_flux[pn] = fem.Function(pn.dg0_vec,name="net_ext_flux")
         if self.relaxation_coeff[pn].value < 1.0:
@@ -401,7 +401,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
             # Flux funcs
             self.ext_flux[p] = fem.Function(p.dg0_vec,name="ext_grad")
             self.net_ext_flux[p] = fem.Function(p.dg0_vec,name="net_ext_flux")
-            self.ext_conductivity[p] = fem.Function(p.dg0_bg,name="ext_conduc")
+            self.ext_conductivity[p] = fem.Function(p.dg0,name="ext_conduc")
             self.ext_sol[p] = fem.Function(p.v,name="ext_sol")
             self.net_ext_sol[p] = fem.Function(p.v,name="net_ext_sol")
             if self.relaxation_coeff[p].value < 1.0:

@@ -87,7 +87,7 @@ class LumpedHeatSource(HeatSource):
         self.bb_tree = p.bb_tree
 
     def initialize_fem_function(self,p:'Problem'):
-        self.fem_function = fem.Function(p.dg0_bg,name="source")
+        self.fem_function = fem.Function(p.dg0,name="source")
     def set_fem_function(self):
         # Mark heated elements
         # Collision

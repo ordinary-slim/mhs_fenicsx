@@ -144,6 +144,7 @@ class StaggeredDomainDecompositionDriver:
             self.gamma_dofs[p] = fem.locate_dofs_topological(p.v,0,p.gamma_nodes.x.array.nonzero()[0],True)
         # Ext bc
         if set_bc is not None:
+            #TODO: Fix this, bug prone!
             set_bc(p1,p2)
 
 class StaggeredDNDriver(StaggeredDomainDecompositionDriver):

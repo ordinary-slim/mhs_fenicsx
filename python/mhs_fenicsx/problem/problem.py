@@ -18,6 +18,7 @@ from mhs_fenicsx.problem.heatsource import *
 from mhs_fenicsx.problem.material import Material
 import mhs_fenicsx_cpp
 import typing
+import copy
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -101,9 +102,7 @@ class Problem:
         rotation_center = parameters["rotation_center"][:self.domain.topology.dim] if "rotation_center" in parameters else np.zeros(self.domain.topology.dim)
         self.rotation_center = fem.Constant(self.domain,rotation_center)
         # Stabilization
-        self.is_supg = False
-        if ("supg" in parameters):
-            self.is_supg = bool(parameters["supg"])
+        self.is_supg = (("supg" in parameters) and bool(parameters["supg"]))
         self.supg_elwise_coeff = fem.Function(self.dg0,name="supg_tau") if self.is_supg else None
         # Material parameters
         self.define_materials(parameters)
@@ -112,16 +111,42 @@ class Problem:
                                     "quadrature_degree":1, }
         self.writers = dict()
         self.is_post_initialized = False
+        self.is_mesh_shared = False
         self.set_linear_solver(parameters["petsc_opts"] if "petsc_opts" in parameters else None)
 
     def __del__(self):
         for writer in self.writers.values():
             writer.close()
 
-    def copy(self):
-        to_be_deep_copied = {
-                }
+    def copy(self,name=None):
+        self.is_mesh_shared = True
+        to_be_skipped = set([
+            "restriction",
+            "writers",
+            ])
+        to_be_deep_copied = set([
+            "linear_solver_opts",
+            "source",
+            "dirichlet_bcs",
+            ])
+        attributes = (set(self.__dict__.keys()) - to_be_skipped) - to_be_deep_copied
         result = object.__new__(self.__class__)
+        result.writers = {}
+        for k in attributes:
+            attr = self.__dict__[k]
+            if   isinstance(attr, (fem.Function,np.ndarray)):
+                setattr(result, k, attr.copy())
+                if hasattr(attr, "name"):
+                    result.__dict__[k].name = attr.name
+            elif isinstance(attr, fem.Constant):
+                result.__dict__[k] = fem.Constant(self.domain, attr.value)
+            else:
+                setattr(result, k, attr)
+        for k in to_be_deep_copied:
+            setattr(result, k, copy.deepcopy(self.__dict__[k]))
+        if not(name):
+            name = result.name + "_bis"
+        result.name = name
         return result
 
     def set_initial_condition( self, expression ):
@@ -191,7 +216,7 @@ class Problem:
             print(f"\nProblem {self.name} about to solve for iter {self.iter+1}, time {self.time+self.dt.value}")
         self.source.pre_iterate(self.time,self.dt.value,verbose=verbose)
         # Mesh motion
-        if self.domain_speed is not None:
+        if self.domain_speed is not None and not(self.is_mesh_shared):
             self.domain.geometry.x[:] += np.round(self.domain_speed*self.dt.value,7)
             # This can be done more efficiently C++ level
             self.set_bb_trees()
@@ -207,9 +232,6 @@ class Problem:
         self.has_preassembled = False
 
     def initialize_activation(self):
-        self.active_els_tag = mesh.meshtags(self.domain, self.dim,
-                                            np.arange(self.num_cells, dtype=np.int32),
-                                            np.ones(self.num_cells,dtype=np.int32))
         self.active_els_func= fem.Function(self.dg0,name="active_els")
         self.active_els_func.x.array[:] = 1.0
         self.active_nodes_func = fem.Function(self.v,name="active_nodes")
@@ -226,9 +248,6 @@ class Problem:
         '''
         if active_els is None:
             active_els = np.arange(self.num_cells,dtype=np.int32)
-        self.active_els_tag = mesh.meshtags(self.domain, self.dim,
-                                            np.arange(self.num_cells, dtype=np.int32),
-                                            get_mask(self.num_cells, active_els),)
         indices_to_function(self.dg0,active_els,self.dim,name="active_els",remote=False, f=self.active_els_func)
         #self.active_els_func.x.scatter_forward()
 
@@ -263,7 +282,7 @@ class Problem:
         '''
         po = mhs_fenicsx_cpp.cellwise_determine_point_ownership(p_ext.domain._cpp_object,
                                                                 self.domain.geometry.x,
-                                                                p_ext.active_els_tag.find(1),
+                                                                p_ext.active_els_func.x.array.nonzero()[0],
                                                                 1e-7,)
         return np.array(po.src_owner>=0,dtype=np.int32)
 
@@ -324,38 +343,43 @@ class Problem:
             facet_indices = self.gamma_facets.find(1)
         return get_facet_integration_entities(self.domain,facet_indices,self.active_els_func)
 
-    def set_forms_domain(self):
-        dx = ufl.Measure("dx", subdomain_data=self.active_els_tag,
+    def set_forms_domain(self, subdomain_data=None):
+        if not(subdomain_data):
+            subdomain_idx = 1
+            subdomain_data = [(subdomain_idx, self.active_els_func.x.array.nonzero()[0])]
+        else:
+            (subdomain_idx, subdomain_data) = subdomain_data
+        dx = ufl.Measure("dx", subdomain_data=subdomain_data,
                          metadata=self.quadrature_metadata,
                          )
         (u, v) = (ufl.TrialFunction(self.v),ufl.TestFunction(self.v))
-        self.a_ufl = self.k*ufl.dot(ufl.grad(u), ufl.grad(v))*dx(1)
+        self.a_ufl = self.k*ufl.dot(ufl.grad(u), ufl.grad(v))*dx(subdomain_idx)
         if self.rhs is not None:
             self.source.fem_function.interpolate(self.rhs)
-        self.l_ufl = self.source.fem_function*v*dx(1)
+        self.l_ufl = self.source.fem_function*v*dx(subdomain_idx)
         if not(self.is_steady):
-            self.a_ufl += (self.rho*self.cp/self.dt)*u*v*dx(1)
-            self.l_ufl += (self.rho*self.cp/self.dt)*self.u_prev*v*dx(1)
+            self.a_ufl += (self.rho*self.cp/self.dt)*u*v*dx(subdomain_idx)
+            self.l_ufl += (self.rho*self.cp/self.dt)*self.u_prev*v*dx(subdomain_idx)
         if np.linalg.norm(self.advection_speed.value):
-            self.a_ufl += self.rho*self.cp*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(1)
+            self.a_ufl += self.rho*self.cp*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
             if self.is_supg:
                 self.compute_supg_coeff()
                 if not(self.is_steady):
                     self.a_ufl += (self.rho * self.cp / self.dt) * u * self.supg_elwise_coeff * \
-                                    self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(1)
+                                    self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
                     self.l_ufl += (self.rho * self.cp / self.dt) * self.u_prev * self.supg_elwise_coeff * \
-                                    self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(1)
+                                    self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
                 self.a_ufl += (self.rho * self.cp) * ufl.dot(self.advection_speed,ufl.grad(u)) * \
-                                self.supg_elwise_coeff * self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(1)
+                                self.supg_elwise_coeff * self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
                 self.l_ufl += self.source.fem_function * \
-                        self.supg_elwise_coeff * self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(1)
+                        self.supg_elwise_coeff * self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
         if np.linalg.norm(self.angular_advection_speed.value):
             x = ufl.SpatialCoordinate(self.domain)
             if self.dim < 3:
                 pointwise_advection_speed = (self.angular_advection_speed)*ufl.perp(x-self.rotation_center)
             else:
                 pointwise_advection_speed = ufl.cross(self.angular_advection_speed,x-self.rotation_center)
-            self.a_ufl += self.rho*self.cp*ufl.dot(pointwise_advection_speed,ufl.grad(u))*v*dx(1)
+            self.a_ufl += self.rho*self.cp*ufl.dot(pointwise_advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
 
 
     def set_forms_boundary(self):

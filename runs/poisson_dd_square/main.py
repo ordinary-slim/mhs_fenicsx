@@ -1,4 +1,4 @@
-from dolfinx import fem, mesh, io
+from dolfinx import fem, mesh
 from mhs_fenicsx.problem.helpers import indices_to_function
 import ufl
 import numpy as np
@@ -47,7 +47,7 @@ def right_marker_neumann(x):
     return np.isclose( x[0],0.5 )
 
 def getPartition(p:Problem):
-    f = fem.Function(p.dg0_bg,name="partition")
+    f = fem.Function(p.dg0,name="partition")
     f.x.array.fill(rank)
     return f
 
@@ -56,9 +56,8 @@ def set_bc(pd,pn):
     pd.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
     pn.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
 
-def run(dd_type="dn",submesh=False):
-    dd_type=params["dd_type"] if "dd_type" in params else dd_type
-    submesh=params["submesh"] if "submesh" in params else submesh
+def run(run_type="dd"):
+    dd_type=params["dd_type"]
     if dd_type=="robin":
         driver_type = StaggeredRRDriver
     elif dd_type=="dn":
@@ -69,12 +68,12 @@ def run(dd_type="dn",submesh=False):
     # Mesh and problems
     els_side = params["els_side"]
     left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, els_side, els_side, mesh.CellType.quadrilateral)
-    if submesh:
+    if run_type=="submesh":
         dd_type += "_submesh"
     p_left = Problem(left_mesh, params, name=f"left_{dd_type}")
     submesh_data = {}
-    if submesh:
-        right_els = fem.locate_dofs_geometrical(p_left.dg0_bg, lambda x : x[0] >= 0.5 )
+    if run_type=="submesh":
+        right_els = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] >= 0.5 )
         submesh = mesh.create_submesh(left_mesh,2,right_els)
         right_mesh = submesh[0]
         submesh_data["subcell_map"] = submesh[1]
@@ -84,7 +83,7 @@ def run(dd_type="dn",submesh=False):
         right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, els_side, els_side, mesh.CellType.triangle)
     p_right = Problem(right_mesh, params, name=f"right_{dd_type}")
 
-    if submesh:
+    if run_type=="submesh":
         submesh_data["parent"] = p_left
         submesh_data["child"] = p_right
         submesh_data["subfacet_map"] = build_subentity_to_parent_mapping(1,p_left.domain,p_right.domain,
@@ -95,8 +94,8 @@ def run(dd_type="dn",submesh=False):
 
     # Activation
     active_els = dict()
-    active_els[p_left] = fem.locate_dofs_geometrical(p_left.dg0_bg, lambda x : x[0] <= 0.5 )
-    active_els[p_right] = fem.locate_dofs_geometrical(p_right.dg0_bg, lambda x : x[0] >= 0.5 )
+    active_els[p_left] = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] <= 0.5 )
+    active_els[p_right] = fem.locate_dofs_geometrical(p_right.dg0, lambda x : x[0] >= 0.5 )
 
     f_exact = dict()
     for p in [p_left,p_right]:
@@ -125,9 +124,83 @@ def run(dd_type="dn",submesh=False):
             break
     driver.post_loop()
 
+def run_same_mesh(run_type="_"):
+    from petsc4py import PETSc
+    els_side = params["els_side"]
+    domain  = mesh.create_unit_square(MPI.COMM_WORLD, els_side, els_side, mesh.CellType.quadrilateral)
+    p_left = Problem(domain, params, name=f"sm_left")
+    p_right = p_left.copy(name="sm_right")
+    active_els = dict()
+    active_els[p_left] = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] <= 0.5 )
+    active_els[p_right] = fem.locate_dofs_geometrical(p_right.dg0, lambda x : x[0] >= 0.5 )
+
+
+    for p in [p_left,p_right]:
+        p.set_activation(active_els[p])
+        p.set_rhs(rhs)
+    mask = p_left.active_els_func.x.array + 2*p_right.active_els_func.x.array
+    subdomain_data = mesh.meshtags(p_left.domain, p_left.dim,
+                                        np.arange(p_left.num_cells, dtype=np.int32),
+                                        mask,)
+
+    idx = 1
+    for p in [p_left,p_right]:
+        p.set_forms_domain(subdomain_data=(idx,subdomain_data))
+        #p.set_forms_boundary()
+        idx += 1
+
+    res = dict()
+    u2r = dict()
+
+    for p in [p_left,p_right]:
+        res[p] = fem.Function(p.v,name="restriction")
+        u2r[p] = p.restriction.unrestricted_to_restricted.copy()
+        for i in range(p.v.dofmap.index_map.size_global):
+            try:
+                res[p].x.array[i] = u2r[p][i]
+            except KeyError:
+                res[p].x.array[i] = -1
+
+    a = p_left.a_ufl + p_right.a_ufl
+    l = p_left.l_ufl + p_right.l_ufl
+    a_cpp = fem.form(a)
+    l_cpp = fem.form(l)
+
+    p_left.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
+    p_right.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
+
+    bcs = [p_left.dirichlet_bcs[0], p_right.dirichlet_bcs[0]]
+
+    A = fem.petsc.assemble_matrix(a_cpp, bcs=bcs)
+    A.assemble()
+    L = fem.petsc.assemble_vector(l_cpp)
+
+    fem.petsc.apply_lifting(L, [a_cpp], [p_left.dirichlet_bcs + p_right.dirichlet_bcs])
+    L.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
+    fem.petsc.set_bc(L,p_left.dirichlet_bcs + p_right.dirichlet_bcs)
+    # Solve
+    x = fem.petsc.create_vector(l_cpp)
+    ksp = PETSc.KSP()
+    ksp.create(domain.comm)
+    ksp.setOperators(A)
+    ksp.setType("preonly")
+    ksp.getPC().setType("lu")
+    ksp.getPC().setFactorSolverType("mumps")
+    ksp.getPC().setFactorSetUpSolverType()
+    ksp.getPC().getFactorMatrix().setMumpsIcntl(icntl=7, ival=4)
+    ksp.setFromOptions()
+    ksp.solve(L, p_left.u.vector)
+    x.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+    ksp.destroy()
+
+    for p in [p_left, p_right]:
+        p.writepos(extra_funcs=[res[p]])
+
 if __name__=="__main__":
     profiling = True
     tracing = False
+    run_type = params["run_type"]
+    func = run_same_mesh if run_type=="same_mesh" else run
     if profiling:
         lp = LineProfiler()
         lp.add_module(StaggeredDNDriver)
@@ -136,20 +209,9 @@ if __name__=="__main__":
         lp.add_function(interpolate)
         lp.add_function(fem.Function.interpolate)
         lp.add_function(interpolate_dg_at_facets)
-        lp_wrapper = lp(run)
-        lp_wrapper()
+        lp_wrapper = lp(func)
+        lp_wrapper(run_type=run_type)
         with open(f"profiling_rank{rank}.txt", 'w') as pf:
             lp.print_stats(stream=pf)
-    elif tracing:
-        # define Trace object: trace line numbers at runtime, exclude some modules
-        tracer = trace.Trace(
-            ignoredirs=[sys.prefix, sys.exec_prefix],
-            ignoremods=[
-                'inspect', 'contextlib', '_bootstrap',
-                '_weakrefset', 'abc', 'posixpath', 'genericpath', 'textwrap'
-            ],
-            trace=1,
-            count=0)
-        tracer.runfunc(main)
     else:
-        main()
+        func(run_type=run_type)

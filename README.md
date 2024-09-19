@@ -44,3 +44,4 @@ TODO
 - [ ] h for Robin's gamma not computed explicitly
 - [ ] Profile 5on5 test
 - [ ] Add shifting of bbox tree at c++ level
+- [ ] Checkout `compute_integration_domain`

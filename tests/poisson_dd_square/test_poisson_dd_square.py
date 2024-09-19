@@ -102,7 +102,7 @@ def assert_pointwisediff_exact(problem,points,target_vals):
     po = cellwise_determine_point_ownership(
                     problem.domain._cpp_object,
                     points,
-                    problem.active_els_tag.find(1),
+                    problem.active_els_func.x.array.nonzero()[0],
                     np.float64(1e-7),
                     )
     indices_found = []

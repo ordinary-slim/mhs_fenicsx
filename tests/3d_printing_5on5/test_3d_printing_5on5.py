@@ -33,7 +33,7 @@ def assert_pointwisediff(problem,points,target_vals):
     po = cellwise_determine_point_ownership(
                     problem.domain._cpp_object,
                     points,
-                    problem.active_els_tag.find(1),
+                    problem.active_els_func.x.array.nonzero()[0],
                     np.float64(1e-9),
                     )
     indices_found = []
@@ -63,7 +63,7 @@ def run():
     # TODO: Figure out why assembled RHS is zero?
     for _ in range(5):
         problem.pre_iterate()
-        problem.set_activation(np.hstack((problem.active_els_tag.values.nonzero()[0], problem.source.heated_els)))
+        problem.set_activation(np.hstack((problem.active_els_func.x.array.nonzero()[0], problem.source.heated_els)))
         problem.u_prev.x.array[problem.just_activated_nodes] = problem.T_dep
         problem.set_forms_domain()
         problem.set_forms_boundary()

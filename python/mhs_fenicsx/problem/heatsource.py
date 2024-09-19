@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import ufl
 from mhs_fenicsx.geometry import OBB
 from mhs_fenicsx_cpp import mesh_collision
+import copy
 if TYPE_CHECKING:
     from mhs_fenicsx.problem.Problem import Problem
 
@@ -58,6 +59,16 @@ class HeatSource(ABC):
             self.power = self.path.current_track.power
             if rank==0 and verbose:
                 print(f"Current track is {self.path.current_track}")
+
+    def __deepcopy__(self,memo):
+        result = self.__class__.__new__(self.__class__)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if isinstance(v, fem.Function):
+                setattr(result, k, v.copy())
+            else:
+                setattr(result, k, copy.deepcopy(v, memo))
+        return result
 
 class Gaussian1D(HeatSource):
     def __call__(self,x):

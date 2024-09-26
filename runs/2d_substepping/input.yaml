@@ -17,7 +17,7 @@ material_metal : {
 #convection_coeff : 1.0E-00
 environment_temperature : 25
 # END_ESSENTIAL
-els_per_radius: 1
+els_per_radius: 4
 petsc_opts_micro: {
   "ksp_type" : "cg",
   "ksp_rtol" : 1e-10,
@@ -31,7 +31,9 @@ petsc_opts_macro: {
 domain_width: 1
 domain_height: 1
 path: "Path.gcode"
-max_staggered_iters: 2
-num_timesteps: 12
+max_staggered_iters: 1
+max_timesteps: 1
 driver_type: "robin"
 initial_condition: False
+predictor_step: True
+writepos: True

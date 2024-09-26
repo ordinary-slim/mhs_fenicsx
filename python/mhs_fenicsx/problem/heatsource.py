@@ -66,6 +66,7 @@ class HeatSource(ABC):
         for k, v in self.__dict__.items():
             if isinstance(v, fem.Function):
                 setattr(result, k, v.copy())
+                result.__dict__[k].name = v.name
             else:
                 setattr(result, k, copy.deepcopy(v, memo))
         return result

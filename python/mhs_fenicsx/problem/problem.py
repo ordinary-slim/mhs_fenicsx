@@ -122,6 +122,7 @@ class Problem:
         self.is_mesh_shared = True
         to_be_skipped = set([
             "restriction",
+            "is_post_initialized",
             "writers",
             ])
         to_be_deep_copied = set([
@@ -131,7 +132,6 @@ class Problem:
             ])
         attributes = (set(self.__dict__.keys()) - to_be_skipped) - to_be_deep_copied
         result = object.__new__(self.__class__)
-        result.writers = {}
         for k in attributes:
             attr = self.__dict__[k]
             if   isinstance(attr, (fem.Function,np.ndarray)):
@@ -147,6 +147,8 @@ class Problem:
         if not(name):
             name = result.name + "_bis"
         result.name = name
+        result.writers = {}
+        result.is_post_initialized = False
         return result
 
     def set_initial_condition( self, expression ):
@@ -232,6 +234,7 @@ class Problem:
         self.has_preassembled = False
 
     def initialize_activation(self):
+        self.local_active_els = np.arange(self.cell_map.size_local)
         self.active_els_func= fem.Function(self.dg0,name="active_els")
         self.active_els_func.x.array[:] = 1.0
         self.active_nodes_func = fem.Function(self.v,name="active_nodes")
@@ -249,6 +252,7 @@ class Problem:
         if active_els is None:
             active_els = np.arange(self.num_cells,dtype=np.int32)
         indices_to_function(self.dg0,active_els,self.dim,name="active_els",remote=False, f=self.active_els_func)
+        self.local_active_els = self.active_els_func.x.array.nonzero()[0][:np.searchsorted(self.active_els_func.x.array.nonzero()[0], self.cell_map.size_local)]
         #self.active_els_func.x.scatter_forward()
 
         old_active_dofs_array  = self.active_nodes_func.x.array.copy()
@@ -345,8 +349,8 @@ class Problem:
 
     def set_forms_domain(self, subdomain_data=None):
         if not(subdomain_data):
-            subdomain_idx = 1
-            subdomain_data = [(subdomain_idx, self.active_els_func.x.array.nonzero()[0])]
+            subdomain_idx  = 1
+            subdomain_data = [(subdomain_idx, self.local_active_els)]
         else:
             (subdomain_idx, subdomain_data) = subdomain_data
         dx = ufl.Measure("dx", subdomain_data=subdomain_data,
@@ -460,9 +464,11 @@ class Problem:
         self.u.x.scatter_forward()
 
     def _destroy(self):
-        self.x.destroy()
-        self.A.destroy()
-        self.L.destroy()
+        for attr in ["x", "A", "L"]:
+            try:
+                self.__dict__[attr].destroy()
+            except KeyError:
+                pass
 
     def solve(self):
         self._solve_linear_system()

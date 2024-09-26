@@ -244,9 +244,9 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
     def set_dirichlet_interface(self,update=True):
         (pd,pn) = (self.p_dirichlet,self.p_neumann)
         # Get Gamma DOFS right
-        dofs_gamma_right = fem.locate_dofs_topological(pd.v, pd.dim-1, pd.gamma_facets.find(1))
+        gamma_dofs = fem.locate_dofs_topological(pd.v, pd.dim-1, pd.gamma_facets.find(1))
         # Set Gamma dirichlet
-        self.dirichlet_tcon = pd.add_dirichlet_bc(self.ext_sol[pd],bdofs=dofs_gamma_right, reset=False)
+        self.dirichlet_tcon = pd.add_dirichlet_bc(self.ext_sol[pd],bdofs=gamma_dofs, reset=False)
         if update:
             self.update_dirichlet_interface()
 

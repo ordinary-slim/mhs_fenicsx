@@ -326,7 +326,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         dim = self.ext_flux[p].function_space.value_size
         for cell in self.active_gamma_cells[p]:
             self.ext_flux[p].x.array[cell*dim:cell*dim+dim] *= self.ext_conductivity[p].x.array[cell]
-        self.ext_flux[p].vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+        self.ext_flux[p].x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
 
         self.net_ext_flux[p].x.array[:] = self.ext_flux[p].x.array[:]
         if self.relaxation_coeff[p].value < 1.0:
@@ -479,7 +479,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         dim = self.ext_flux[p].function_space.value_size
         for cell in self.active_gamma_cells[p]:
             self.ext_flux[p].x.array[cell*dim:cell*dim+dim] *= self.ext_conductivity[p].x.array[cell]
-        self.ext_flux[p].vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+        self.ext_flux[p].x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
 
         self.net_ext_sol[p].x.array[:] = self.ext_sol[p].x.array[:]
         self.net_ext_flux[p].x.array[:] = self.ext_flux[p].x.array[:]

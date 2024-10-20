@@ -39,8 +39,8 @@ class Problem:
                                                            shape=(self.dim,)))
         self.restriction = None
 
-        if self.domain.topology.index_map(self.dim-1) is None:
-            self.domain.topology.create_entities(self.dim-1)
+        for dim in [self.dim, self.dim-1]:
+            self.domain.topology.create_entities(dim)
         self.domain.topology.create_connectivity(self.dim,self.dim)
         self.domain.topology.create_connectivity(domain.topology.dim-1, domain.topology.dim)
         # Set num cells per processor
@@ -458,7 +458,7 @@ class Problem:
         ksp.destroy()
 
     def _restrict_solution(self):
-        with self.u.vector.localForm() as usub_vector_local, \
+        with self.u.x.petsc_vec.localForm() as usub_vector_local, \
                 multiphenicsx.fem.petsc.VecSubVectorWrapper(self.x, self.v.dofmap, self.restriction) as x_wrapper:
                     usub_vector_local[:] = x_wrapper
         self.u.x.scatter_forward()

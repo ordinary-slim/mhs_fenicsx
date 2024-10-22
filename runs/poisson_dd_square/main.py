@@ -51,7 +51,7 @@ def getPartition(p:Problem):
     f.x.array.fill(rank)
     return f
 
-def set_bc(pd,pn):
+def set_bc(pd:Problem,pn:Problem):
     # Set outside Dirichlet
     pd.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
     pn.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)

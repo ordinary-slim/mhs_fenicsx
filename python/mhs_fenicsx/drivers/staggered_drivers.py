@@ -441,7 +441,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
             (8,np.asarray(gammaIntegralEntities, dtype=np.int32))])
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
-        (u, v) = (ufl.TrialFunction(p.v),ufl.TestFunction(p.v))
+        (u, v) = (p.u,ufl.TestFunction(p.v))
         p.a_ufl += + self.dirichlet_coeff[p] * u * v * dS(8)
         robin_con = self.dirichlet_coeff[p]*self.net_ext_sol[p] + ufl.inner(n,self.net_ext_flux[p])
         p.l_ufl += robin_con * v * dS(8)

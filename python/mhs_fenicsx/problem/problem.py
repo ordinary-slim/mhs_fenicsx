@@ -54,6 +54,7 @@ class Problem:
         self.initialize_activation()
 
         self.u   = fem.Function(self.v, name="uh")   # Solution
+        self.du  = fem.Function(self.v, name="delta_uh")   # Solution
         self.u_prev = fem.Function(self.v, name="uh_n") # Previous solution
         self.grad_u = fem.Function(self.dg0_vec,name="grad")
         self.is_grad_computed = False
@@ -356,7 +357,7 @@ class Problem:
         dx = ufl.Measure("dx", subdomain_data=subdomain_data,
                          metadata=self.quadrature_metadata,
                          )
-        (u, v) = (ufl.TrialFunction(self.v),ufl.TestFunction(self.v))
+        (u, v) = (self.u, ufl.TestFunction(self.v))
         self.a_ufl = self.k*ufl.dot(ufl.grad(u), ufl.grad(v))*dx(subdomain_idx)
         if self.rhs is not None:
             self.source.fem_function.interpolate(self.rhs)
@@ -396,7 +397,7 @@ class Problem:
         ds = ufl.Measure('ds', domain=self.domain, subdomain_data=[
                          (1,np.asarray(boun_integral_entities, dtype=np.int32))],
                          metadata=self.quadrature_metadata)
-        (u, v) = (ufl.TrialFunction(self.v),ufl.TestFunction(self.v))
+        (u, v) = (self.u, ufl.TestFunction(self.v))
         # CONVECTION
         if self.convection_coeff is not None:
             self.a_ufl += self.convection_coeff * \
@@ -408,16 +409,20 @@ class Problem:
                           ds(1)
 
     def compile_forms(self):
-        self.a_compiled = fem.form(self.a_ufl)
-        self.l_compiled = fem.form(self.l_ufl)
+        self.r_ufl = self.a_ufl - self.l_ufl#residual
+        self.j_ufl = ufl.derivative(self.r_ufl, self.u)#jacobian
+        self.r_compiled = fem.form(self.r_ufl)
+        self.j_compiled = fem.form(self.j_ufl)
+        #self.a_compiled = fem.form(self.a_ufl)
+        #self.l_compiled = fem.form(self.l_ufl)
 
     def pre_assemble(self):
-        self.A = multiphenicsx.fem.petsc.create_matrix(self.a_compiled,
+        self.A = multiphenicsx.fem.petsc.create_matrix(self.j_compiled,
                                                   (self.restriction, self.restriction),
                                                   )
-        self.L = multiphenicsx.fem.petsc.create_vector(self.l_compiled,
+        self.L = multiphenicsx.fem.petsc.create_vector(self.r_compiled,
                                                   self.restriction)
-        self.x = multiphenicsx.fem.petsc.create_vector(self.l_compiled, restriction=self.restriction)
+        self.x = multiphenicsx.fem.petsc.create_vector(self.r_compiled, restriction=self.restriction)
         self.has_preassembled = True
 
     def assemble(self):
@@ -425,18 +430,30 @@ class Problem:
             self.pre_assemble()
         self.A.zeroEntries()
         multiphenicsx.fem.petsc.assemble_matrix(self.A,
-                                                self.a_compiled,
+                                                self.j_compiled,
                                                 bcs=self.dirichlet_bcs,
                                                 restriction=(self.restriction, self.restriction))
         self.A.assemble()
         with self.L.localForm() as l_local:
             l_local.set(0.0)
         multiphenicsx.fem.petsc.assemble_vector(self.L,
-                                                self.l_compiled,
+                                                self.r_compiled,
                                                 restriction=self.restriction,)
-        multiphenicsx.fem.petsc.apply_lifting(self.L, [self.a_compiled], [self.dirichlet_bcs], restriction=self.restriction,)
-        self.L.ghostUpdate(addv=petsc4py.PETSc.InsertMode.ADD, mode=petsc4py.PETSc.ScatterMode.REVERSE)
-        multiphenicsx.fem.petsc.set_bc(self.L,self.dirichlet_bcs,restriction=self.restriction)
+        self.L.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
+        self.L.scale(-1)
+
+        # Dirichlet
+        # Workaround https://fenicsproject.discourse.group/t/issue-with-multiphenicsx-fem-petsc-set-bc-x0-argument
+        self.original_dirichlet_bcs = []
+        for bc in self.dirichlet_bcs:
+            self.original_dirichlet_bcs.append( bc.g.x.array.copy() )
+            bc.g.x.array[:] = bc.g.x.array[:] - self.u.x.array[:]
+        multiphenicsx.fem.petsc.apply_lifting(self.L, [self.j_compiled], [self.dirichlet_bcs], restriction=self.restriction)
+        multiphenicsx.fem.petsc.set_bc(self.L,self.dirichlet_bcs, restriction=self.restriction)
+        self.L.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
+        # Workaround https://fenicsproject.discourse.group/t/issue-with-multiphenicsx-fem-petsc-set-bc-x0-argument
+        for bc, obc in zip(self.dirichlet_bcs, self.original_dirichlet_bcs):
+            bc.g.x.array[:] = obc[:]
 
     def set_linear_solver(self, opts:typing.Optional[dict] = None):
         if opts is None:
@@ -458,10 +475,10 @@ class Problem:
         ksp.destroy()
 
     def _restrict_solution(self):
-        with self.u.x.petsc_vec.localForm() as usub_vector_local, \
+        with self.du.x.petsc_vec.localForm() as dusub_vector_local, \
                 multiphenicsx.fem.petsc.VecSubVectorWrapper(self.x, self.v.dofmap, self.restriction) as x_wrapper:
-                    usub_vector_local[:] = x_wrapper
-        self.u.x.scatter_forward()
+                    dusub_vector_local[:] = x_wrapper
+        self.du.x.scatter_forward()
 
     def _destroy(self):
         for attr in ["x", "A", "L"]:
@@ -473,7 +490,8 @@ class Problem:
     def solve(self):
         self._solve_linear_system()
         self._restrict_solution()
-        self.is_grad_computed   = False
+        self.u.x.array[:] += self.du.x.array[:]
+        self.is_grad_computed   = False#dubious line
     
     def initialize_post(self):
         self.result_folder = f"post_{self.name}"

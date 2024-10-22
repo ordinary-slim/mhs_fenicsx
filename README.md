@@ -5,7 +5,7 @@ From this directory, run:
 cmake -B build-dir -S ./cpp/
 cmake --build build-dir
 cmake --install build-dir
-python3 -m pip -v install --config-settings=build-dir="build" --no-build-isolation ./python
+python3 -m pip -v install -e python --config-settings=build-dir="build" --no-build-isolation
 ```
 
 CHECKPOINTS

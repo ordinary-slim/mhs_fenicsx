@@ -411,7 +411,7 @@ class Problem:
     def compile_forms(self):
         self.r_ufl = self.a_ufl - self.l_ufl#residual
         self.j_ufl = ufl.derivative(self.r_ufl, self.u)#jacobian
-        self.r_compiled = fem.form(self.r_ufl)
+        self.mr_compiled = fem.form(-self.r_ufl)
         self.j_compiled = fem.form(self.j_ufl)
         #self.a_compiled = fem.form(self.a_ufl)
         #self.l_compiled = fem.form(self.l_ufl)
@@ -420,9 +420,9 @@ class Problem:
         self.A = multiphenicsx.fem.petsc.create_matrix(self.j_compiled,
                                                   (self.restriction, self.restriction),
                                                   )
-        self.L = multiphenicsx.fem.petsc.create_vector(self.r_compiled,
+        self.L = multiphenicsx.fem.petsc.create_vector(self.mr_compiled,
                                                   self.restriction)
-        self.x = multiphenicsx.fem.petsc.create_vector(self.r_compiled, restriction=self.restriction)
+        self.x = multiphenicsx.fem.petsc.create_vector(self.mr_compiled, restriction=self.restriction)
         self.has_preassembled = True
 
     def assemble(self):
@@ -437,23 +437,15 @@ class Problem:
         with self.L.localForm() as l_local:
             l_local.set(0.0)
         multiphenicsx.fem.petsc.assemble_vector(self.L,
-                                                self.r_compiled,
+                                                self.mr_compiled,
                                                 restriction=self.restriction,)
-        self.L.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
-        self.L.scale(-1)
 
         # Dirichlet
-        # Workaround https://fenicsproject.discourse.group/t/issue-with-multiphenicsx-fem-petsc-set-bc-x0-argument
-        self.original_dirichlet_bcs = []
-        for bc in self.dirichlet_bcs:
-            self.original_dirichlet_bcs.append( bc.g.x.array.copy() )
-            bc.g.x.array[:] = bc.g.x.array[:] - self.u.x.array[:]
-        multiphenicsx.fem.petsc.apply_lifting(self.L, [self.j_compiled], [self.dirichlet_bcs], restriction=self.restriction)
-        multiphenicsx.fem.petsc.set_bc(self.L,self.dirichlet_bcs, restriction=self.restriction)
-        self.L.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
-        # Workaround https://fenicsproject.discourse.group/t/issue-with-multiphenicsx-fem-petsc-set-bc-x0-argument
-        for bc, obc in zip(self.dirichlet_bcs, self.original_dirichlet_bcs):
-            bc.g.x.array[:] = obc[:]
+        multiphenicsx.fem.petsc.apply_lifting(self.L, [self.j_compiled], [self.dirichlet_bcs], [self.u.x.petsc_vec], restriction=self.restriction)
+
+        self.L.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
+
+        multiphenicsx.fem.petsc.set_bc(self.L,self.dirichlet_bcs, self.u.x.petsc_vec, restriction=self.restriction)
 
     def set_linear_solver(self, opts:typing.Optional[dict] = None):
         if opts is None:

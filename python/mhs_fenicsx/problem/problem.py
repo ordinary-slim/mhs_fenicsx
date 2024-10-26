@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from mhs_fenicsx import gcode
 from mhs_fenicsx.problem.helpers import *
 from mhs_fenicsx.problem.heatsource import *
-from mhs_fenicsx.problem.material import Material
+from mhs_fenicsx.problem.material import Material, base_mat_to_problem, phase_change_mat_to_problem
 import mhs_fenicsx_cpp
 import typing
 import copy
@@ -26,6 +26,7 @@ rank = comm.Get_rank()
 class Problem:
     def __init__(self, domain, parameters, name="case"):
         self.input_parameters = parameters.copy()
+        self.writers = dict()
         self.domain   = domain
         self.dim = self.domain.topology.dim
         self.name = name
@@ -108,9 +109,9 @@ class Problem:
         # Material parameters
         self.define_materials(parameters)
         # Integration
-        self.quadrature_metadata = {"quadrature_rule":"vertex",
-                                    "quadrature_degree":1, }
-        self.writers = dict()
+        self.quadrature_metadata = parameters["quadrature_metadata"] \
+                if "quadrature_metadata" in parameters \
+                else {"quadrature_rule":"vertex", "quadrature_degree":1, }
         self.is_post_initialized = False
         self.is_mesh_shared = False
         self.set_linear_solver(parameters["petsc_opts"] if "petsc_opts" in parameters else None)
@@ -178,9 +179,13 @@ class Problem:
             self.convection_coeff = None
 
         self.materials = []
+        self.phase_change = False
         for key in parameters.keys():
             if key.startswith("material"):
-                self.materials.append(Material(parameters[key]))
+                material = Material(parameters[key])
+                self.materials.append(material)
+                self.phase_change = (self.phase_change or material.phase_change)
+
         assert len(self.materials) > 0, "No materials defined!"
         # All domain starts out covered by material #0
         self.material_id = fem.Function(self.dg0,name="material_id")
@@ -189,20 +194,30 @@ class Problem:
         self.k   = fem.Function(self.dg0,name="conductivity")
         self.cp  = fem.Function(self.dg0,name="specific_heat")
         self.rho = fem.Function(self.dg0,name="density")
+        if self.phase_change:
+            self.latent_heat   = fem.Function(self.dg0,name="latent_heat")
+            self.solidus_temperature  = fem.Function(self.dg0,name="solidus_temperature")
+            self.liquidus_temperature = fem.Function(self.dg0,name="liquidus_temperature")
+            self.smoothing_cte_phase_change = fem.Constant(self.domain,
+                                                           float(parameters["smoothing_cte_phase_change"]))
         self.set_material_funcs()
+    
+    def _update_mat_at_cells(self, mat_id, cells):
+        material = self.materials[mat_id]
+        for k, v in base_mat_to_problem.items():
+            self.__dict__[v].x.array[cells] = material.__dict__[k]
+        if self.phase_change:
+            for k, v in phase_change_mat_to_problem.items():
+                self.__dict__[v].x.array[cells] = material.__dict__[k]
 
     def update_material_funcs(self,cells,new_id):
         self.material_id.x.array[cells] = new_id
-        self.k.x.array[cells]   = self.materials[new_id].k
-        self.rho.x.array[cells] = self.materials[new_id].rho
-        self.cp.x.array[cells]  = self.materials[new_id].cp
+        self._update_mat_at_cells(new_id, cells)
 
     def set_material_funcs(self):
-        for idx, material in enumerate(self.materials):
-            cells = np.flatnonzero(abs(self.material_id.x.array-idx)<1e-7)
-            self.k.x.array[cells]   = material.k
-            self.rho.x.array[cells] = material.rho
-            self.cp.x.array[cells]  = material.cp
+        for mat_id in range(len(self.materials)):
+            cells = np.flatnonzero(abs(self.material_id.x.array-mat_id)<1e-7)
+            self._update_mat_at_cells(mat_id,cells)
 
     def compute_supg_coeff(self):
         if self.supg_elwise_coeff is None:
@@ -385,6 +400,11 @@ class Problem:
             else:
                 pointwise_advection_speed = ufl.cross(self.angular_advection_speed,x-self.rotation_center)
             self.a_ufl += self.rho*self.cp*ufl.dot(pointwise_advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
+        if self.phase_change:
+            cte = (2.0*self.smoothing_cte_phase_change/(self.liquidus_temperature - self.solidus_temperature))
+            melting_temperature = (self.liquidus_temperature + self.solidus_temperature) / 2.0
+            fp  = lambda tem : cte/2.0*(1 - ufl.tanh(cte*(tem - melting_temperature))**2)
+            self.a_ufl += self.rho * self.latent_heat * fp(self.u) *(self.u - self.u_prev)/self.dt*v*dx(subdomain_idx)
 
 
     def set_forms_boundary(self):
@@ -425,27 +445,30 @@ class Problem:
         self.x = multiphenicsx.fem.petsc.create_vector(self.mr_compiled, restriction=self.restriction)
         self.has_preassembled = True
 
-    def assemble(self):
-        if not(self.has_preassembled):
-            self.pre_assemble()
+    def assemble_jacobian(self):
         self.A.zeroEntries()
         multiphenicsx.fem.petsc.assemble_matrix(self.A,
                                                 self.j_compiled,
                                                 bcs=self.dirichlet_bcs,
                                                 restriction=(self.restriction, self.restriction))
         self.A.assemble()
+
+    def assemble_residual(self):
         with self.L.localForm() as l_local:
             l_local.set(0.0)
         multiphenicsx.fem.petsc.assemble_vector(self.L,
                                                 self.mr_compiled,
                                                 restriction=self.restriction,)
-
         # Dirichlet
         multiphenicsx.fem.petsc.apply_lifting(self.L, [self.j_compiled], [self.dirichlet_bcs], [self.u.x.petsc_vec], restriction=self.restriction)
-
         self.L.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
-
         multiphenicsx.fem.petsc.set_bc(self.L,self.dirichlet_bcs, self.u.x.petsc_vec, restriction=self.restriction)
+
+    def assemble(self):
+        if not(self.has_preassembled):
+            self.pre_assemble()
+        self.assemble_jacobian()
+        self.assemble_residual()
 
     def set_linear_solver(self, opts:typing.Optional[dict] = None):
         if opts is None:

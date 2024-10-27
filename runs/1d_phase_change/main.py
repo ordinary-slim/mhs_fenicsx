@@ -5,7 +5,7 @@ from mpi4py import MPI
 import numpy as np
 from scipy.optimize import fsolve
 from scipy.special import erf, erfc
-
+from line_profiler import LineProfiler
 
 with open("input.yaml", 'r') as f:
     params = yaml.safe_load(f)
@@ -43,12 +43,10 @@ stl = c_p*(T_l - T_m) / l
 sts = c_p*(T_m - T_s) / l
 diffusivity = k / rho / c_p
 lamma = fsolve(transcendental_fun, 0.388150542167233)
-print(f"lamma = {lamma}")
-exit()
 
 def main(case_name="demo_phase_change"):
     nelems = 1000
-    max_num_timesteps = 5
+    max_num_timesteps = 100
     max_nr_iters = 25
     max_ls_iters = 5
     x_left  = 0.0
@@ -103,8 +101,18 @@ def main(case_name="demo_phase_change"):
 
         #p.post_iterate()
         p.writepos(extra_funcs=[f_exact])
-    import pdb
-    pdb.set_trace()
 
 if __name__=="__main__":
-    main()
+    lp = LineProfiler()
+    lp.add_function(Problem.assemble_jacobian)
+    lp.add_function(Problem.assemble_residual)
+    import multiphenicsx.fem.petsc
+    lp.add_function(multiphenicsx.fem.petsc.apply_lifting)
+    lp_wrapper = lp(main)
+    lp_wrapper()
+    profiling_file = f"profiling_rank{rank}.txt"
+    try:
+        with open(profiling_file, 'w') as pf:
+            lp.print_stats(stream=pf)
+    except NameError:
+        pass

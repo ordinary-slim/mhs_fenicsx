@@ -6,6 +6,7 @@ import numpy as np
 from scipy.optimize import fsolve
 from scipy.special import erf, erfc
 from line_profiler import LineProfiler
+from mhs_fenicsx.drivers import NewtonRaphson
 
 with open("input.yaml", 'r') as f:
     params = yaml.safe_load(f)
@@ -71,33 +72,12 @@ def main(case_name="demo_phase_change"):
         p.pre_iterate()
         f_exact.interpolate(lamma_exact_sol)
 
-        p.assemble_residual()
-        nr_converged = False
-        nr_iter = 0
-        while (nr_iter < max_nr_iters) and (not(nr_converged)):
-            nr_iter += 1
-            un = p.u.copy()
-            p.assemble_jacobian()
+        if p.phase_change:
+            nr_driver = NewtonRaphson(p,max_ls_iters=0)
+            nr_driver.solve()
+        else:
+            p.assemble()
             p.solve()
-
-            residual_work_n   = p.du.x.petsc_vec.dot(p.L)
-            p.assemble_residual()
-            residual_work_np1 = p.du.x.petsc_vec.dot(p.L)
-            # LINE-SEARCH
-            ls_iter = 0
-            relaxation_coeff = 1.0
-            while (abs(residual_work_np1) >= 0.8*abs(residual_work_n)) \
-                and (ls_iter < max_ls_iters):
-                    ls_iter += 1
-                    relaxation_coeff *= 0.5
-                    p.u.x.array[:] = un.x.array[:] + p.du.x.array[:]
-                    residual_work_np1 = p.du.x.petsc_vec.dot(p.L)
-            correction_norm = relaxation_coeff*p.du.x.petsc_vec.norm(0)
-            print(f"NR iter #{nr_iter}, residual_work = {residual_work_np1}, did {ls_iter} line search iterations, step norm = {correction_norm}.")
-            if correction_norm < 1e-10:
-                nr_converged = True
-        if not(nr_converged):
-            exit("NR iters did not converge!")
 
         #p.post_iterate()
         p.writepos(extra_funcs=[f_exact])

@@ -4,7 +4,7 @@ heat_source : {
   initial_position : [-5.0, 0.0, 0.0],
   initial_speed : [1000.0, 0.0, 0],
   radius : 0.05,
-  power : 100,
+  power : 300,
 }
 micro_adim_dt: 0.5
 macro_adim_dt: 5
@@ -13,6 +13,11 @@ material_metal : {
   density : 4.3E-06, # kg / mm3
   conductivity : 10.0E-03, # W / mm / K
   specific_heat : 700, # J / kg / K
+  phase_change : {
+    latent_heat : 100.0E+03,
+    solidus_temperature : &solidus_temperature 800.0,
+    liquidus_temperature : 1200.0
+  }
 }
 #convection_coeff : 1.0E-00
 environment_temperature : 25
@@ -20,20 +25,24 @@ environment_temperature : 25
 els_per_radius: 4
 petsc_opts_micro: {
   "ksp_type" : "cg",
-  "ksp_rtol" : 1e-10,
+  "ksp_rtol" : 1e-14,
   "pc_type" : "jacobi",
 }
 petsc_opts_macro: {
   "ksp_type" : "cg",
-  "ksp_rtol" : 1e-10,
+  "ksp_rtol" : 1e-14,
   "pc_type" : "jacobi",
 }
 domain_width: 1
 domain_height: 1
 path: "Path.gcode"
-max_staggered_iters: 1
-max_timesteps: 1
+max_staggered_iters: 2
+max_timesteps: 3
 driver_type: "robin"
 initial_condition: False
 predictor_step: True
 writepos: True
+
+smoothing_cte_phase_change : 2.0
+max_nr_iters: 30
+max_ls_iters: 5

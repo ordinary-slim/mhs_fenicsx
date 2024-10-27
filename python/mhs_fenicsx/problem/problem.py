@@ -93,6 +93,8 @@ class Problem:
         self.iter     = 0
         self.time     = 0.0
         self.dt       = fem.Constant(self.domain, parameters["dt"]) if not(self.is_steady) else fem.Constant(self.domain, -1.0)
+        self.dt_func  = fem.Function(self.v, name="dt")
+        self.dt_func.x.array[:] = self.dt.value
         # Motion
         self.domain_speed     = np.array(parameters["domain_speed"]) if "domain_speed" in parameters else None
         advection_speed = parameters["advection_speed"][:self.domain.topology.dim] if "advection_speed" in parameters else np.zeros(self.domain.topology.dim)
@@ -152,6 +154,10 @@ class Problem:
         result.writers = {}
         result.is_post_initialized = False
         return result
+
+    def set_dt(self, dt : float):
+        self.dt.value = dt
+        self.dt_func.x.array[:] = dt
 
     def set_initial_condition( self, expression ):
         try:
@@ -322,8 +328,10 @@ class Problem:
         self.update_gamma_data()
 
     def set_gamma(self,gamma_facets_tag):
-        assert(gamma_facets_tag.dim==self.dim-1)
-        assert(self.domain.topology==gamma_facets_tag.topology)
+        dim = gamma_facets_tag.dim
+        assert(dim==self.dim-1)
+        im = gamma_facets_tag.topology.index_map(dim)
+        assert((im is not None) and (im == self.domain.topology.index_map(dim)))
         self.gamma_facets = gamma_facets_tag
         self.update_gamma_data()
 
@@ -363,7 +371,7 @@ class Problem:
             facet_indices = self.gamma_facets.find(1)
         return get_facet_integration_entities(self.domain,facet_indices,self.active_els_func)
 
-    def set_forms_domain(self, subdomain_data=None):
+    def set_forms_domain(self, subdomain_data=None, argument=None):
         if not(subdomain_data):
             subdomain_idx  = 1
             subdomain_data = [(subdomain_idx, self.local_active_els)]
@@ -372,22 +380,23 @@ class Problem:
         dx = ufl.Measure("dx", subdomain_data=subdomain_data,
                          metadata=self.quadrature_metadata,
                          )
-        (u, v) = (self.u, ufl.TestFunction(self.v))
+        u = argument if argument is not None else self.u
+        v = ufl.TestFunction(self.v)
         self.a_ufl = self.k*ufl.dot(ufl.grad(u), ufl.grad(v))*dx(subdomain_idx)
         if self.rhs is not None:
             self.source.fem_function.interpolate(self.rhs)
         self.l_ufl = self.source.fem_function*v*dx(subdomain_idx)
         if not(self.is_steady):
-            self.a_ufl += (self.rho*self.cp/self.dt)*u*v*dx(subdomain_idx)
-            self.l_ufl += (self.rho*self.cp/self.dt)*self.u_prev*v*dx(subdomain_idx)
+            self.a_ufl += (self.rho*self.cp/self.dt_func)*u*v*dx(subdomain_idx)
+            self.l_ufl += (self.rho*self.cp/self.dt_func)*self.u_prev*v*dx(subdomain_idx)
         if np.linalg.norm(self.advection_speed.value):
             self.a_ufl += self.rho*self.cp*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
             if self.is_supg:
                 self.compute_supg_coeff()
                 if not(self.is_steady):
-                    self.a_ufl += (self.rho * self.cp / self.dt) * u * self.supg_elwise_coeff * \
+                    self.a_ufl += (self.rho * self.cp / self.dt_func) * u * self.supg_elwise_coeff * \
                                     self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
-                    self.l_ufl += (self.rho * self.cp / self.dt) * self.u_prev * self.supg_elwise_coeff * \
+                    self.l_ufl += (self.rho * self.cp / self.dt_func) * self.u_prev * self.supg_elwise_coeff * \
                                     self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
                 self.a_ufl += (self.rho * self.cp) * ufl.dot(self.advection_speed,ufl.grad(u)) * \
                                 self.supg_elwise_coeff * self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
@@ -404,10 +413,10 @@ class Problem:
             cte = (2.0*self.smoothing_cte_phase_change/(self.liquidus_temperature - self.solidus_temperature))
             melting_temperature = (self.liquidus_temperature + self.solidus_temperature) / 2.0
             fp  = lambda tem : cte/2.0*(1 - ufl.tanh(cte*(tem - melting_temperature))**2)
-            self.a_ufl += self.rho * self.latent_heat * fp(self.u) *(self.u - self.u_prev)/self.dt*v*dx(subdomain_idx)
+            self.a_ufl += self.rho * self.latent_heat * fp(self.u) *(self.u - self.u_prev)/self.dt_func*v*dx(subdomain_idx)
 
 
-    def set_forms_boundary(self):
+    def set_forms_boundary(self,argument=None):
         '''
         rn must be called after set_forms_domain
         since a_ufl and l_ufl not initialized before
@@ -417,7 +426,8 @@ class Problem:
         ds = ufl.Measure('ds', domain=self.domain, subdomain_data=[
                          (1,np.asarray(boun_integral_entities, dtype=np.int32))],
                          metadata=self.quadrature_metadata)
-        (u, v) = (self.u, ufl.TestFunction(self.v))
+        u = argument if argument is not None else self.u
+        v = ufl.TestFunction(self.v)
         # CONVECTION
         if self.convection_coeff is not None:
             self.a_ufl += self.convection_coeff * \

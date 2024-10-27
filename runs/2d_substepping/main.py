@@ -2,7 +2,7 @@ from line_profiler import LineProfiler
 from mpi4py import MPI
 from dolfinx import mesh
 from mhs_fenicsx.problem import Problem
-from mhs_fenicsx.drivers import MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper
+from mhs_fenicsx.drivers import MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper, NewtonRaphson
 import yaml
 import numpy as np
 import argparse
@@ -16,6 +16,9 @@ radius = params["heat_source"]["radius"]
 speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
 els_per_radius = params["els_per_radius"]
 T_env = np.float64(params["environment_temperature"])
+
+max_nr_iters = np.int32(params["max_nr_iters"])
+max_ls_iters = np.int32(params["max_ls_iters"])
 
 case_name = "big"
 if params["initial_condition"]:
@@ -146,14 +149,6 @@ def run_semi_monolithic():
         for p in [ps,pf]:
             p.writepos(extra_funcs=[p.u_prev])
 
-def run_test():
-    domain = mesh.create_unit_interval(MPI.COMM_WORLD, 4,)
-    macro_params = params.copy()
-    macro_params["dt"] = 1
-    macro_params["heat_source"]["power"] = 0.0
-    right_p = Problem(domain, macro_params, name=f"{case_name}_substepped")
-
-
 def run_reference():
     big_mesh = get_mesh()
 
@@ -171,8 +166,14 @@ def run_reference():
     while (final_t - big_p.time) > 1e-7:
         big_p.pre_iterate()
         big_p.pre_assemble()
-        big_p.assemble()
-        big_p.solve()
+
+        if big_p.phase_change:
+            nr_driver = NewtonRaphson(big_p)
+            nr_driver.solve()
+        else:
+            big_p.assemble()
+            big_p.solve()
+
         big_p.post_iterate()
         big_p.writepos()
 

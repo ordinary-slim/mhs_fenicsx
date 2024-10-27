@@ -2,11 +2,12 @@ from line_profiler import LineProfiler
 from mhs_fenicsx.problem.helpers import get_mask, indices_to_function
 from mpi4py import MPI
 from dolfinx import mesh, fem, cpp, io
-from mhs_fenicsx.problem import Problem
+from mhs_fenicsx.problem import Problem, ufl
 from mhs_fenicsx.submesh import build_subentity_to_parent_mapping, find_submesh_interface, \
 compute_dg0_interpolation_data
 from mhs_fenicsx_cpp import mesh_collision
 from mhs_fenicsx.drivers.staggered_drivers import StaggeredRRDriver, StaggeredDNDriver, interpolate_dg0_cells_to_cells
+from mhs_fenicsx.drivers.newton_raphson import NewtonRaphson
 import mhs_fenicsx.geometry
 import numpy as np
 import shutil
@@ -15,12 +16,16 @@ from petsc4py import PETSc
 from abc import ABC, abstractmethod
 
 class MHSSubstepper(ABC):
-    def __init__(self,slow_problem:Problem,writepos=True):
+    def __init__(self,slow_problem:Problem,writepos=True,
+                 max_nr_iters=25,max_ls_iters=5,):
         self.ps = slow_problem
         self.pf: Problem = None
         self.fraction_macro_step = 0
         self.do_writepos = writepos
         self.writers = dict()
+        self.max_nr_iters = max_nr_iters
+        self.max_ls_iters = max_ls_iters
+        self.physical_domain_restriction = self.ps.restriction
     
     def __del__(self):
         for w in self.writers.values():
@@ -74,6 +79,9 @@ class MHSSubstepper(ABC):
         return np.array(subproblem_els,dtype=np.int32)
 
     def predictor_step(self):
+        '''
+        Always linear
+        '''
         ps = self.ps
 
         # MACRO-STEP
@@ -99,14 +107,15 @@ class MHSSubstepper(ABC):
         current_track = pf.source.path.get_track(pf.time)
         dt2track_end = current_track.t1 - pf.time
         if abs(pf.dt.value - dt2track_end) < 1e-9:
-            pf.dt.value = dt2track_end
+            pf.set_dt(dt2track_end)
 
     def post_loop(self):
         self.ps.initialize_activation()
 
 class MHSSemiMonolithicSubstepper(MHSSubstepper):
-    def __init__(self,slow_problem: Problem ,writepos=True):
-        super().__init__(slow_problem,writepos)
+    def __init__(self,slow_problem: Problem ,writepos=True,
+                 max_nr_iters=25,max_ls_iters=5,):
+        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters)
         self.pf = self.ps.copy(name=f"{self.ps.name}_micro_iters")
 
     def define_subproblem(self, subproblem_els=None):
@@ -117,10 +126,11 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         hs_radius = pf.source.R
         track_t0 = pf.source.path.get_track(self.t0_macro_step)
         hs_speed  = track_t0.speed# TODO: Can't use this speed!
-        pf.dt.value = ps.input_parameters["micro_adim_dt"] * (hs_radius / hs_speed)
+        pf.set_dt( ps.input_parameters["micro_adim_dt"] * (hs_radius / hs_speed) )
         pf.set_activation(subproblem_els)
         pf.set_linear_solver(pf.input_parameters["petsc_opts_micro"])
         self.set_interface()
+        self.dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim, subproblem_els)
 
     def set_interface(self):
         # Find Gamma facets
@@ -186,7 +196,9 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 
     def micro_steps(self):
         (ps,pf) = (self.ps,self.pf)
-        for self.micro_iter in range(self.num_micro_steps - 1):
+        self.micro_iter = 0
+        while self.micro_iter < (self.num_micro_steps - 1):
+            self.micro_iter += 1
             forced_time_derivative = (self.micro_iter==0)
             pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
             f = self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
@@ -194,8 +206,12 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
             self.fast_dirichlet_tcon.g.x.array[self.gamma_dofs_fast] = \
                     (1-f)*ps.u_prev.x.array[self.gamma_dofs_fast] + \
                     f*ps.u.x.array[self.gamma_dofs_fast]
-            pf.assemble()
-            pf.solve()
+            if pf.phase_change:
+                nr_driver = NewtonRaphson(pf)
+                nr_driver.solve()
+            else:
+                pf.assemble()
+                pf.solve()
             #pf.post_iterate()
             self.micro_post_iterate()
             if self.writepos:
@@ -207,73 +223,44 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         pf.pre_iterate()
         ps.pre_iterate(forced_time_derivative=True)
 
-        # BDEBUG
-        dt_fem_func = False
-        if dt_fem_func:
-            (dt_slow, dt_fast) = (ps.dt.value, pf.dt.value)
-            (ps.dt, pf.dt) = (fem.Function(ps.v, name="dt"), fem.Function(pf.v, name="dt"))
-            ps.dt.x.array[:] = dt_slow
-            pf.dt.x.array[:] = dt_fast
-            #pf.dt.x.array[ps.gamma_nodes.x.array.nonzero()[0]] = dt_slow
-            #pf.u_prev.x.array[ps.gamma_nodes.x.array.nonzero()[0]] = ps.u_prev.x.array[ps.gamma_nodes.x.array.nonzero()[0]]
-        # EDEBUG
+        # Set-up incremental solve of both problem in ps
+        ps.u.x.array[self.dofs_fast] = pf.u.x.array[self.dofs_fast]
+        ps.dt_func.x.array[self.gamma_dofs_fast] = pf.dt.value
+        ps.u_prev.x.array[self.gamma_dofs_fast] = pf.u_prev.x.array[self.gamma_dofs_fast]
 
-        subdomain_data = [(idx+1, active_els) for (idx, active_els) in enumerate([p.active_els_func.x.array.nonzero()[0] for p in [ps, pf]])]
-        ps.set_forms_domain((1,subdomain_data))
-        pf.set_forms_domain((2,subdomain_data))
+        subdomain_data = [(idx+1, active_els) for (idx, active_els) in enumerate([p.local_active_els for p in [ps, pf]])]
+        ps.set_forms_domain((1,subdomain_data),argument=ps.u)
+        pf.set_forms_domain((2,subdomain_data),argument=ps.u)
 
-        a_ufl = ps.a_ufl + pf.a_ufl
-        l_ufl = ps.l_ufl + pf.l_ufl
-        a_cpp = fem.form(a_ufl)
-        l_cpp = fem.form(l_ufl)
-        
-        #ps.u_prev.x.array[ps.gamma_nodes.x.array.nonzero()[0]] = 0.0
-        #ps.source.fem_function.x.array[ps.gamma_nodes.x.array.nonzero()[0]] = 0.0
-        #pf.u_prev.x.array[pf.gamma_nodes.x.array.nonzero()[0]] = 0.0
-        #pf.source.fem_function.x.array[pf.gamma_nodes.x.array.nonzero()[0]] = 0.0
+        ps.a_ufl += pf.a_ufl
+        ps.l_ufl += pf.l_ufl
+        ps.r_ufl = ps.a_ufl - ps.l_ufl#residual
+        ps.j_ufl = ufl.derivative(ps.r_ufl, ps.u)
+        ps.mr_compiled = fem.form(-ps.r_ufl)
+        ps.j_compiled = fem.form(ps.j_ufl)
 
-        # Assemble LHS
-        A = fem.petsc.assemble_matrix(a_cpp)
-        A.assemble()
+        ps_restriction = ps.restriction
+        ps.restriction = self.physical_domain_restriction
 
-        # Assemble RHS
-        L = fem.petsc.assemble_vector(l_cpp)
-
-        fem.petsc.apply_lifting(L, [a_cpp], [ps.dirichlet_bcs + pf.dirichlet_bcs])
-        L.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
-        fem.petsc.set_bc(L,ps.dirichlet_bcs + pf.dirichlet_bcs)
-        # Solve
-        ksp = PETSc.KSP()
-        ksp.create(ps.domain.comm)
-        ksp.setOperators(A)
-        ksp.setType("preonly")
-        ksp.getPC().setType("lu")
-        ksp.getPC().setFactorSolverType("mumps")
-        ksp.getPC().setFactorSetUpSolverType()
-        ksp.getPC().getFactorMatrix().setMumpsIcntl(icntl=7, ival=4)
-        ksp.setFromOptions()
-        ksp.solve(L, ps.u.vector)
-        ps.u.vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
-        ksp.destroy()
-        # TODO: Maybe this is unecessary
-        for p in [ps,pf]:
-            p.post_iterate()
+        if ps.phase_change or pf.phase_change:
+            nr_driver = NewtonRaphson(ps,max_ls_iters=0)
+            nr_driver.solve()
+        else:
+            ps.assemble()
+            ps.solve()
         pf.u.x.array[:] = ps.u.x.array[:]
 
-        # BDEBUG
-        if dt_fem_func:
-            (ps.dt, pf.dt) = (fem.Constant(ps.domain, dt_slow), fem.Constant(pf.domain, dt_fast))
-        # EDEBUG
-
+        # POST-ITERATE
+        ps.post_iterate()
+        pf.post_iterate()
+        ps.restriction = ps_restriction
+        ps.set_dt(ps.dt.value)
         pf.dirichlet_bcs = [self.fast_dirichlet_tcon]
 
         self.micro_iter += 1
         self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
         if self.writepos:
             self.writepos("micro")
-
-        for mat in [A, L]:
-            mat.destroy()
 
     def initialize_post(self):
         if not(self.do_writepos):
@@ -284,7 +271,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         p = self.pf
         self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{self.name}_{p.name}.pvd", "wb")
 
-    def writepos(self,case="macro"):
+    def writepos(self,case="macro",extra_funs=[]):
         if not(self.do_writepos):
             return
         (pf, ps) = (self.pf, self.ps)
@@ -301,6 +288,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
             time = self.macro_iter
         funs = [p.u,p.gamma_nodes,p.source.fem_function,p.active_els_func,p.grad_u,
                 p.u_prev,self.u_prev[p]]
+        funs += extra_funs
 
         p.compute_gradient()
         #print(f"time = {time}, micro_iter = {self.micro_iter}, macro_iter = {self.macro_iter}")
@@ -308,8 +296,9 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 
 
 class MHSStaggeredSubstepper(MHSSubstepper):
-    def __init__(self,slow_problem:Problem,writepos=True):
-        super().__init__(slow_problem,writepos=writepos)
+    def __init__(self,slow_problem:Problem,writepos=True,
+                 max_nr_iters=25,max_ls_iters=5,):
+        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters)
 
     def initialize_post(self):
         if not(self.do_writepos):
@@ -370,8 +359,12 @@ class MHSStaggeredSubstepper(MHSSubstepper):
                                                  sd.ext_sol[pf].x.array[:])
             elif type(sd)==StaggeredDNDriver and sd.p_neumann==pf:
                 sd.relaxation_coeff[pf].value = self.fraction_macro_step
-            pf.assemble()
-            pf.solve()
+            if not(pf.phase_change):
+                pf.assemble()
+                pf.solve()
+            else:
+                nr_driver = NewtonRaphson(pf)
+                nr_driver.solve()
             #pf.post_iterate()
             self.micro_post_iterate()
             self.writepos(case="micro")
@@ -428,8 +421,12 @@ class MHSStaggeredSubstepper(MHSSubstepper):
 
         rr_driver.update_robin(ps)
         ps.pre_iterate(forced_time_derivative=True)
-        ps.assemble()
-        ps.solve()
+        if ps.phase_change:
+            nr_driver = NewtonRaphson(ps)
+            nr_driver.solve()
+        else:
+            ps.assemble()
+            ps.solve()
 
     def iterate_substepped_dn(self):
         dn_driver = self.staggered_driver
@@ -442,8 +439,12 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         dn_driver.update_neumann_interface()
         # Solve slow/Neumann problem
         pn.pre_iterate(forced_time_derivative=True)
-        pn.assemble()
-        pn.solve()
+        if pn.phase_change:
+            nr_driver = NewtonRaphson(pn)
+            nr_driver.solve()
+        else:
+            pn.assemble()
+            pn.solve()
         dn_driver.update_relaxation_factor()
         dn_driver.update_dirichlet_interface()
 
@@ -516,4 +517,4 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         dim = self.ext_flux_tn[p].function_space.value_size
         for cell in sd.active_gamma_cells[p]:
             self.ext_flux_tn[p].x.array[cell*dim:cell*dim+dim] *= self.ext_conductivity_tn[p].x.array[cell]
-        self.ext_flux_tn[p].vector.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+        self.ext_flux_tn[p].x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)

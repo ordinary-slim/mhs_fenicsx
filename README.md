@@ -46,4 +46,6 @@ TODO
 - [ ] Add shifting of bbox tree at c++ level
 - [ ] Checkout `compute_integration_domain`
 - [ ] (IMPORTANT) Update SUPG with phase change
+- [ ] (IMPORTANT) Substepper + Dirichlet conditions
 - [ ] Material rework to subdomains
+- [ ] In substepper, update physical domain restriction where relevant

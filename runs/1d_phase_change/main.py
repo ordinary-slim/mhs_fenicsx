@@ -47,7 +47,7 @@ lamma = fsolve(transcendental_fun, 0.388150542167233)
 
 def main(case_name="demo_phase_change"):
     nelems = 1000
-    max_num_timesteps = 100
+    max_num_timesteps = 150
     max_nr_iters = 25
     max_ls_iters = 5
     x_left  = 0.0
@@ -73,7 +73,7 @@ def main(case_name="demo_phase_change"):
         f_exact.interpolate(lamma_exact_sol)
 
         if p.phase_change:
-            nr_driver = NewtonRaphson(p,max_ls_iters=0)
+            nr_driver = NewtonRaphson(p,max_ls_iters=max_ls_iters)
             nr_driver.solve()
         else:
             p.assemble()

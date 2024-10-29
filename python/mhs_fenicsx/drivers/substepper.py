@@ -14,6 +14,7 @@ import shutil
 import typing
 from petsc4py import PETSc
 from abc import ABC, abstractmethod
+import multiphenicsx.fem.petsc
 
 class MHSSubstepper(ABC):
     def __init__(self,slow_problem:Problem,writepos=True,
@@ -198,9 +199,9 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         (ps,pf) = (self.ps,self.pf)
         self.micro_iter = 0
         while self.micro_iter < (self.num_micro_steps - 1):
-            self.micro_iter += 1
             forced_time_derivative = (self.micro_iter==0)
             pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
+            self.micro_iter += 1
             f = self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
             #TODO: Update Dirichlet BC pf here!
             self.fast_dirichlet_tcon.g.x.array[self.gamma_dofs_fast] = \
@@ -214,7 +215,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
                 pf.solve()
             #pf.post_iterate()
             self.micro_post_iterate()
-            if self.writepos:
+            if self.do_writepos:
                 self.writepos("micro")
 
     def monolithic_step(self):
@@ -229,26 +230,94 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         ps.u_prev.x.array[self.gamma_dofs_fast] = pf.u_prev.x.array[self.gamma_dofs_fast]
 
         subdomain_data = [(idx+1, active_els) for (idx, active_els) in enumerate([p.local_active_els for p in [ps, pf]])]
-        ps.set_forms_domain((1,subdomain_data),argument=ps.u)
-        pf.set_forms_domain((2,subdomain_data),argument=ps.u)
+        ps.set_forms_domain((1,subdomain_data))
+        pf.set_forms_domain((2,subdomain_data))
 
-        ps.a_ufl += pf.a_ufl
-        ps.l_ufl += pf.l_ufl
-        ps.r_ufl = ps.a_ufl - ps.l_ufl#residual
-        ps.j_ufl = ufl.derivative(ps.r_ufl, ps.u)
-        ps.mr_compiled = fem.form(-ps.r_ufl)
-        ps.j_compiled = fem.form(ps.j_ufl)
+        a_ufl = ps.a_ufl + pf.a_ufl
+        l_ufl = ps.l_ufl + pf.l_ufl
+        r_ufl = a_ufl - l_ufl#residual
+        j_ufl = ufl.derivative(r_ufl, ps.u) + ufl.derivative(r_ufl, pf.u)
+        mr_compiled = fem.form(-r_ufl)
+        j_compiled = fem.form(j_ufl)
 
         ps_restriction = ps.restriction
         ps.restriction = self.physical_domain_restriction
 
-        if ps.phase_change or pf.phase_change:
-            nr_driver = NewtonRaphson(ps,max_ls_iters=0)
-            nr_driver.solve()
-        else:
-            ps.assemble()
-            ps.solve()
+        # SOLVE
+        nr_iter = 0
+        nr_converged = False
+        A = multiphenicsx.fem.petsc.create_matrix(j_compiled,)
+        L = multiphenicsx.fem.petsc.create_vector(mr_compiled,)
+        x = multiphenicsx.fem.petsc.create_vector(mr_compiled)
+        def assemble_residual():
+            with L.localForm() as l_local:
+                l_local.set(0.0)
+            multiphenicsx.fem.petsc.assemble_vector(L, mr_compiled,)
+            # Dirichlet
+            L.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
+        def assemble_jacobian():
+            A.zeroEntries()
+            multiphenicsx.fem.petsc.assemble_matrix(A, j_compiled)
+            A.assemble()
+        def solve_ls():
+            with x.localForm() as x_local:
+                x_local.set(0.0)
+            ksp = PETSc.KSP()
+            ksp.create(ps.domain.comm)
+            ksp.setOperators(A)
+            ksp_opts = PETSc.Options()
+            for k,v in ps.linear_solver_opts.items():
+                ksp_opts[k] = v
+            ksp.setFromOptions()
+            ksp.solve(L, x)
+            x.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+            ksp.destroy()
+        def set_step():
+            with pf.du.x.petsc_vec.localForm() as duf_sub_vector_local, \
+                 ps.du.x.petsc_vec.localForm() as dus_sub_vector_local, \
+                    multiphenicsx.fem.petsc.VecSubVectorWrapper(x, ps.v.dofmap, None) as x_wrapper:
+                        dus_sub_vector_local[:] = x_wrapper
+                        duf_sub_vector_local[:] = x_wrapper
+            ps.du.x.scatter_forward()
+            pf.du.x.scatter_forward()
+
+        assemble_residual()
+        while (nr_iter < self.max_nr_iters) and (not(nr_converged)):
+            nr_iter += 1
+            un_s = ps.u.copy()
+            un_f = pf.u.copy()
+            assemble_jacobian()
+            solve_ls()
+            set_step()
+            for (p, un) in zip([ps, pf], [un_s, un_f]):
+                p.u.x.array[:] += p.du.x.array[:]
+
+            residual_work_n   = x.dot(L)
+            assemble_residual()
+            residual_work_np1 = x.dot(L)
+            # LINE-SEARCH
+            ls_iter = 0
+            relaxation_coeff = 1.0
+            while (abs(residual_work_np1) >= 0.8*abs(residual_work_n)) \
+                and (ls_iter < self.max_ls_iters):
+                    ls_iter += 1
+                    relaxation_coeff *= 0.5
+                    for (p, un) in zip([ps, pf], [un_s, un_f]):
+                        p.u.x.array[:] = un.x.array[:] + relaxation_coeff*p.du.x.array[:]
+                    assemble_residual()
+                    residual_work_np1 = x.dot(L)
+            correction_norm = relaxation_coeff*x.norm(0)
+            solution_norm = ps.u.x.petsc_vec.norm(0)
+            relative_change = correction_norm/solution_norm
+            print(f"NR iter #{nr_iter}, residual_work = {residual_work_np1}, did {ls_iter} line search iterations, step norm = {correction_norm}.")
+            if  relative_change < 1e-7:
+                nr_converged = True
+        if not(nr_converged):
+            exit("NR iters did not converge!")
         pf.u.x.array[:] = ps.u.x.array[:]
+
+        for ds in [A, x, L]:
+            ds.destroy()
 
         # POST-ITERATE
         ps.post_iterate()
@@ -259,8 +328,8 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 
         self.micro_iter += 1
         self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
-        if self.writepos:
-            self.writepos("micro")
+        if self.do_writepos:
+            self.writepos()
 
     def initialize_post(self):
         if not(self.do_writepos):
@@ -285,7 +354,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
             time = (self.macro_iter-1) + self.fraction_macro_step
         else:
             p = ps
-            time = self.macro_iter
+            time = (self.macro_iter-1) + self.fraction_macro_step
         funs = [p.u,p.gamma_nodes,p.source.fem_function,p.active_els_func,p.grad_u,
                 p.u_prev,self.u_prev[p]]
         funs += extra_funs
@@ -324,7 +393,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
             time = (self.macro_iter-1) + self.fraction_macro_step
         else:
             p = ps
-            time = self.macro_iter
+            time = (self.macro_iter-1) + self.fraction_macro_step
         funs = [p.u,p.gamma_nodes,p.source.fem_function,p.active_els_func,p.grad_u,
                 p.u_prev,self.u_prev[p]]
         for fun_dic in [sd.ext_flux,sd.net_ext_flux,sd.ext_conductivity,sd.ext_sol,

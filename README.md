@@ -49,3 +49,4 @@ TODO
 - [ ] (IMPORTANT) Substepper + Dirichlet conditions
 - [ ] Material rework to subdomains
 - [ ] In substepper, update physical domain restriction where relevant
+- [ ] (FIRST PRIORITY) Fix bug SMS

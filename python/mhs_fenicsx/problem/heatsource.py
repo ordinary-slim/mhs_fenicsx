@@ -48,11 +48,14 @@ class HeatSource(ABC):
         self.fem_function = fem.Function(p.v,name="source")
 
     def pre_iterate(self,tn,dt,verbose=True):
-        if self.path is None:
+        try:
+            self.x_prev = self.path.current_track.get_position(tn)
+        except:
             self.x_prev = self.x[:]
+
+        if self.path is None:
             self.x += self.speed*dt
         else:
-            self.x_prev = self.path.current_track.get_position(tn)
             tnp1 = tn + dt
             self.path.update(tn)
             self.x      = self.path.current_track.get_position(tnp1)

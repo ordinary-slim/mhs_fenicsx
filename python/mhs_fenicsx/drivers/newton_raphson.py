@@ -38,8 +38,10 @@ class NewtonRaphson:
                     p.assemble_residual()
                     residual_work_np1 = p.x.dot(p.L)
             correction_norm = relaxation_coeff*p.du.x.petsc_vec.norm(0)
-            print(f"NR iter #{nr_iter}, residual_work = {residual_work_np1}, did {ls_iter} line search iterations, step norm = {correction_norm}.")
-            if correction_norm < 1e-10:
+            solution_norm = p.u.x.petsc_vec.norm(0)
+            relative_change = correction_norm / solution_norm
+            print(f"NR iter #{nr_iter}, residual_work = {residual_work_np1}, did {ls_iter} line search iterations, step norm = {correction_norm}, relative_change = {relative_change}.")
+            if relative_change < 1e-7:
                 self.nr_converged = True
         if not(self.nr_converged):
             exit("NR iters did not converge!")

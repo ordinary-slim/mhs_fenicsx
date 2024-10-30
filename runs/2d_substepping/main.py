@@ -22,7 +22,7 @@ max_ls_iters = np.int32(params["max_ls_iters"])
 
 case_name = "big"
 if params["initial_condition"]:
-    initial_condition_fun = lambda x : abs(100*np.cos(4*(x[0]-0.5)*(x[1]-0.5)))
+    initial_condition_fun = lambda x : abs(300*np.cos(4*(x[0]-0.5)*(x[1]-0.5)))
 else:
     initial_condition_fun = lambda x : T_env*np.ones_like(x[0])
 

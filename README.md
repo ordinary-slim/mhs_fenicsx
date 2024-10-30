@@ -17,13 +17,13 @@ CHECKPOINTS
 - [ ] 3D AM
 - [ ] Lumped heat source predictor (high priority)
 - [ ] 2 staggered iterations at most
-- [ ] Phase change
+- [x] Phase change
 - [ ] Temperature dependent parameters
 - [ ] 5 tests
 - [ ] 10 tests
 - [ ] Chimera inside of substepper (difficult)
-- [ ] Coupling of Hodge
-- [ ] Try out no submesh
+- [x] Coupling of Hodge
+- [x] Try out no submesh
 
 NOTES
 =====
@@ -49,4 +49,4 @@ TODO
 - [ ] (IMPORTANT) Substepper + Dirichlet conditions
 - [ ] Material rework to subdomains
 - [ ] In substepper, update physical domain restriction where relevant
-- [ ] (FIRST PRIORITY) Fix bug SMS
+- [x] (FIRST PRIORITY) Fix bug SMS

@@ -40,7 +40,6 @@ TODO
 - [ ] Unify extract_cell_geo of get_active_dofs_external and geometry_utils (low priority)
 - [x] Interpolate list of dg0 funcs simulatenously
 - [x] Bug fix parallel substepping case with certain numbers of els. Most likely empty partitions.
-- [ ] On delete of substepper, set activation to physical (high priority)
 - [ ] h for Robin's gamma not computed explicitly
 - [ ] Profile 5on5 test
 - [ ] Add shifting of bbox tree at c++ level
@@ -48,5 +47,7 @@ TODO
 - [ ] (IMPORTANT) Update SUPG with phase change
 - [ ] (IMPORTANT) Substepper + Dirichlet conditions
 - [ ] Material rework to subdomains
+- [ ] On delete of substepper, set activation to physical (high priority)
 - [ ] In substepper, update physical domain restriction where relevant
 - [x] (FIRST PRIORITY) Fix bug SMS
+- [ ] Compare SNES to custom NR solver

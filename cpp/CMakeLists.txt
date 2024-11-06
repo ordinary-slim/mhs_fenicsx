@@ -40,6 +40,39 @@ if (DOLFINX_FOUND)
   message(STATUS "Found DOLFINx C++ backend at ${DOLFINX_DIR}")
 endif()
 
+# Check for DOLFINx python wrappers
+execute_process(
+  COMMAND
+    ${Python_EXECUTABLE} -c
+    "import os, sys, dolfinx; print(os.path.join(os.path.dirname(dolfinx.__file__), 'wrappers'))"
+  OUTPUT_VARIABLE DOLFINX_PY_WRAPPERS_DIR
+  RESULT_VARIABLE DOLFINX_PY_WRAPPERS_COMMAND_RESULT
+  ERROR_VARIABLE DOLFINX_PY_WRAPPERS_COMMAND_ERROR
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+if(NOT DOLFINX_PY_WRAPPERS_COMMAND_RESULT)
+  message(STATUS "Found DOLFINx python wrappers at ${DOLFINX_PY_WRAPPERS_DIR}")
+else()
+  message(FATAL_ERROR "DOLFINx python wrappers could not be found.")
+endif()
+
+# Check for petsc4py
+execute_process(
+  COMMAND ${Python_EXECUTABLE} -c
+          "import petsc4py; print(petsc4py.get_include())"
+  OUTPUT_VARIABLE PETSC4PY_INCLUDE_DIR
+  RESULT_VARIABLE PETSC4PY_INCLUDE_COMMAND_RESULT
+  ERROR_VARIABLE PETSC4PY_INCLUDE_COMMAND_ERROR
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+if(NOT PETSC4PY_INCLUDE_COMMAND_RESULT)
+  message(STATUS "Found petsc4py include directory at ${PETSC4PY_INCLUDE_DIR}")
+else()
+  message(FATAL_ERROR "petsc4py could not be found.")
+endif()
+
 nanobind_add_module(mhs_fenicsx_cpp
                     NOMINSIZE
                     wrapper.cpp
@@ -48,10 +81,20 @@ nanobind_add_module(mhs_fenicsx_cpp
                     activation_utils.cpp
                     geometry_utils.cpp
                     submesh_utils.cpp
+                    wrapper_modifyPetscMatrixEntry.cpp
                     )
+
 #target_sources(mhs_fenicsx_cpp PRIVATE locate_active_boundary.cpp)
 # Add DOLFINx C++ libraries
 target_link_libraries(mhs_fenicsx_cpp PRIVATE dolfinx)
+
+# # Add DOLFINx python and petsc4py include directories (DOLFINx C++
+# ones already being added by target_link_libraries)
+target_include_directories(mhs_fenicsx_cpp PRIVATE ${DOLFINX_PY_WRAPPERS_DIR})
+target_include_directories(mhs_fenicsx_cpp PRIVATE ${PETSC4PY_INCLUDE_DIR})
+
+# Define HAS_PETSC4PY for compatibility with DOLFINx python wrappers
+target_compile_definitions(mhs_fenicsx_cpp PRIVATE HAS_PETSC4PY)
 
 # Install the compiled library to the cpp subdirectory
 set_target_properties(

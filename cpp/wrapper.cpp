@@ -13,8 +13,7 @@ void declare_my_determine_point_ownership(nb::module_ &m);
 void declare_activation_utils(nb::module_ &m);
 void declare_mesh_collision(nb::module_ &m);
 void declare_submesh_utils(nb::module_ &m);
-void declare_modifyPetscMatrixEntry(nb::module_ &m);
-
+void declare_assemble_monolithic_robin(nb::module_ &m);
 
 NB_MODULE(mhs_fenicsx_cpp, m) {
   nb::bind_vector<int_vector>(m, "int_vector");
@@ -30,5 +29,5 @@ NB_MODULE(mhs_fenicsx_cpp, m) {
   declare_my_determine_point_ownership(m);
   declare_mesh_collision(m);
   declare_submesh_utils(m);
-  declare_modifyPetscMatrixEntry(m);
+  declare_assemble_monolithic_robin(m);
 }

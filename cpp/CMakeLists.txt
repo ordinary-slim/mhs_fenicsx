@@ -81,7 +81,7 @@ nanobind_add_module(mhs_fenicsx_cpp
                     activation_utils.cpp
                     geometry_utils.cpp
                     submesh_utils.cpp
-                    wrapper_modifyPetscMatrixEntry.cpp
+                    wrapper_assemble_monolithic_robin.cpp
                     )
 
 #target_sources(mhs_fenicsx_cpp PRIVATE locate_active_boundary.cpp)

@@ -11,6 +11,7 @@ python3 -m pip -v install -e python --config-settings=build-dir="build" --no-bui
 CHECKPOINTS
 ===========
 
+- [ ] Monolithic Chimera
 - [x] Square track case
 - [ ] 3D
 - [ ] 2D AM

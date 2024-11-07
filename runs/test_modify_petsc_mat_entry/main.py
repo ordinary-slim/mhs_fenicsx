@@ -24,14 +24,16 @@ numba_modif = False
 
 def main():
     nelems_side = 2
-    domain = mesh.create_unit_square(comm, nelems_side, nelems_side)
+    domain = mesh.create_unit_square(comm, nelems_side, nelems_side,
+                                     cell_type=mesh.CellType.quadrilateral,
+                                     )
     V  = fem.functionspace(domain, ("Lagrange", 1))
-    uh = fem.Function(V, name="uh")
 
     (u, v) = (ufl.TrialFunction(V), ufl.TestFunction(V))
     a_ufl = u*v*ufl.dx
     a_cpd = fem.form(a_ufl)
     A = dfp.create_matrix(a_cpd)
+    A_bis = dfp.create_matrix(a_cpd)
     dfp.assemble_matrix(A, a_cpd)
 
     if numba_modif:
@@ -40,12 +42,13 @@ def main():
         cols = np.array([0], dtype=np.int32)
         modify_entries_petsc_mat(A.handle,A_local,rows,cols,PETSc.InsertMode.ADD_VALUES)
     else:
-        from mhs_fenicsx_cpp import modifyPetscMatrixEntry
-        modifyPetscMatrixEntry(A)
+        from mhs_fenicsx_cpp import assemble_monolithic_robin
+        assemble_monolithic_robin(A_bis, V._cpp_object)
 
-    A.assemble()
-
-    print(A.getValue(0,0))
+    for mat in [A, A_bis]:
+        mat.assemble()
+    norm_diff = (A-A_bis).norm(2)
+    print(f"Diff between my matrix and dolfinx assembled matrix = {norm_diff}")
 
 if __name__=="__main__":
     main()

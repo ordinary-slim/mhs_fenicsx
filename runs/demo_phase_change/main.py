@@ -6,7 +6,8 @@ import dolfinx.fem.petsc
 import ufl
 from mpi4py import MPI
 from petsc4py import PETSc
-plot = True
+plot = False
+writepos = False
 if plot:
     import matplotlib.pyplot as plt
 
@@ -18,11 +19,11 @@ def transcendental_fun(x):
         (stl / np.exp(np.pow(x,2)) / erf(x) ) + \
         (sts / np.exp(np.pow(x,2)) / erfc(x) )
 
-def locate_interface(t):
+def locate_phase_change_interface(t):
     return 2*lamma*np.sqrt(diffusivity*t);
 
 def exact_sol(x,t):
-    interface_pos = locate_interface(t);
+    interface_pos = locate_phase_change_interface(t);
     sol = np.zeros(x.shape[1],dtype=x.dtype)
     liquid_indices = x[0]<=interface_pos
     solid_indices  = x[0]>interface_pos
@@ -30,13 +31,10 @@ def exact_sol(x,t):
     sol[solid_indices] = T_s + (T_m - T_s)*erfc(x[0,solid_indices]/(2*np.sqrt(diffusivity*t)))/erfc(lamma)
     return sol
 
-
-
 ## PARAMETERS
 x_left = 0.0
 x_right = 0.1
 cross_section = 1.0
-run_type = "Newton-Raphson"#Picard, Newton-Raphson
 rho = 4510*cross_section
 c_p = 520
 k   = 16*cross_section
@@ -57,14 +55,10 @@ num_time_steps = 20
 
 Tsl_av = (T_s + T_l)/2.0;
 cte = S*2/(T_l - T_s);
-fl =   lambda tem : 1/2*(np.tanh(cte*(tem - Tsl_av))+1.0)
-flp  = lambda tem : cte/2.0*(1 - np.pow(np.tanh(cte*(tem - Tsl_av)), 2))
-flpp = lambda tem : -np.pow(cte,2)*(np.tanh(cte*(tem - Tsl_av))*np.pow(1.0/np.cosh(cte*(tem - Tsl_av)),2))
+# Liquid fraction and derivatives
 fl_ufl   = lambda tem : 1/2*(ufl.tanh(cte*(tem - Tsl_av))+1.0)
 flp_ufl  = lambda tem : cte/2.0*(1 - ufl.tanh(cte*(tem - Tsl_av))**2)
 flpp_ufl = lambda tem : -cte**2 * ufl.tanh(cte*(tem-Tsl_av)) / (ufl.cosh(cte*(tem-Tsl_av)))**2
-#flp_ufl = lambda tem : tem**2
-#flpp_ufl = lambda tem : 2*tem
 nelems = 1000
 
 def main():
@@ -95,18 +89,12 @@ def main():
     F += -ufl_coeffs["rho"]*ufl_coeffs["c_p"]/ufl_coeffs["dt"]*u_np1*v*dx
     F += -ufl_coeffs["rho"]*ufl_coeffs["l"]*flp_ufl(u_np1)/ufl_coeffs["dt"]*u_np1*v*dx
     F += -ufl_coeffs["k"]*ufl.dot(ufl.grad(u_np1),ufl.grad(v))*dx
-    own_derivative = False
     J = ufl.derivative(F,u_np1)
-    if own_derivative:
-        J  = -ufl_coeffs["rho"]*ufl_coeffs["c_p"]/ufl_coeffs["dt"]*delta_u*v*dx
-        J += -ufl_coeffs["rho"]*ufl_coeffs["l"]*flp_ufl(u_np1)/ufl_coeffs["dt"]*delta_u*v*dx
-        J += -ufl_coeffs["rho"]*ufl_coeffs["l"]*flpp_ufl(u_np1)/ufl_coeffs["dt"]*(u_np1-u_n)*delta_u*v*dx
-        J += -ufl_coeffs["k"]*ufl.dot(ufl.grad(delta_u),ufl.grad(v))*dx
-    residual = fem.form(F)
+    mresidual = fem.form(-F)
     jacobian = fem.form(J)
 
     A = fem.petsc.create_matrix(jacobian)
-    L = fem.petsc.create_vector(residual)
+    L = fem.petsc.create_vector(mresidual)
     solver = PETSc.KSP().create(domain.comm)
     solver.setOperators(A)
 
@@ -127,14 +115,12 @@ def main():
             A.zeroEntries()
             fem.petsc.assemble_matrix(A,jacobian, bcs=[bc])
             A.assemble()
-            fem.petsc.assemble_vector(L, residual)
-            L.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
-            L.scale(-1)
+            fem.petsc.assemble_vector(L, mresidual)
 
             # Compute b - J(u_D-u_(i-1))
             fem.petsc.apply_lifting(L, [jacobian], [[bc]], x0=[u_i.x.petsc_vec])
+            L.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
             fem.petsc.set_bc(L, [bc], u_i.x.petsc_vec)
-            L.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
 
             # Solve
             solver.solve(L, du.x.petsc_vec)
@@ -143,21 +129,7 @@ def main():
             u_np1.x.array[:] += du.x.array[:]
 
             correction_norm = du.x.petsc_vec.norm(0)
-            print(f"Iteration {nriter}: Correction norm {correction_norm}")
-
-            '''
-            if plot:
-                # PLOT
-                plt.figure(figsize=(8, 6))
-                plt.plot(domain.geometry.x[:,0], u_np1.x.array, label='uh', color='b')
-                plt.plot(domain.geometry.x[:,0], f_exact.x.array, label='exact_sol', color='r')
-                plt.title('T field')
-                plt.xlabel('x')
-                plt.ylabel('T')
-                plt.legend()
-                plt.savefig(f"nr_iter{nriter}.png",dpi=300)
-                plt.close()
-            '''
+            print(f"Time-step {titer}, NR iter {nriter}: correction norm {correction_norm}")
 
             if correction_norm < 1e-10:
                 break
@@ -165,7 +137,7 @@ def main():
         if plot:
             # PLOT
             plt.figure(figsize=(8, 6))
-            #plt.plot(domain.geometry.x[:,0], f_exact.x.array, label='exact_sol', color='r')
+            plt.plot(domain.geometry.x[:,0], f_exact.x.array, label='exact_sol', color='r')
             plt.plot(domain.geometry.x[:,0], u_np1.x.array, label='uh', color='b')
             plt.title('T field')
             plt.xlabel('x')
@@ -173,6 +145,10 @@ def main():
             plt.legend()
             plt.savefig(f"time_iter{titer}.png",dpi=300)
             plt.close()
+
+        if writepos:
+            with io.VTKFile(domain.comm, "post/demo_phase_change.pvd", "w") as pf:
+                pf.write_function([u_np1, f_exact], t=time)
 
 if __name__=="__main__":
     main()

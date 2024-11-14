@@ -51,7 +51,7 @@ class HeatSource(ABC):
         try:
             self.x_prev = self.path.current_track.get_position(tn)
         except:
-            self.x_prev = self.x[:]
+            self.x_prev[:] = self.x[:]
 
         if self.path is None:
             self.x += self.speed*dt

@@ -52,3 +52,9 @@ TODO
 - [ ] In substepper, update physical domain restriction where relevant
 - [x] (FIRST PRIORITY) Fix bug SMS
 - [ ] Compare SNES to custom NR solver
+- [x] Assemble manually mass matrix
+- [x] Assemble manually stiffness matrix
+- [ ] Assemble manually mass boundary
+- [ ] Assemble manually flux boundary
+- [ ] Same mesh blocked Poisson problem
+- [ ] Different mesh blocked Poisson problem

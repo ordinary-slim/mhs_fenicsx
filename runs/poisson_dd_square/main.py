@@ -134,7 +134,6 @@ def run_same_mesh(run_type="_"):
     active_els[p_left] = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] <= 0.5 )
     active_els[p_right] = fem.locate_dofs_geometrical(p_right.dg0, lambda x : x[0] >= 0.5 )
 
-
     for p in [p_left,p_right]:
         p.set_activation(active_els[p])
         p.set_rhs(rhs)

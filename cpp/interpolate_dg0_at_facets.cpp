@@ -46,8 +46,8 @@ void interpolate_dg0_at_facets(std::vector<std::reference_wrapper<const dolfinx:
   for (int ifun = 0; ifun < num_funs; ++ifun) {
     assert(sending_fs[ifun].get().function_space()->mesh()==smesh);
     assert(receiving_fs[ifun]->function_space()->mesh()==rmesh);
-    block_sizes[ifun] = sending_fs[ifun].get().function_space()->value_size();
-    assert(block_sizes[ifun] == receiving_fs[ifun]->function_space()->value_size());
+    block_sizes[ifun] = sending_fs[ifun].get().function_space()->element()->value_size();
+    assert(block_sizes[ifun] == receiving_fs[ifun]->function_space()->element()->value_size());
     interpolated_vals_vectors.push_back(la::Vector<T>(
           std::shared_ptr<const dolfinx::common::IndexMap>(&gamma_index_map,
             [](const dolfinx::common::IndexMap*){}),

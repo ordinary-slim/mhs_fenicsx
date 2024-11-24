@@ -5,7 +5,6 @@ import numpy as np
 from mpi4py import MPI
 import ufl
 import petsc4py
-from mhs_fenicsx.problem.helpers import get_facet_integration_entities
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -32,8 +31,8 @@ def compute_interior_facet_integration_data(mesh, facet_indices, value, active_e
         ordered_integration_data[np.ix_(is_second_el_active, [0, 1, 2, 3])] = ordered_integration_data[np.ix_(is_second_el_active, [2, 3, 0, 1])]
     return (value, ordered_integration_data.reshape(-1))
 
-def run_same_mesh_robin_blocked():
-    els_side = 16
+def run_same_mesh_robin_nested():
+    els_side = 32
     domain  = mesh.create_unit_square(MPI.COMM_WORLD, els_side, els_side, mesh.CellType.quadrilateral)
     conductivity = 1.0
     def exact_sol(x):
@@ -76,7 +75,7 @@ def run_same_mesh_robin_blocked():
 
         def writepos(self, extra_funs):
             if not(self.writers):
-                self.writers["vtk"] = io.VTKFile(self.domain.comm, f"post_blocked/{self.name}.pvd", "w")
+                self.writers["vtk"] = io.VTKFile(self.domain.comm, f"post_nested/{self.name}.pvd", "w")
             self.writers["vtk"].write_function([self.u,self.active_els_fun]+extra_funs)
 
     cdim = domain.topology.dim
@@ -131,12 +130,18 @@ def run_same_mesh_robin_blocked():
     l_cpp = fem.form(l)
 
     # Assemble the block linear system
-    A = multiphenicsx.fem.petsc.assemble_matrix_block(a_cpp, bcs=bcs, restriction=(restriction, restriction))
+    A = multiphenicsx.fem.petsc.assemble_matrix_nest(a_cpp, bcs=bcs, restriction=(restriction, restriction))
     A.assemble()
-    L = multiphenicsx.fem.petsc.assemble_vector_block(l_cpp, a_cpp, bcs=bcs, restriction=restriction)
+    L = multiphenicsx.fem.petsc.assemble_vector_nest(l_cpp, restriction=restriction)
+
+    multiphenicsx.fem.petsc.apply_lifting_nest(L, a_cpp, bcs=bcs, restriction=restriction)
+    for idx, l_sub in enumerate(L.getNestSubVecs()):
+        l_sub.ghostUpdate(addv=petsc4py.PETSc.InsertMode.ADD_VALUES, mode=petsc4py.PETSc.ScatterMode.REVERSE)
+        # Set Dirichlet boundary condition values in the RHS vector
+        multiphenicsx.fem.petsc.set_bc(l_sub, bcs=bcs, restriction=restriction[idx])
 
     # Solve
-    ulur = multiphenicsx.fem.petsc.create_vector_block(l_cpp, restriction=restriction)
+    ulur = multiphenicsx.fem.petsc.create_vector_nest(l_cpp, restriction=restriction)
     ksp = petsc4py.PETSc.KSP()
     ksp.create(domain.comm)
     ksp.setOperators(A)
@@ -147,11 +152,12 @@ def run_same_mesh_robin_blocked():
     ksp.getPC().getFactorMatrix().setMumpsIcntl(icntl=7, ival=4)
     ksp.setFromOptions()
     ksp.solve(L, ulur)
-    ulur.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
+    for ulur_sub in ulur.getNestSubVecs():
+        ulur_sub.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
     ksp.destroy()
 
     # Split the block solution in components
-    with multiphenicsx.fem.petsc.BlockVecSubVectorWrapper(
+    with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(
             ulur, [p_left.V.dofmap, p_right.V.dofmap], restriction) as ulur_wrapper:
         for ulur_wrapper_local, component in zip(ulur_wrapper, (p_left.u, p_right.u)):
             with component.x.petsc_vec.localForm() as component_local:
@@ -163,4 +169,4 @@ def run_same_mesh_robin_blocked():
 
 
 if __name__=="__main__":
-    run_same_mesh_robin_blocked()
+    run_same_mesh_robin_nested()

@@ -32,7 +32,7 @@ def compute_interior_facet_integration_data(mesh, facet_indices, value, active_e
     return (value, ordered_integration_data.reshape(-1))
 
 def run_same_mesh_robin_nested():
-    els_side = 32
+    els_side = 16
     domain  = mesh.create_unit_square(MPI.COMM_WORLD, els_side, els_side, mesh.CellType.quadrilateral)
     conductivity = 1.0
     def exact_sol(x):
@@ -130,12 +130,33 @@ def run_same_mesh_robin_nested():
     l_cpp = fem.form(l)
 
     # Assemble the block linear system
-    A = multiphenicsx.fem.petsc.assemble_matrix_nest(a_cpp, bcs=bcs, restriction=(restriction, restriction))
+    As = [[], []]
+    ps = [p_left, p_right]
+    for i in range(2):
+        for j in range(2):
+            As[i].append(multiphenicsx.fem.petsc.assemble_matrix(a_cpp[i][j], bcs=bcs, restriction=(ps[i].restriction, ps[j].restriction)))
+    A = petsc4py.PETSc.Mat().createNest(As)
     A.assemble()
-    L = multiphenicsx.fem.petsc.assemble_vector_nest(l_cpp, restriction=restriction)
+    A_ref = multiphenicsx.fem.petsc.assemble_matrix_nest(a_cpp, bcs=bcs, restriction=(restriction, restriction))
+    A_ref.assemble()
 
-    multiphenicsx.fem.petsc.apply_lifting_nest(L, a_cpp, bcs=bcs, restriction=restriction)
-    for idx, l_sub in enumerate(L.getNestSubVecs()):
+    bcs_by_block = fem.bcs_by_block(a_cpp[0][1].function_spaces, bcs)
+    for i, p in enumerate([p_left, p_right]):
+        p.lc = fem.form(p.l_ufl)
+        p.L  = multiphenicsx.fem.petsc.assemble_vector(p.lc, restriction=p.restriction)
+        '''
+        with multiphenicsx.fem.petsc.VecSubVectorWrapper(p.L, p.restriction.dofmap, p.restriction, ghosted=False) as l_sub:
+            fem.assemble.apply_lifting(l_sub, a_cpp[i], bcs_by_block)
+        '''
+        multiphenicsx.fem.petsc.apply_lifting(p.L, a_cpp[i], bcs_by_block, restriction=p.restriction)
+        p.L.ghostUpdate(addv=petsc4py.PETSc.InsertMode.ADD_VALUES, mode=petsc4py.PETSc.ScatterMode.REVERSE)
+        multiphenicsx.fem.petsc.set_bc(p.L, bcs=p.dir_bcs, restriction=p.restriction)
+    L = petsc4py.PETSc.Vec().createNest([p_left.L, p_right.L])
+
+    L_ref = multiphenicsx.fem.petsc.assemble_vector_nest(l_cpp, restriction=restriction)
+
+    multiphenicsx.fem.petsc.apply_lifting_nest(L_ref, a_cpp, bcs=bcs, restriction=restriction)
+    for idx, l_sub in enumerate(L_ref.getNestSubVecs()):
         l_sub.ghostUpdate(addv=petsc4py.PETSc.InsertMode.ADD_VALUES, mode=petsc4py.PETSc.ScatterMode.REVERSE)
         # Set Dirichlet boundary condition values in the RHS vector
         multiphenicsx.fem.petsc.set_bc(l_sub, bcs=bcs, restriction=restriction[idx])
@@ -144,14 +165,14 @@ def run_same_mesh_robin_nested():
     ulur = multiphenicsx.fem.petsc.create_vector_nest(l_cpp, restriction=restriction)
     ksp = petsc4py.PETSc.KSP()
     ksp.create(domain.comm)
-    ksp.setOperators(A)
+    ksp.setOperators(A_ref)
     ksp.setType("preonly")
     ksp.getPC().setType("lu")
     ksp.getPC().setFactorSolverType("mumps")
     ksp.getPC().setFactorSetUpSolverType()
     ksp.getPC().getFactorMatrix().setMumpsIcntl(icntl=7, ival=4)
     ksp.setFromOptions()
-    ksp.solve(L, ulur)
+    ksp.solve(L_ref, ulur)
     for ulur_sub in ulur.getNestSubVecs():
         ulur_sub.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
     ksp.destroy()
@@ -163,6 +184,8 @@ def run_same_mesh_robin_nested():
             with component.x.petsc_vec.localForm() as component_local:
                 component_local[:] = ulur_wrapper_local
     ulur.destroy()
+    for mat in [L, A]:
+        mat.destroy()
 
     for p in [p_left,p_right]:
         p.writepos(extra_funs=[p.dir_bcs[0].g])

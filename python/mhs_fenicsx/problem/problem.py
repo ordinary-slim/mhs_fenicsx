@@ -473,6 +473,7 @@ class Problem:
         multiphenicsx.fem.petsc.apply_lifting(self.L, [self.j_compiled], [self.dirichlet_bcs], [self.u.x.petsc_vec], restriction=self.restriction)
         self.L.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
         multiphenicsx.fem.petsc.set_bc(self.L,self.dirichlet_bcs, self.u.x.petsc_vec, restriction=self.restriction)
+        self.L.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
 
     def assemble(self):
         if not(self.has_preassembled):

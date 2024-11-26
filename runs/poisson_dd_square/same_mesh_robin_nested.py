@@ -32,7 +32,7 @@ def compute_interior_facet_integration_data(mesh, facet_indices, value, active_e
     return (value, ordered_integration_data.reshape(-1))
 
 def run_same_mesh_robin_nested():
-    els_side = 16
+    els_side = 32
     domain  = mesh.create_unit_square(MPI.COMM_WORLD, els_side, els_side, mesh.CellType.quadrilateral)
     conductivity = 1.0
     def exact_sol(x):
@@ -49,6 +49,8 @@ def run_same_mesh_robin_nested():
             self.dir_bcs     = []
             self.writers = {}
             self.name = name
+            self.cdim = self.domain.topology.dim
+            self.fdim = self.cdim - 1
 
         def __del__(self):
             for writer in self.writers.values():
@@ -60,12 +62,13 @@ def run_same_mesh_robin_nested():
         def set_restriction(self,active_els):
             self.active_dofs = fem.locate_dofs_topological(self.V, self.dim(), active_els,remote=True)
             self.restriction = multiphenicsx.fem.DofMapRestriction(self.V.dofmap, self.active_dofs)
-            active_cells_dofs = fem.locate_dofs_topological(self.DG0, self.dim(), active_els,True)
+            active_cells_dofs = fem.locate_dofs_topological(self.DG0, self.dim(), active_els,remote=False)
             self.active_els_fun = fem.Function(self.DG0,name="active_els")
             self.active_els_fun.x.array[active_cells_dofs] = 1
+            self.local_active_els = self.active_els_fun.x.array.nonzero()[0][:np.searchsorted(self.active_els_fun.x.array.nonzero()[0], self.domain.topology.index_map(self.cdim).size_local)]
 
         def set_rhs( self, rhs ):
-            self.rhs = rhs
+            self.rhs = fem.Constant(self.domain, np.float64(rhs))
 
         def get_forms(self,dx):
             (u,v) = (ufl.TrialFunction(self.V), ufl.TestFunction(self.V))
@@ -100,10 +103,11 @@ def run_same_mesh_robin_nested():
         p.set_restriction(active_els[p])
 
     # Subdomain data 
-    subdomain_data = [(1,active_els[p_left]), (2, active_els[p_right])]
+    subdomain_data = [(1,p_left.local_active_els), (2, p_right.local_active_els)]
+    gamma_tag = 8
     gamma_integration_data = compute_interior_facet_integration_data(p_left.domain,
                                                                 gamma_facets,
-                                                                8,
+                                                                gamma_tag,
                                                                 p_left.active_els_fun.x.array)
     dx = ufl.Measure("dx")(subdomain_data=subdomain_data)
     dS = ufl.Measure("dS")(domain=p_left.domain,
@@ -121,10 +125,10 @@ def run_same_mesh_robin_nested():
     (ul, vl) = (ufl.TrialFunction(p_left.V), ufl.TestFunction(p_left.V))
     (ur, vr) = (ufl.TrialFunction(p_right.V), ufl.TestFunction(p_right.V))
     n = ufl.FacetNormal(p_left.domain)
-    a[0][0] += ul("+") * vl("+") * dS(8)
-    a[0][1]  = - (ur("-") + conductivity * ufl.inner( ufl.grad(ur)("-"), n("+") )) * vl("+") * dS(8)
-    a[1][1] += ur("-") * vr("-") * dS(8)
-    a[1][0]  = - (ul("+") + conductivity * ufl.inner( ufl.grad(ul)("+"), n("-") )) * vr("-") * dS(8)
+    a[0][0] += ul("+") * vl("+") * dS(gamma_tag)
+    a[0][1]  = - (ur("-") + conductivity * ufl.inner( ufl.grad(ur)("-"), n("+") )) * vl("+") * dS(gamma_tag)
+    a[1][1] += ur("-") * vr("-") * dS(gamma_tag)
+    a[1][0]  = - (ul("+") + conductivity * ufl.inner( ufl.grad(ul)("+"), n("-") )) * vr("-") * dS(gamma_tag)
 
     a_cpp = fem.form(a)
     l_cpp = fem.form(l)
@@ -137,42 +141,29 @@ def run_same_mesh_robin_nested():
             As[i].append(multiphenicsx.fem.petsc.assemble_matrix(a_cpp[i][j], bcs=bcs, restriction=(ps[i].restriction, ps[j].restriction)))
     A = petsc4py.PETSc.Mat().createNest(As)
     A.assemble()
-    A_ref = multiphenicsx.fem.petsc.assemble_matrix_nest(a_cpp, bcs=bcs, restriction=(restriction, restriction))
-    A_ref.assemble()
 
     bcs_by_block = fem.bcs_by_block(a_cpp[0][1].function_spaces, bcs)
     for i, p in enumerate([p_left, p_right]):
         p.lc = fem.form(p.l_ufl)
         p.L  = multiphenicsx.fem.petsc.assemble_vector(p.lc, restriction=p.restriction)
-        '''
-        with multiphenicsx.fem.petsc.VecSubVectorWrapper(p.L, p.restriction.dofmap, p.restriction, ghosted=False) as l_sub:
-            fem.assemble.apply_lifting(l_sub, a_cpp[i], bcs_by_block)
-        '''
         multiphenicsx.fem.petsc.apply_lifting(p.L, a_cpp[i], bcs_by_block, restriction=p.restriction)
         p.L.ghostUpdate(addv=petsc4py.PETSc.InsertMode.ADD_VALUES, mode=petsc4py.PETSc.ScatterMode.REVERSE)
         multiphenicsx.fem.petsc.set_bc(p.L, bcs=p.dir_bcs, restriction=p.restriction)
+        p.L.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT_VALUES, mode=petsc4py.PETSc.ScatterMode.FORWARD)
     L = petsc4py.PETSc.Vec().createNest([p_left.L, p_right.L])
-
-    L_ref = multiphenicsx.fem.petsc.assemble_vector_nest(l_cpp, restriction=restriction)
-
-    multiphenicsx.fem.petsc.apply_lifting_nest(L_ref, a_cpp, bcs=bcs, restriction=restriction)
-    for idx, l_sub in enumerate(L_ref.getNestSubVecs()):
-        l_sub.ghostUpdate(addv=petsc4py.PETSc.InsertMode.ADD_VALUES, mode=petsc4py.PETSc.ScatterMode.REVERSE)
-        # Set Dirichlet boundary condition values in the RHS vector
-        multiphenicsx.fem.petsc.set_bc(l_sub, bcs=bcs, restriction=restriction[idx])
 
     # Solve
     ulur = multiphenicsx.fem.petsc.create_vector_nest(l_cpp, restriction=restriction)
     ksp = petsc4py.PETSc.KSP()
     ksp.create(domain.comm)
-    ksp.setOperators(A_ref)
+    ksp.setOperators(A)
     ksp.setType("preonly")
     ksp.getPC().setType("lu")
     ksp.getPC().setFactorSolverType("mumps")
     ksp.getPC().setFactorSetUpSolverType()
     ksp.getPC().getFactorMatrix().setMumpsIcntl(icntl=7, ival=4)
     ksp.setFromOptions()
-    ksp.solve(L_ref, ulur)
+    ksp.solve(L, ulur)
     for ulur_sub in ulur.getNestSubVecs():
         ulur_sub.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
     ksp.destroy()

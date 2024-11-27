@@ -1,3 +1,4 @@
+*.cache
 *.msh
 *.h5
 *.xdmf
@@ -5,6 +6,13 @@
 *.vtu
 *.pvtu
 *.pvd
+*.pvsm
 *.bp
+*.txt
+*.bin
+*.info
+*.json
+*.egg*
+build
 __pycache__
 nohup.out

@@ -32,18 +32,20 @@ numba_modif = False
 
 def main():
     nelems_side = 2
-    #domain = mesh.create_unit_square(comm, nelems_side, nelems_side,
-                                     ##cell_type=mesh.CellType.quadrilateral,
-                                     ##diagonal=DiagonalType.right,
-                                     #)
+    domain = mesh.create_unit_square(comm, nelems_side, nelems_side,
+                                     #cell_type=mesh.CellType.quadrilateral,
+                                     #diagonal=DiagonalType.right,
+                                     )
     #domain = mesh.create_unit_cube(comm, nelems_side, nelems_side, nelems_side,
                                    ##cell_type=mesh.CellType.hexahedron,
                                    ##diagonal=DiagonalType.right,
                                    #)
+    '''
     import yaml
     with open("lpbf.yaml", 'r') as f:
         params = yaml.safe_load(f)
     domain = get_mesh(params)
+    '''
 
     tdim = domain.topology.dim
     fdim = tdim - 1
@@ -64,6 +66,8 @@ def main():
     V  = fem.functionspace(domain, ("Lagrange", 1))
     Qe = basix.ufl.quadrature_element(domain.topology.entity_types[-2][0].name,
                                       degree=2)
+    gamma_mesh = mesh.create_submesh(domain,fdim,boundary_facets)[0]
+    Qs_gamma = fem.functionspace(gamma_mesh, Qe)
 
     (u, v) = (ufl.TrialFunction(V), ufl.TestFunction(V))
     a_ufl = u*v*ufl.ds
@@ -79,7 +83,7 @@ def main():
         modify_entries_petsc_mat(A.handle,A_local,rows,cols,PETSc.InsertMode.ADD_VALUES)
     else:
         gp_cell, gweigths_cell, num_gpoints_facet = generate_facet_cell_quadrature(domain)
-        assemble_monolithic_robin(A_bis, V._cpp_object,
+        assemble_monolithic_robin(A_bis, Qs_gamma._cpp_object, V._cpp_object,
                                   boundary_facets,
                                   boundary_cells,
                                   gp_cell,

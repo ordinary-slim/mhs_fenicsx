@@ -57,6 +57,12 @@ else()
   message(FATAL_ERROR "DOLFINx python wrappers could not be found.")
 endif()
 
+# Check for multiphenicsx headers
+find_package(MULTIPHENICSX REQUIRED CONFIG)
+if (MULTIPHENICSX_FOUND)
+  message(STATUS "Found multiphenicsx C++ backend at ${MULTIPHENICSX_DIR}")
+endif()
+
 # Check for petsc4py
 execute_process(
   COMMAND ${Python_EXECUTABLE} -c
@@ -81,17 +87,33 @@ nanobind_add_module(mhs_fenicsx_cpp
                     activation_utils.cpp
                     geometry_utils.cpp
                     submesh_utils.cpp
-                    wrapper_assemble_monolithic_robin.cpp
+                    wrapper_create_robin_robin_monolithic.cpp
                     )
+
+# Check for mpi4py
+execute_process(
+  COMMAND ${Python_EXECUTABLE} -c "import mpi4py; print(mpi4py.get_include())"
+  OUTPUT_VARIABLE MPI4PY_INCLUDE_DIR
+  RESULT_VARIABLE MPI4PY_INCLUDE_COMMAND_RESULT
+  ERROR_VARIABLE MPI4PY_INCLUDE_COMMAND_ERROR
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+if(NOT MPI4PY_INCLUDE_COMMAND_RESULT)
+  message(STATUS "Found mpi4py include directory at ${MPI4PY_INCLUDE_DIR}")
+else()
+  message(FATAL_ERROR "mpi4py could not be found.")
+endif()
 
 #target_sources(mhs_fenicsx_cpp PRIVATE locate_active_boundary.cpp)
 # Add DOLFINx C++ libraries
 target_link_libraries(mhs_fenicsx_cpp PRIVATE dolfinx)
 
-# # Add DOLFINx python and petsc4py include directories (DOLFINx C++
+# # Add DOLFINx python, petsc4py and mpi4py include directories (DOLFINx C++
 # ones already being added by target_link_libraries)
 target_include_directories(mhs_fenicsx_cpp PRIVATE ${DOLFINX_PY_WRAPPERS_DIR})
 target_include_directories(mhs_fenicsx_cpp PRIVATE ${PETSC4PY_INCLUDE_DIR})
+target_include_directories(mhs_fenicsx_cpp PRIVATE ${MPI4PY_INCLUDE_DIR})
 
 # Define HAS_PETSC4PY for compatibility with DOLFINx python wrappers
 target_compile_definitions(mhs_fenicsx_cpp PRIVATE HAS_PETSC4PY)

@@ -56,5 +56,6 @@ TODO
 - [x] Assemble manually stiffness matrix
 - [x] Assemble manually mass boundary
 - [ ] Assemble manually flux boundary
-- [ ] Same mesh blocked Poisson problem
+- [x] Same mesh blocked Poisson problem
 - [ ] Different mesh blocked Poisson problem
+- [ ] Interface data as dictionnary

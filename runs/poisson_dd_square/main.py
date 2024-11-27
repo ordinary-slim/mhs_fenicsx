@@ -40,7 +40,7 @@ rhs = Rhs(params["material"]["density"],
 def left_marker_dirichlet(x):
     return np.logical_or( np.isclose(x[1],1), np.logical_or(
             np.isclose(x[0],0), np.isclose(x[1],0)) )
-def right_marker_gamma_dirichlet(x):
+def right_marker_dirichlet(x):
     return np.logical_or( np.isclose(x[1],1), np.logical_or(
             np.isclose(x[0],1), np.isclose(x[1],0)) )
 def right_marker_neumann(x):
@@ -53,7 +53,7 @@ def getPartition(p:Problem):
 
 def set_bc(pd:Problem,pn:Problem):
     # Set outside Dirichlet
-    pd.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
+    pd.add_dirichlet_bc(exact_sol,marker=right_marker_dirichlet, reset=True)
     pn.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
 
 def run(run_type="dd"):
@@ -166,7 +166,7 @@ def run_same_mesh(run_type="_"):
     l_cpp = fem.form(l)
 
     p_left.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
-    p_right.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
+    p_right.add_dirichlet_bc(exact_sol,marker=right_marker_dirichlet, reset=True)
 
     bcs = [p_left.dirichlet_bcs[0], p_right.dirichlet_bcs[0]]
 

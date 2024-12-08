@@ -131,6 +131,36 @@ def main():
     A_lr.assemble()
     A_lr.view()
 
+    # Send diagonal of matrix to post
+    middle_dof = fem.locate_dofs_geometrical(p_left.v, lambda x : np.logical_and(np.isclose(x[0], 0.5), np.isclose(x[1], 0.5)))
+    res_left = p_left.restriction
+    res_right = p_right.restriction
+    middle_dof = middle_dof[:np.searchsorted(middle_dof, res_left.dofmap.index_map.size_local)]
+    vals = np.zeros(res_right.dofmap.index_map.size_global)
+    found = np.array([0], dtype=np.int32)
+    found_mask = np.zeros(comm.size,dtype=np.int32)
+    if middle_dof.size:
+        row_middle_dof = res_left.unrestricted_to_restricted[middle_dof[0]]
+        grow_middle_dof = res_left.index_map.local_to_global(np.array([row_middle_dof]))
+        c, v = A_lr.getRow(grow_middle_dof)
+        vals[c] = v
+        found[0] = 1
+    comm.Allgather(found, found_mask)
+    middle_dof_rank = found_mask.nonzero()[0][0]
+    comm.Bcast(vals, root=middle_dof_rank)
+    # TODO: middle_dof_rank is restricted, unrestrict
+    middle_row_func = fem.Function(p_right.v, name="middle_row_f")
+    rgrange = np.arange(res_right.index_map.local_range[0],
+                        res_right.index_map.local_range[1])
+    rlrange = np.arange(rgrange.size)
+    for rgidx, rlidx in zip(rgrange, rlrange):
+        ulidx = res_right.restricted_to_unrestricted[rlidx]
+        middle_row_func.x.array[ulidx] = vals[rgidx]
+    middle_row_func.x.scatter_forward()
+    #####
+    p_left.writepos()
+    p_right.writepos(extra_funcs=[middle_row_func])
+
 
 if __name__=="__main__":
     main()

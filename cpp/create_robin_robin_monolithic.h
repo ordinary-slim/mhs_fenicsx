@@ -93,6 +93,8 @@ Mat create_robin_robin_monolithic(
   cmdspan2_i dofmap_qs_gamma = Qs_gamma.dofmap()->map();
   auto con_v_i = restriction_i.dofmap()->map();
   auto con_v_j = restriction_j.dofmap()->map();
+  auto unrestricted_to_restricted_i = restriction_i.unrestricted_to_restricted();
+  auto unrestricted_to_restricted_j = restriction_j.unrestricted_to_restricted();
   size_t num_dofs_cell_i = con_v_i.extent(1);
   size_t num_dofs_cell_j = con_v_j.extent(1);
   auto fcell_type_i = bcell_type[V_i.element()->basix_element().cell_type()];
@@ -105,6 +107,7 @@ Mat create_robin_robin_monolithic(
   mdspan2_t A_e(A_eb.data(), num_dofs_facet_i, num_dofs_cell_j);
   std::vector<int> facet_dofs_i(num_dofs_facet_i);
   std::vector<std::int64_t> gfacet_dofs_i(num_dofs_facet_i);
+  std::vector<std::int32_t> dofs_j(num_dofs_cell_j);
   std::vector<std::int64_t> gdofs_j(num_dofs_cell_j);
 
   // Estimate total number of contributions
@@ -127,6 +130,13 @@ Mat create_robin_robin_monolithic(
     size_t lifacet_i = std::distance(loc_con_cf_i.begin(), itr);
     // relevant dofs are sub_entity_connectivity[fdim][lifacet_i][0]
     const auto& lfacet_dofs = sub_cell_con_i[tdim-1][lifacet_i][0];
+    // DOFS i
+    auto udofs_cell_i = std::span(con_v_i.data_handle() + icell_i * num_dofs_cell_i, num_dofs_cell_i);
+    std::transform(lfacet_dofs.begin(), lfacet_dofs.end(), facet_dofs_i.begin(),
+                   [&udofs_cell_i, &unrestricted_to_restricted_i](size_t index) {
+                     return unrestricted_to_restricted_i[udofs_cell_i[index]];
+                     });
+    restriction_i.index_map->local_to_global(facet_dofs_i, gfacet_dofs_i);
 
     // Compute local contribution
     auto gp_indices = Qs_gamma.dofmap()->cell_dofs(idx);
@@ -135,28 +145,21 @@ Mat create_robin_robin_monolithic(
       size_t igp = gp_indices[k];
       int rank_j = po_mesh_j.src_owner[igp];
       int icell_j = cells_mesh_j[igp];
-    }
+      // DOFS j
+      auto udofs_cell_j = std::span(con_v_j.data_handle() + icell_j * num_dofs_cell_j, num_dofs_cell_j);
+      std::transform(udofs_cell_j.begin(), udofs_cell_j.end(), dofs_j.begin(),
+                     [&unrestricted_to_restricted_j](size_t index) {
+                       return unrestricted_to_restricted_j[index];
+                       });
+      restriction_j.index_map->local_to_global(dofs_j, gdofs_j);
 
-    // DOFS i
-    auto dofs_i = restriction_i.cell_dofs(icell_i);
-    std::transform(lfacet_dofs.begin(), lfacet_dofs.end(), facet_dofs_i.begin(),
-                   [&dofs_i](size_t index) { return dofs_i[index]; });
-    // DOFS j
-    auto dofs_j = restriction_j.cell_dofs(icell_j);
-
-    printf("cell %i, local facet idx %li:\n", icell_i, lifacet_i);
-    for (size_t idx = 0; idx < lfacet_dofs.size(); ++idx) {
-      printf("(%i, %i), ", lfacet_dofs[idx], facet_dofs_i[idx]);
-    }
-    printf("\n");
-    // Global DOFS
-    restriction_i.index_map->local_to_global(facet_dofs_i, gfacet_dofs_i);
-    restriction_j.index_map->local_to_global(dofs_j, gdofs_j);
-
-    // Concatenate triplets with contribs
-    for (size_t i = 0; i < A_e.extent(0); ++i) {
-      for (size_t j = 0; j < A_e.extent(1); ++j) {
-        contribs.push_back( Triplet(gfacet_dofs_i[i], gdofs_j[j], A_e(i,j)) );
+      printf("Interaction cells (%i, %i)\n", icell_i, icell_j);
+      // Concatenate triplets with contribs
+      //
+      for (size_t i = 0; i < A_e.extent(0); ++i) {
+        for (size_t j = 0; j < A_e.extent(1); ++j) {
+          contribs.push_back( Triplet(gfacet_dofs_i[i], gdofs_j[j], A_e(i,j)) );
+        }
       }
     }
   }

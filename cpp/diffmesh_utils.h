@@ -1,5 +1,7 @@
 #pragma once
+#include <dolfinx/fem/FunctionSpace.h>
 #include <dolfinx/geometry/utils.h>
+#include <multiphenicsx/DofMapRestriction.h>
 
 /// COPIED FROM DOLFINX CODE
 /// dolfinx::scalar concept too restrictive
@@ -165,16 +167,18 @@ void scatter_values(MPI_Comm comm, std::span<const std::int32_t> src_ranks,
 
 
 template <std::floating_point T>
-std::vector<std::int32_t> scatter_cells_po(
-                          const dolfinx::mesh::Mesh<T> &mesh,
-                          dolfinx::geometry::PointOwnershipData<T> &po)
+std::vector<std::int32_t> scatter_global_cell_dofs_po(
+                          dolfinx::geometry::PointOwnershipData<T> &po,
+                          const dolfinx::fem::FunctionSpace<double>& V,
+                          const multiphenicsx::fem::DofMapRestriction& restriction
+                          )
 {
-  //// Cast to T, do communication, cast back
+  auto mesh = V.mesh();
   std::vector<std::int32_t> _owner_cells(po.src_owner.size());
   using dextents2 = MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>;
   MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<const std::int32_t, dextents2> _send_values(
       po.dest_cells.data(), po.dest_cells.size(), 1);
-  scatter_values(mesh.comm(), po.dest_owners, po.src_owner, _send_values,
+  scatter_values(mesh->comm(), po.dest_owners, po.src_owner, _send_values,
                  std::span(_owner_cells));
   return _owner_cells;
 }

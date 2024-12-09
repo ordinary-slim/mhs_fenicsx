@@ -5,7 +5,7 @@
 #include <dolfinx/geometry/utils.h>
 #include <dolfinx/la/petsc.h>
 #include <multiphenicsx/DofMapRestriction.h>
-#include <petscsystypes.h>
+#include "CustomSparsityPattern.h"
 
 using bct = basix::cell::type;
 using U = double;
@@ -15,7 +15,7 @@ using cmdspan2_i = MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
 
 struct Triplet
 {
-  size_t row, col;
+  std::int64_t row, col;
   double value;
   Triplet(size_t row_, size_t col_, double value_) :
   row(row_), col(col_), value(value_) {
@@ -23,8 +23,71 @@ struct Triplet
 };
 
 template <dolfinx::scalar T>
+std::tuple<std::vector<U>, std::vector<U>, std::vector<U>>
+     compute_geometry_data(const dolfinx::mesh::Mesh<T> &mesh,
+                           std::span<const T> _geoms_cells_mesh_j)
+{
+  const std::size_t tdim = mesh.topology()->dim();
+  const std::size_t gdim = mesh.geometry().dim();
+  const std::size_t num_dofs_g = mesh.geometry().cmap().dim();
+  assert((_geoms_cells_mesh_j.size() % (num_dofs_g * 3))==0);
+  const std::size_t num_cells = _geoms_cells_mesh_j.size() / (num_dofs_g * 3);
+
+  using cmdspan2_t = MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+      const T, MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>;
+  using mdspan3_t = MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+      T, MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 3>>;
+  using cmdspan4_t = MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+      const U, MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 4>>;
+
+  const dolfinx::fem::CoordinateElement<U>& cmap = mesh.geometry().cmap();
+  // Evaluate geometry basis at point (0, 0, 0) on the reference cell.
+  // Assuming affine
+  std::array<std::size_t, 4> phi0_shape = cmap.tabulate_shape(1, 1);
+  std::vector<U> phi0_b(
+      std::reduce(phi0_shape.begin(), phi0_shape.end(), 1, std::multiplies{}));
+  cmdspan4_t phi0(phi0_b.data(), phi0_shape);
+  cmap.tabulate(1, std::vector<U>(tdim, 0), {1, tdim}, phi0_b);
+  auto dphi0 = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
+      phi0, std::pair(1, tdim + 1), 0,
+      MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent, 0);
+  // Geometry data at each cell
+  //std::vector<U> coord_dofs_b(num_dofs_g * gdim);
+  //mdspan2_t coord_dofs(coord_dofs_b.data(), num_dofs_g, gdim);
+  std::vector<U> J_b(num_cells * gdim * tdim);
+  mdspan3_t J(J_b.data(), num_cells, gdim, tdim);
+  std::vector<U> K_b(num_cells * tdim * gdim);
+  mdspan3_t K(K_b.data(), num_cells, tdim, gdim);
+  std::vector<U> detJ(num_cells);
+  std::vector<U> det_scratch(2 * gdim * tdim);
+
+  for (int idx = 0; idx < num_cells; ++idx) {
+    // Get cell geometry (coordinate dofs)
+    cmdspan2_t coord_dofs(_geoms_cells_mesh_j.data() + idx * (num_dofs_g * 3), num_dofs_g, 3);
+
+    auto _J = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
+        J, idx, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent,
+        MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
+    auto _K = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
+        K, idx, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent,
+        MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
+
+    // Compute reference coordinates X, and J, detJ and K
+    dolfinx::fem::CoordinateElement<U>::compute_jacobian(dphi0, coord_dofs, _J);
+    dolfinx::fem::CoordinateElement<U>::compute_jacobian_inverse(_J, _K);
+    detJ[idx] = dolfinx::fem::CoordinateElement<U>::compute_jacobian_determinant(
+            _J, det_scratch);
+  }
+  return {J_b, K_b, detJ};
+}
+
+template <dolfinx::scalar T>
 Mat create_robin_robin_monolithic(
-    MPI_Comm comm, const dolfinx::fem::FunctionSpace<double>& Qs_gamma,
+    const dolfinx::fem::FunctionSpace<double>& Qs_gamma,
+    std::reference_wrapper<const dolfinx::fem::Function<T>> ext_conductivity,
+    std::span<const T> _tabulated_gauss_points_gamma,
+    std::span<const T> _permuted_gauss_points_cell,
+    std::span<const T> gweights_facet,
     const dolfinx::fem::FunctionSpace<double>& V_i,
     const multiphenicsx::fem::DofMapRestriction& restriction_i,
     const dolfinx::fem::FunctionSpace<double>& V_j,
@@ -32,18 +95,12 @@ Mat create_robin_robin_monolithic(
     std::span<const std::int32_t> facets_mesh_i,
     std::span<const std::int32_t> cells_mesh_i,
     const geometry::PointOwnershipData<U>& po_mesh_j,
-    std::span<const std::int32_t> cells_mesh_j,
-    std::span<const T> gweights_facet)
+    std::span<const int> renumbering_cells_po_mesh_j,
+    std::span<const std::int64_t> _dofs_cells_mesh_j,
+    std::span<const double> _geoms_cells_mesh_j)
 {
 
   // Dictionary cell type to facet cell type
-  std::map<bct, bct> bcell_type {
-    {bct::interval, bct::point},
-    {bct::triangle, bct::interval},
-    {bct::quadrilateral, bct::interval},
-    {bct::tetrahedron, bct::triangle},
-    {bct::hexahedron, bct::quadrilateral}
-  };
 
   using mdspan2_t = MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
       T, MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>;
@@ -60,35 +117,33 @@ Mat create_robin_robin_monolithic(
   auto index_map_j = restriction_j.index_map;
   int bs_i = restriction_i.index_map_bs();
   int bs_j = restriction_j.index_map_bs();
-  PetscErrorCode ierr;
-  Mat A;
-  ierr = MatCreate(comm, &A);
-  if (ierr != 0)
-    dolfinx::la::petsc::error(ierr, __FILE__, "MatCreate");
 
-  // Get global and local dimensions
-  const std::int64_t M = bs_i * index_map_i->size_global();
-  const std::int64_t N = bs_j * index_map_j->size_global();
-  const std::int32_t m = bs_i * index_map_i->size_local();
-  const std::int32_t n = bs_j * index_map_j->size_local();
-
-  // Set matrix size
-  ierr = MatSetSizes(A, m, n, M, N);
-  if (ierr != 0)
-    dolfinx::la::petsc::error(ierr, __FILE__, "MatSetSizes");
-
-  // Apply PETSc options from the options database to the matrix (this
-  // includes changing the matrix type to one specified by the user)
-  ierr = MatSetFromOptions(A);
-  if (ierr != 0)
-    dolfinx::la::petsc::error(ierr, __FILE__, "MatSetFromOptions");
-
-  auto mesh = V_i.mesh();
-  const std::size_t tdim = mesh->topology()->dim();
-  const std::size_t gdim = mesh->geometry().dim();
-  std::shared_ptr<const common::IndexMap> cmap = mesh->topology()->index_map(tdim);
-  auto con_cf_i = mesh->topology()->connectivity(tdim,tdim-1);
+  auto mesh_i = V_i.mesh();
+  const std::vector<std::uint8_t> facet_permutations = mesh_i->topology().get()->get_facet_permutations();
+  auto element_i = V_i.element()->basix_element();
+  const std::size_t tdim = mesh_i->topology()->dim();
+  const std::size_t gdim = mesh_i->geometry().dim();
+  std::shared_ptr<const common::IndexMap> cmap = mesh_i->topology()->index_map(tdim);
+  auto con_cf_i = mesh_i->topology()->connectivity(tdim,tdim-1);
   assert(con_cf_i);
+  size_t num_gps_processor = Qs_gamma.dofmap()->index_map->size_local();
+
+  auto fcell_type_i = basix::cell::sub_entity_type(element_i.cell_type(), tdim-1, 0);
+  size_t num_facets_cell = basix::cell::num_sub_entities(element_i.cell_type(), tdim-1);
+  size_t num_gps_facet = gweights_facet.size();
+  size_t num_reflections = 2;
+  size_t num_rotations = (tdim < 3) ? 1 : basix::cell::num_sub_entities(fcell_type_i, tdim-2);
+  size_t num_gps_cell = num_gps_facet * num_rotations * num_reflections * num_facets_cell;
+
+  cmdspan2_t tabulated_gauss_points_gamma(_tabulated_gauss_points_gamma.data(), num_gps_processor, 3);
+  cmdspan2_t permuted_gauss_points_cell(_permuted_gauss_points_cell.data(), num_gps_cell, tdim);
+  MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+      const std::int32_t,
+      MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>
+      x_dofmap_i = mesh_i->geometry().dofmap();
+  const size_t num_dofs_g_i = x_dofmap_i.extent(1);
+  std::span<const U> x_g_i = mesh_i->geometry().x();
+  const size_t num_dofs_g_j = V_j.mesh()->geometry().dofmap().extent(1);
 
   cmdspan2_i dofmap_qs_gamma = Qs_gamma.dofmap()->map();
   auto con_v_i = restriction_i.dofmap()->map();
@@ -97,9 +152,14 @@ Mat create_robin_robin_monolithic(
   auto unrestricted_to_restricted_j = restriction_j.unrestricted_to_restricted();
   size_t num_dofs_cell_i = con_v_i.extent(1);
   size_t num_dofs_cell_j = con_v_j.extent(1);
-  auto fcell_type_i = bcell_type[V_i.element()->basix_element().cell_type()];
   const size_t num_dofs_facet_i = basix::cell::num_sub_entities(fcell_type_i, 0);
   auto sub_entity_connectivity = basix::cell::sub_entity_connectivity(V_i.element()->basix_element().cell_type());
+
+  size_t num_diff_cells_j = *std::max_element(renumbering_cells_po_mesh_j.begin(),
+                                              renumbering_cells_po_mesh_j.end());
+  MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<const std::int64_t,
+    MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>> dofs_cells_mesh_j(
+        _dofs_cells_mesh_j.data(), num_diff_cells_j, num_dofs_cell_j);
 
   // Create buffer for local contribution
   const size_t num_entries_locmat = num_dofs_facet_i*num_dofs_cell_j;
@@ -107,20 +167,48 @@ Mat create_robin_robin_monolithic(
   mdspan2_t A_e(A_eb.data(), num_dofs_facet_i, num_dofs_cell_j);
   std::vector<int> facet_dofs_i(num_dofs_facet_i);
   std::vector<std::int64_t> gfacet_dofs_i(num_dofs_facet_i);
-  std::vector<std::int32_t> dofs_j(num_dofs_cell_j);
   std::vector<std::int64_t> gdofs_j(num_dofs_cell_j);
 
-  // Estimate total number of contributions
-  size_t total_num_gps = Qs_gamma.dofmap()->index_map->size_local();
-  std::vector<Triplet> contribs;
-  contribs.reserve(total_num_gps * num_dofs_facet_i * num_dofs_cell_j);
+  // Prepare mesh_j integration data
+  auto [J_j_b, K_j_b, detJ_j] = compute_geometry_data(*V_j.mesh(), _geoms_cells_mesh_j);
+  mdspan3_t J_j(J_j_b.data(), num_diff_cells_j, gdim, tdim);
+  mdspan3_t K_j(K_j_b.data(), num_diff_cells_j, tdim, gdim);
+  int nderivative_j = 1;
+  auto el_j = V_j.element()->basix_element();
+  auto e_shape_j = el_j.tabulate_shape(nderivative_j, 1);// 1 is to tabulate one point
+  std::vector<T> phi_j_b(std::accumulate(e_shape_j.begin(), e_shape_j.end(), 1, std::multiplies<>{}));
+  mdspan4_t phi_j(phi_j_b.data(), e_shape_j);
+  auto dphi_ref_j = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
+      phi_j, std::pair(1, tdim + 1), MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent,
+      MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent, 0);
+  std::vector<T> dphi_j_b(dphi_ref_j.extent(0)*dphi_ref_j.extent(1)*dphi_ref_j.extent(2));
+  // dim, gp, basis func
+  mdspan3_t dphi_j(dphi_j_b.data(), dphi_ref_j.extent(0), dphi_ref_j.extent(1), dphi_ref_j.extent(2));
 
-  auto element_i = V_i.element();
-  auto sub_cell_con_i = basix::cell::sub_entity_connectivity(element_i->basix_element().cell_type());
+  // Estimate total number of contributions
+  std::vector<Triplet> contribs;
+  contribs.reserve(num_gps_processor * num_dofs_facet_i * num_dofs_cell_j);
+  auto sp = CustomSparsityPattern(V_i.mesh()->comm(), {index_map_i, index_map_j}, {bs_i, bs_j});
+
+  auto sub_cell_con_i = basix::cell::sub_entity_connectivity(element_i.cell_type());
+
+  // Buffer for coords facet cell i
+  std::vector<U> coord_dofs_i_b(num_dofs_g_i * gdim);
+  mdspan2_t coord_dofs_i(coord_dofs_i_b.data(), num_dofs_g_i, gdim);
+
+  // If has a facet, tabulate on the first facet
+  assert(num_gps_facet*facets_mesh_i.size() == num_gps_processor);
+  int nderivative_i = 1;
+  auto e_shape_i = element_i.tabulate_shape(nderivative_i, num_gps_cell);
+  std::vector<T> phi_i_b(std::accumulate(e_shape_i.begin(), e_shape_i.end(), 1, std::multiplies<>{}));
+  mdspan4_t phi_i(phi_i_b.data(), e_shape_i);
+  element_i.tabulate(nderivative_i, permuted_gauss_points_cell, phi_i);
+
+  auto ext_k_arr = ext_conductivity.get().x()->array();
+
   for (int idx = 0; idx < facets_mesh_i.size(); ++idx) {
     int ifacet_i = facets_mesh_i[idx];
     int icell_i = cells_mesh_i[idx];
-    int icell_j = cells_mesh_j[idx];
     // Find local index of facet
     auto loc_con_cf_i = con_cf_i->links(icell_i);
     auto itr = std::find(loc_con_cf_i.begin(),
@@ -128,45 +216,157 @@ Mat create_robin_robin_monolithic(
                          ifacet_i);
     assert(itr!=loc_con_cf_i.end());
     size_t lifacet_i = std::distance(loc_con_cf_i.begin(), itr);
+    std::uint8_t fperm = facet_permutations[icell_i*num_facets_cell + lifacet_i];
+    size_t refls = fperm % 2;
+    size_t rots  = fperm / 2;
     // relevant dofs are sub_entity_connectivity[fdim][lifacet_i][0]
     const auto& lfacet_dofs = sub_cell_con_i[tdim-1][lifacet_i][0];
     // DOFS i
+    auto dofs_cell_i = restriction_i.cell_dofs(icell_i);
     auto udofs_cell_i = std::span(con_v_i.data_handle() + icell_i * num_dofs_cell_i, num_dofs_cell_i);
     std::transform(lfacet_dofs.begin(), lfacet_dofs.end(), facet_dofs_i.begin(),
-                   [&udofs_cell_i, &unrestricted_to_restricted_i](size_t index) {
-                     return unrestricted_to_restricted_i[udofs_cell_i[index]];
-                     });
+                   [&dofs_cell_i](size_t index) {return dofs_cell_i[index];});
     restriction_i.index_map->local_to_global(facet_dofs_i, gfacet_dofs_i);
 
     // Compute local contribution
     auto gp_indices = Qs_gamma.dofmap()->cell_dofs(idx);
     std::fill(A_eb.begin(), A_eb.end(), 1.0);
+
+    // Get cell geometry (coordinate dofs)
+    std::array<U, 3> cell_centroid_i = {0, 0, 0};
+    std::array<U, 3> facet_centroid = {0, 0, 0};
+    auto dofs_cell_i_unrestricted = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
+        x_dofmap_i, icell_i, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
+    for (std::size_t i = 0; i < num_dofs_g_i; ++i)
+    {
+      const int pos = 3 * dofs_cell_i_unrestricted[i];
+      for (std::size_t j = 0; j < gdim; ++j) {
+        coord_dofs_i(i, j) = x_g_i[pos + j];
+        cell_centroid_i[j] += x_g_i[pos + j];
+      }
+    }
+    for (std::size_t i = 0; i < lfacet_dofs.size(); ++i) {
+      int idof = lfacet_dofs[i];
+      for (std::size_t j = 0; j < gdim; ++j)
+        facet_centroid[j] += coord_dofs_i(idof,j);
+    }
+    for (std::size_t i = 0; i < gdim; ++i) {
+      cell_centroid_i[i] /= num_dofs_g_i;
+      facet_centroid[i] /= lfacet_dofs.size();
+    }
+
+    // Compute facet det and facet normal
+    U fdetJ = 0.0;
+    std::array<U, 3> normal_b = {0, 0, 0};
+    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+        U, MDSPAN_IMPL_STANDARD_NAMESPACE::extents<
+               std::size_t, 1, MDSPAN_IMPL_STANDARD_NAMESPACE::dynamic_extent>>
+        normal(normal_b.data(), 1, gdim);
+    switch (fcell_type_i) {
+      case (bct::interval):
+        for (size_t i = 0; i < gdim; ++i) {
+          fdetJ += pow(coord_dofs_i(lfacet_dofs[1],i) - coord_dofs_i(lfacet_dofs[0],i),2);
+          normal_b[i] = coord_dofs_i(lfacet_dofs[1],i) - coord_dofs_i(lfacet_dofs[0],i);
+        }
+        std::swap(normal_b[0], normal_b[1]);
+        fdetJ = pow(fdetJ, 0.5);
+        normal_b[0] *= -1;
+        break;
+      case (bct::triangle): case (bct::quadrilateral) : {
+        std::array<double, 3> u = {coord_dofs_i(lfacet_dofs[2],0) - coord_dofs_i(lfacet_dofs[0],0), coord_dofs_i(lfacet_dofs[2],1) - coord_dofs_i(lfacet_dofs[0],1), coord_dofs_i(lfacet_dofs[2],2) - coord_dofs_i(lfacet_dofs[0],2)};
+        std::array<double, 3> v = {coord_dofs_i(lfacet_dofs[1],0) - coord_dofs_i(lfacet_dofs[0],0), coord_dofs_i(lfacet_dofs[1],1) - coord_dofs_i(lfacet_dofs[0],1), coord_dofs_i(lfacet_dofs[1],2) - coord_dofs_i(lfacet_dofs[0],2)};
+        normal_b =  {u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]};
+        for (size_t i = 0; i < 3; ++i) {
+          fdetJ += pow(normal_b[i],2);
+        }
+        fdetJ = pow(fdetJ, 0.5);
+        break;}
+      default:
+        throw std::invalid_argument("Not ready for this type of facet.");
+        break;
+    }
+    for (std::size_t i = 0; i < gdim; ++i)
+      normal_b[i] /= fdetJ;
+    // If normal is pointing to inside the el, swap it
+    U dot = 0;
+    for (std::size_t i = 0; i < gdim; ++i)
+      dot += normal_b[i] * (facet_centroid[i] - cell_centroid_i[i]);
+    if (dot < 0) {
+      for (std::size_t i = 0; i < gdim; ++i)
+        normal_b[i] = -normal_b[i];
+    }
+
     for (size_t k = 0; k < gp_indices.size(); ++k) {//igauss
       size_t igp = gp_indices[k];
       int rank_j = po_mesh_j.src_owner[igp];
-      int icell_j = cells_mesh_j[igp];
+      int icell_j = renumbering_cells_po_mesh_j[igp];
+      auto point = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
+        tabulated_gauss_points_gamma, igp, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
+      size_t idx_gp_i = lifacet_i*num_rotations*num_reflections*num_gps_facet + rots*num_reflections*num_gps_facet +
+                        refls*num_gps_facet + k;
       // DOFS j
-      auto udofs_cell_j = std::span(con_v_j.data_handle() + icell_j * num_dofs_cell_j, num_dofs_cell_j);
-      std::transform(udofs_cell_j.begin(), udofs_cell_j.end(), dofs_j.begin(),
-                     [&unrestricted_to_restricted_j](size_t index) {
-                       return unrestricted_to_restricted_j[index];
-                       });
-      restriction_j.index_map->local_to_global(dofs_j, gdofs_j);
+      auto gdofs_j = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
+        dofs_cells_mesh_j, icell_j, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
 
-      printf("Interaction cells (%i, %i)\n", icell_i, icell_j);
+      // Pullback GP assuming affine
+      cmdspan2_t point_as_matrix(point.data_handle(), 1, tdim);
+      std::array<U, 3> Xpb = {0, 0, 0};
+      MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+          U, MDSPAN_IMPL_STANDARD_NAMESPACE::extents<
+                 std::size_t, 1, MDSPAN_IMPL_STANDARD_NAMESPACE::dynamic_extent>>
+          Xp(Xpb.data(), 1, tdim);
+      auto _K_j = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
+        K_j, icell_j, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
+
+      cmdspan2_t coord_dofs_j(_geoms_cells_mesh_j.data() + idx * (num_dofs_g_j * 3), num_dofs_g_j, 3);
+      std::array<U, 3> x0_j = {0, 0, 0};
+      for (std::size_t i = 0; i < coord_dofs_j.extent(1); ++i)
+        x0_j[i] += coord_dofs_j(0, i);
+      dolfinx::fem::CoordinateElement<U>::pull_back_affine(Xp, _K_j, x0_j, point_as_matrix);
+      // Tabulate on GP
+      el_j.tabulate(nderivative_j, Xp, phi_j);
+      // Aplly transformation on gradient
+      std::fill(dphi_j_b.begin(), dphi_j_b.end(), U(0.0));
+      for (std::size_t g = 0; g < dphi_ref_j.extent(1); g++)//gp
+        for (std::size_t i = 0; i < _K_j.extent(1); i++)
+          for (std::size_t j = 0; j < dphi_ref_j.extent(2); j++)
+            for (std::size_t k = 0; k < _K_j.extent(0); k++)
+              dphi_j(i,g,j) += _K_j(k,i) * dphi_ref_j(k,g,j);
+
       // Concatenate triplets with contribs
-      //
-      for (size_t i = 0; i < A_e.extent(0); ++i) {
-        for (size_t j = 0; j < A_e.extent(1); ++j) {
-          contribs.push_back( Triplet(gfacet_dofs_i[i], gdofs_j[j], A_e(i,j)) );
+      double v;
+      for (size_t i = 0; i < num_dofs_facet_i; ++i) {
+        for (size_t j = 0; j < num_dofs_cell_j; ++j) {
+          v = 0.0;
+          // TODO Consider adding Robin coeff
+          v -= phi_j(0, 0, j, 0);
+          // dphi: dim, gp, basis func
+          v -= ext_k_arr[icell_i] * \
+               (normal_b[0] * dphi_j(0,0,j) + \
+                normal_b[1] * dphi_j(1,0,j) + \
+                normal_b[2] * dphi_j(2,0,j));
+          v *= phi_i(0,
+                     idx_gp_i,
+                     lfacet_dofs[i],
+                     0);
+          v *= gweights_facet[k];
+          v *= fdetJ;
+          contribs.push_back( Triplet(gfacet_dofs_i[i], gdofs_j[j], v) );
         }
       }
+      // Update sparsity pattern
+      sp.insert(facet_dofs_i, std::span(gdofs_j.data_handle(), gdofs_j.extent(0)));
     }
   }
 
+  // Pre-allocate matrix
+  sp.finalize();
+
+  // Create and pre-allocate matrix
+  Mat A = custom_create_matrix(sp.comm(), sp);
+
   // Assemble triplets
   for (Triplet& t: contribs) {
-    printf("(%li, %li, %g)\n", t.row, t.col, t.value);
     MatSetValue(A, t.row, t.col, t.value, ADD_VALUES);
   }
 

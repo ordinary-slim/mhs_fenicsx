@@ -5,7 +5,6 @@ from mhs_fenicsx.problem import Problem
 import yaml
 from mhs_fenicsx.drivers.staggered_drivers import StaggeredDNDriver, StaggeredRRDriver
 from mhs_fenicsx_cpp import cellwise_determine_point_ownership
-import pytest
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()

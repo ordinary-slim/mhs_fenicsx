@@ -20,6 +20,10 @@ with open("input.yaml", 'r') as f:
 def exact_sol(x):
     return 2 -(x[0]**2 + x[1]**2)
 
+def grad_exact_sol(domain):
+    x = ufl.SpatialCoordinate(domain)
+    return ufl.as_vector((-2*x[0], -2*x[1]))
+
 class Rhs:
     def __init__(self,rho,cp,k,v):
         self.rho = rho

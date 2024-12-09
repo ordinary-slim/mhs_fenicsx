@@ -299,7 +299,7 @@ class Problem:
 
     def compute_gradient(self):
         if not(self.is_grad_computed):
-            self.grad_u.interpolate( fem.Expression(ufl.grad(self.u),self.grad_u.function_space.element.interpolation_points()) )
+            self.grad_u.interpolate( fem.Expression(ufl.grad(self.u),self.grad_u.function_space.element.interpolation_points) )
             self.is_grad_computed = True
 
     def get_active_in_external(self, p_ext:Problem ):

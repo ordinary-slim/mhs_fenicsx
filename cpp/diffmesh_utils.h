@@ -166,19 +166,89 @@ void scatter_values(MPI_Comm comm, std::span<const std::int32_t> src_ranks,
 };
 
 
+using dextents2 = MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>;
 template <std::floating_point T>
-std::vector<std::int32_t> scatter_global_cell_dofs_po(
-                          dolfinx::geometry::PointOwnershipData<T> &po,
+std::tuple<size_t, std::vector<int>, std::vector<std::int64_t>, std::vector<T>>
+                        scatter_cell_integration_data_po(
+                          const dolfinx::geometry::PointOwnershipData<T> &po,
                           const dolfinx::fem::FunctionSpace<double>& V,
                           const multiphenicsx::fem::DofMapRestriction& restriction
-                          )
+                        )
 {
+  size_t num_pts_snd = po.dest_cells.size();
+  size_t num_pts_rcv = po.src_owner.size();
   auto mesh = V.mesh();
-  std::vector<std::int32_t> _owner_cells(po.src_owner.size());
+  // Scatter loc cell indices
+  std::vector<std::int32_t> owner_cells(num_pts_rcv);
   using dextents2 = MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>;
   MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<const std::int32_t, dextents2> _send_values(
       po.dest_cells.data(), po.dest_cells.size(), 1);
   scatter_values(mesh->comm(), po.dest_owners, po.src_owner, _send_values,
-                 std::span(_owner_cells));
-  return _owner_cells;
+                 std::span(owner_cells));
+  // Scatter global dofs
+  auto con_v = restriction.dofmap()->map();
+  auto imap = restriction.index_map;
+  size_t num_dofs_cell = con_v.extent(1);
+  std::vector<std::int64_t> _gdofs_cells_snd(num_pts_snd * num_dofs_cell);
+  for (size_t idx = 0; idx < po.dest_cells.size(); ++idx) {
+    std::int32_t icell = po.dest_cells[idx];
+    auto ldofs_cell = restriction.cell_dofs(icell);
+    std::span gdofs_cell(_gdofs_cells_snd.data() + idx * num_dofs_cell, num_dofs_cell);
+    imap->local_to_global(ldofs_cell, gdofs_cell);
+  }
+  MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<const std::int64_t, dextents2> gdofs_cells_snd(
+      _gdofs_cells_snd.data(), num_pts_snd, num_dofs_cell);
+  std::vector<std::int64_t> gdofs_cells_rcv(num_pts_rcv*num_dofs_cell);
+  scatter_values(mesh->comm(), po.dest_owners, po.src_owner, gdofs_cells_snd,
+                 std::span(gdofs_cells_rcv));
+  // Scatter cell geometries
+  const std::size_t num_dofs_g = mesh->geometry().cmap().dim();
+  std::vector<T> _cell_geometries_snd(num_pts_snd * num_dofs_g * 3);
+  std::vector<T> _cell_geometries_rcv(num_pts_rcv * num_dofs_g * 3);
+  auto x = mesh->geometry().x();
+  auto map = mesh->geometry().dofmap();
+  for (size_t i = 0; i < num_pts_snd; ++i) {
+    auto cell_dofs_g = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
+    map, po.dest_cells[i], MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
+    for (size_t j = 0; j < num_dofs_g; ++j) {
+      int32_t idof = cell_dofs_g[j];
+      std::copy(x.begin() + idof * 3, x.begin() + idof * 3 + 3, _cell_geometries_snd.begin() + i * 3 * num_dofs_g + 3 * j);
+    }
+  }
+  MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<const T, dextents2> cell_geometries_snd(
+      _cell_geometries_snd.data(), num_pts_snd, 3*num_dofs_g);
+  scatter_values(mesh->comm(), po.dest_owners, po.src_owner, cell_geometries_snd,
+                 std::span(_cell_geometries_rcv));
+  // Define (rank, loc cell idx) -> idx map
+  std::map<std::pair<int, std::int32_t>, int> unique_cell_map;
+  int curr_value = 0;
+  std::vector<int> cell_indices(num_pts_rcv);
+  std::vector<size_t> unique_cell_indices;
+  unique_cell_indices.reserve(num_pts_rcv);
+  for (size_t i = 0; i < owner_cells.size(); ++i) {
+    // rank = po.src_owner[i], loc cell idx = owner_cells[idx]
+    std::pair<int, std::int32_t> unique_cell_id(po.src_owner[i], owner_cells[i]);
+    if (unique_cell_map.contains(unique_cell_id)) {
+      cell_indices[i] = unique_cell_map[unique_cell_id];
+    } else {
+      unique_cell_map[unique_cell_id] = curr_value;
+      unique_cell_indices.push_back(i);
+      cell_indices[i] = curr_value;
+      ++curr_value;
+    }
+  }
+  size_t num_unique_pts_rcv = unique_cell_indices.size();
+  // Subvectors with unique cell ids
+  std::vector<std::int64_t> unique_cell_gdofs_rcv(num_unique_pts_rcv * num_dofs_cell);
+  std::vector<T> unique_cell_geometries_rcv(num_unique_pts_rcv * num_dofs_g * 3);
+  for (int i = 0; i < unique_cell_indices.size(); ++i) {
+    std::move(gdofs_cells_rcv.begin() + unique_cell_indices[i]*num_dofs_cell,
+              gdofs_cells_rcv.begin() + unique_cell_indices[i]*num_dofs_cell + num_dofs_cell,
+              unique_cell_gdofs_rcv.begin() + i * num_dofs_cell);
+    std::move(_cell_geometries_rcv.begin() + unique_cell_indices[i]*num_dofs_g*3,
+              _cell_geometries_rcv.begin() + unique_cell_indices[i]*num_dofs_g*3 + num_dofs_g * 3,
+              unique_cell_geometries_rcv.begin() + i * num_dofs_g * 3);
+  }
+
+  return {num_unique_pts_rcv, cell_indices, unique_cell_gdofs_rcv, unique_cell_geometries_rcv};
 }

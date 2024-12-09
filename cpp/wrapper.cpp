@@ -15,6 +15,7 @@ void declare_activation_utils(nb::module_ &m);
 void declare_mesh_collision(nb::module_ &m);
 void declare_submesh_utils(nb::module_ &m);
 void declare_create_robin_robin_monolithic(nb::module_ &m);
+void declare_diffmesh_utils(nb::module_ &m);
 
 NB_MODULE(mhs_fenicsx_cpp, m) {
   nb::bind_vector<int_vector>(m, "int_vector");
@@ -25,8 +26,7 @@ NB_MODULE(mhs_fenicsx_cpp, m) {
   m.def("compute_el_size_along_vector", &compute_el_size_along_vector<float>);
   m.def("get_facet_integration_entities", &get_facet_integration_entities<double>);
   m.def("get_facet_integration_entities", &get_facet_integration_entities<float>);
-  m.def("scatter_cells_po", &scatter_cells_po<double>);
-  m.def("scatter_cells_po", &scatter_cells_po<float>);
+  declare_diffmesh_utils(m);
   declare_activation_utils(m);
   declare_interpolate_dg0_at_facets(m);
   declare_my_determine_point_ownership(m);

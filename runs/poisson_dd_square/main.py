@@ -17,28 +17,36 @@ rank = comm.Get_rank()
 with open("input.yaml", 'r') as f:
     params = yaml.safe_load(f)
 
-def exact_sol(x):
+def exact_sol_2d(x):
     return 2 -(x[0]**2 + x[1]**2)
-
-def grad_exact_sol(domain):
+def grad_exact_sol_2d(domain):
     x = ufl.SpatialCoordinate(domain)
     return ufl.as_vector((-2*x[0], -2*x[1]))
+def exact_sol_3d(x):
+    return 2 -(x[0]**2 + x[1]**2 + x[2]**2)
+def grad_exact_sol_3d(domain):
+    x = ufl.SpatialCoordinate(domain)
+    return ufl.as_vector((-2*x[0], -2*x[1], -2*x[2]))
 
 class Rhs:
-    def __init__(self,rho,cp,k,v):
+    def __init__(self,rho,cp,k,v,dim=None):
         self.rho = rho
         self.cp = cp
         self.k = k
         self.v = v
+        if dim==None:
+            dim = len(v)
+        self.dim = dim
 
     def __call__(self,x):
-        return_val = -2*self.rho*self.cp*self.v[0]*x[0] + -2*self.rho*self.cp*self.v[1]*x[1] + 4*self.k
+        return_val = -2*self.rho*self.cp*self.v[0]*x[0] + -2*self.rho*self.cp*self.v[1]*x[1] + (2*self.dim)*self.k
         return return_val
 
 rhs = Rhs(params["material"]["density"],
           params["material"]["specific_heat"],
           params["material"]["conductivity"],
-          params["advection_speed"])
+          params["advection_speed"],
+          params["dim"])
 
 # Bcs
 def left_marker_dirichlet(x):
@@ -57,8 +65,8 @@ def getPartition(p:Problem):
 
 def set_bc(pd:Problem,pn:Problem):
     # Set outside Dirichlet
-    pd.add_dirichlet_bc(exact_sol,marker=right_marker_dirichlet, reset=True)
-    pn.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
+    pd.add_dirichlet_bc(exact_sol_2d,marker=right_marker_dirichlet, reset=True)
+    pn.add_dirichlet_bc(exact_sol_2d,marker=left_marker_dirichlet,reset=True)
 
 def run(run_type="dd"):
     dd_type=params["dd_type"]
@@ -105,7 +113,7 @@ def run(run_type="dd"):
     for p in [p_left,p_right]:
         p.set_activation(active_els[p])
         f_exact[p] = fem.Function(p.v,name="exact")
-        f_exact[p].interpolate(exact_sol)
+        f_exact[p].interpolate(exact_sol_2d)
         p.set_rhs(rhs)
 
     driver = driver_type(p_right,p_left,max_staggered_iters=params["max_staggered_iters"],
@@ -169,8 +177,8 @@ def run_same_mesh(run_type="_"):
     a_cpp = fem.form(a)
     l_cpp = fem.form(l)
 
-    p_left.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
-    p_right.add_dirichlet_bc(exact_sol,marker=right_marker_dirichlet, reset=True)
+    p_left.add_dirichlet_bc(exact_sol_2d,marker=left_marker_dirichlet,reset=True)
+    p_right.add_dirichlet_bc(exact_sol_2d,marker=right_marker_dirichlet, reset=True)
 
     bcs = [p_left.dirichlet_bcs[0], p_right.dirichlet_bcs[0]]
 

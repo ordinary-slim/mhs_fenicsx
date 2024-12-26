@@ -297,9 +297,8 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         p = self.p_neumann
         self.update_neumann_interface()
         # Custom measure
-        gammaIntegralEntities = p.get_facet_integrations_entities()
         dS = ufl.Measure('ds', domain=p.domain, subdomain_data=[
-            (8,np.asarray(gammaIntegralEntities, dtype=np.int32))])
+            (8,p.gamma_integration_data)])
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
         neumann_con = +ufl.inner(n,self.net_ext_flux[p])
@@ -436,9 +435,8 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
     def set_robin(self,p):
         self.update_robin(p)
         # Custom measure
-        gammaIntegralEntities = p.get_facet_integrations_entities()
         dS = ufl.Measure('ds', domain=p.domain, subdomain_data=[
-            (8,np.asarray(gammaIntegralEntities, dtype=np.int32))])
+            (8,p.gamma_integration_data)])
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
         (u, v) = (p.u,ufl.TestFunction(p.v))

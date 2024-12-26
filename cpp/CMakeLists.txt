@@ -82,6 +82,7 @@ endif()
 nanobind_add_module(mhs_fenicsx_cpp
                     NOMINSIZE
                     wrapper.cpp
+                    wrapper_get_facet_integration_entities.cpp
                     my_determine_point_ownership.cpp
                     interpolate_dg0_at_facets.cpp
                     activation_utils.cpp

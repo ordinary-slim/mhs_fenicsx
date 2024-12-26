@@ -5,6 +5,7 @@ import numpy as np
 from mpi4py import MPI
 import ufl
 import petsc4py
+from line_profiler import LineProfiler
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -183,4 +184,6 @@ def run_same_mesh_robin_nested():
 
 
 if __name__=="__main__":
-    run_same_mesh_robin_nested()
+    lp = LineProfiler()
+    lp_wrapper = lp(run_same_mesh_robin_nested)
+    lp_wrapper()

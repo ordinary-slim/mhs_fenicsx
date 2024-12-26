@@ -145,7 +145,6 @@ Mat create_robin_robin_monolithic(
   std::span<const U> x_g_i = mesh_i->geometry().x();
   const size_t num_dofs_g_j = V_j.mesh()->geometry().dofmap().extent(1);
 
-  cmdspan2_i dofmap_qs_gamma = Qs_gamma.dofmap()->map();
   auto con_v_i = restriction_i.dofmap()->map();
   auto con_v_j = restriction_j.dofmap()->map();
   auto unrestricted_to_restricted_i = restriction_i.unrestricted_to_restricted();

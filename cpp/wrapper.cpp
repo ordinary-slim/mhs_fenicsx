@@ -18,7 +18,6 @@ void declare_get_facet_integration_entities(nb::module_ &m);
 
 NB_MODULE(mhs_fenicsx_cpp, m) {
   nb::bind_vector<int_vector>(m, "int_vector");
-  nb::bind_map<std::map<std::int32_t,std::int32_t>>(m,"int_map");
   m.def("get_active_dofs_external", &get_active_dofs_external<double>);
   m.def("get_active_dofs_external", &get_active_dofs_external<float>);
   m.def("compute_el_size_along_vector", &compute_el_size_along_vector<double>);

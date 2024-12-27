@@ -52,8 +52,6 @@ std::tuple<std::vector<U>, std::vector<U>, std::vector<U>>
       phi0, std::pair(1, tdim + 1), 0,
       MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent, 0);
   // Geometry data at each cell
-  //std::vector<U> coord_dofs_b(num_dofs_g * gdim);
-  //mdspan2_t coord_dofs(coord_dofs_b.data(), num_dofs_g, gdim);
   std::vector<U> J_b(num_cells * gdim * tdim);
   mdspan3_t J(J_b.data(), num_cells, gdim, tdim);
   std::vector<U> K_b(num_cells * tdim * gdim);
@@ -83,17 +81,15 @@ std::tuple<std::vector<U>, std::vector<U>, std::vector<U>>
 
 template <dolfinx::scalar T>
 Mat create_robin_robin_monolithic(
-    const dolfinx::fem::FunctionSpace<double>& Qs_gamma,
     std::reference_wrapper<const dolfinx::fem::Function<T>> ext_conductivity,
     std::span<const T> _tabulated_gauss_points_gamma,
-    std::span<const T> _permuted_gauss_points_cell,
+    std::span<const T> _gauss_points_cell,
     std::span<const T> gweights_facet,
     const dolfinx::fem::FunctionSpace<double>& V_i,
     const multiphenicsx::fem::DofMapRestriction& restriction_i,
     const dolfinx::fem::FunctionSpace<double>& V_j,
     const multiphenicsx::fem::DofMapRestriction& restriction_j,
-    std::span<const std::int32_t> facets_mesh_i,
-    std::span<const std::int32_t> cells_mesh_i,
+    std::span<const std::int32_t> gamma_integration_data_i,
     const geometry::PointOwnershipData<U>& po_mesh_j,
     std::span<const int> renumbering_cells_po_mesh_j,
     std::span<const std::int64_t> _dofs_cells_mesh_j,
@@ -119,24 +115,22 @@ Mat create_robin_robin_monolithic(
   int bs_j = restriction_j.index_map_bs();
 
   auto mesh_i = V_i.mesh();
-  const std::vector<std::uint8_t> facet_permutations = mesh_i->topology().get()->get_facet_permutations();
   auto element_i = V_i.element()->basix_element();
   const std::size_t tdim = mesh_i->topology()->dim();
   const std::size_t gdim = mesh_i->geometry().dim();
   std::shared_ptr<const common::IndexMap> cmap = mesh_i->topology()->index_map(tdim);
   auto con_cf_i = mesh_i->topology()->connectivity(tdim,tdim-1);
   assert(con_cf_i);
-  size_t num_gps_processor = Qs_gamma.dofmap()->index_map->size_local();
 
   auto fcell_type_i = basix::cell::sub_entity_type(element_i.cell_type(), tdim-1, 0);
   size_t num_facets_cell = basix::cell::num_sub_entities(element_i.cell_type(), tdim-1);
   size_t num_gps_facet = gweights_facet.size();
-  size_t num_reflections = 2;
-  size_t num_rotations = (tdim < 3) ? 1 : basix::cell::num_sub_entities(fcell_type_i, tdim-2);
-  size_t num_gps_cell = num_gps_facet * num_rotations * num_reflections * num_facets_cell;
+  size_t num_gps_cell = num_gps_facet * num_facets_cell;
 
+  assert(_tabulated_gauss_points_gamma.size() % 3 == 0);
+  size_t num_gps_processor = _tabulated_gauss_points_gamma.size() / 3;
   cmdspan2_t tabulated_gauss_points_gamma(_tabulated_gauss_points_gamma.data(), num_gps_processor, 3);
-  cmdspan2_t permuted_gauss_points_cell(_permuted_gauss_points_cell.data(), num_gps_cell, tdim);
+  cmdspan2_t gauss_points_cell(_gauss_points_cell.data(), num_gps_cell, tdim);
   MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
       const std::int32_t,
       MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>
@@ -196,28 +190,20 @@ Mat create_robin_robin_monolithic(
   mdspan2_t coord_dofs_i(coord_dofs_i_b.data(), num_dofs_g_i, gdim);
 
   // If has a facet, tabulate on the first facet
-  assert(num_gps_facet*facets_mesh_i.size() == num_gps_processor);
+  assert(gamma_integration_data_i.size() % 2 == 0);
+  size_t num_gamma_facets = gamma_integration_data_i.size() / 2;
+  assert(num_gps_facet*num_gamma_facets == num_gps_processor);
   int nderivative_i = 1;
   auto e_shape_i = element_i.tabulate_shape(nderivative_i, num_gps_cell);
   std::vector<T> phi_i_b(std::accumulate(e_shape_i.begin(), e_shape_i.end(), 1, std::multiplies<>{}));
   mdspan4_t phi_i(phi_i_b.data(), e_shape_i);
-  element_i.tabulate(nderivative_i, permuted_gauss_points_cell, phi_i);
+  element_i.tabulate(nderivative_i, gauss_points_cell, phi_i);
 
   auto ext_k_arr = ext_conductivity.get().x()->array();
 
-  for (int idx = 0; idx < facets_mesh_i.size(); ++idx) {
-    int ifacet_i = facets_mesh_i[idx];
-    int icell_i = cells_mesh_i[idx];
-    // Find local index of facet
-    auto loc_con_cf_i = con_cf_i->links(icell_i);
-    auto itr = std::find(loc_con_cf_i.begin(),
-                         loc_con_cf_i.end(),
-                         ifacet_i);
-    assert(itr!=loc_con_cf_i.end());
-    size_t lifacet_i = std::distance(loc_con_cf_i.begin(), itr);
-    std::uint8_t fperm = facet_permutations[icell_i*num_facets_cell + lifacet_i];
-    size_t refls = fperm % 2;
-    size_t rots  = fperm / 2;
+  for (int idx = 0; idx < num_gamma_facets; ++idx) {
+    std::int32_t icell_i = gamma_integration_data_i[2*idx];
+    std::int32_t lifacet_i = gamma_integration_data_i[2*idx+1];
     // relevant dofs are sub_entity_connectivity[fdim][lifacet_i][0]
     const auto& lfacet_dofs = sub_cell_con_i[tdim-1][lifacet_i][0];
     // DOFS i
@@ -228,7 +214,6 @@ Mat create_robin_robin_monolithic(
     restriction_i.index_map->local_to_global(facet_dofs_i, gfacet_dofs_i);
 
     // Compute local contribution
-    auto gp_indices = Qs_gamma.dofmap()->cell_dofs(idx);
     std::fill(A_eb.begin(), A_eb.end(), 1.0);
 
     // Get cell geometry (coordinate dofs)
@@ -295,14 +280,13 @@ Mat create_robin_robin_monolithic(
         normal_b[i] = -normal_b[i];
     }
 
-    for (size_t k = 0; k < gp_indices.size(); ++k) {//igauss
-      size_t igp = gp_indices[k];
+    for (size_t k = 0; k < num_gps_facet; ++k) {//igauss
+      size_t igp = idx*num_gps_facet + k;
       int rank_j = po_mesh_j.src_owner[igp];
       int icell_j = renumbering_cells_po_mesh_j[igp];
       auto point = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
         tabulated_gauss_points_gamma, igp, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
-      size_t idx_gp_i = lifacet_i*num_rotations*num_reflections*num_gps_facet + rots*num_reflections*num_gps_facet +
-                        refls*num_gps_facet + k;
+      size_t idx_gp_i = lifacet_i*num_gps_facet + k;
       // DOFS j
       auto gdofs_j = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
         dofs_cells_mesh_j, icell_j, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);

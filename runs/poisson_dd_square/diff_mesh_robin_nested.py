@@ -59,6 +59,7 @@ def marker_gamma(x):
     return np.isclose(x[0], 0.5)
 
 def get_matrix_row_as_func(p : Problem, p_ext:Problem, mat):
+    ''' Debugging util '''
     if p.dim==2:
         middle_dof = fem.locate_dofs_geometrical(p.v, lambda x : np.logical_and(np.isclose(x[0], 0.5), np.isclose(x[1], 0.5)))
     else:
@@ -103,8 +104,11 @@ def main():
         left_marker_neumann_debug = left_marker_neumann_2d_debug
         right_marker_neumann = right_marker_neumann_2d
     else:
-        left_mesh  = mesh.create_unit_cube(MPI.COMM_WORLD, els_side, els_side, els_side, mesh.CellType.hexahedron)
-        right_mesh = mesh.create_unit_cube(MPI.COMM_WORLD, els_side, els_side, els_side)
+        cell_type = mesh.CellType.tetrahedron
+        if params["cell_type"] == "hexa":
+            cell_type = mesh.CellType.hexahedron
+        left_mesh  = mesh.create_unit_cube(MPI.COMM_WORLD, els_side, els_side, els_side, cell_type=cell_type)
+        right_mesh  = mesh.create_unit_cube(MPI.COMM_WORLD, els_side, els_side, els_side, cell_type=cell_type)
         exact_sol = exact_sol_3d
         grad_exact_sol = grad_exact_sol_3d
         left_marker_neumann = left_marker_neumann_3d
@@ -132,42 +136,21 @@ def main():
     # Set up interface Gamma
     for p, p_ext in zip([p_left, p_right], [p_right, p_left]):
         p.find_gamma(p.get_active_in_external( p_ext ))
-    gamma_facets = {}
-    gamma_cells  = {}
-    # TODO: Check if this is slow
-    # TODO: Rework this
-    # NOTE: Gamma facets are local but owner cells can be ghosted!
-    for p in [p_left, p_right]:
-        gamma_facets[p] = p.gamma_facets.find(1) # local
-        # TODO: Go over all gamma facets
-        gamma_cells[p]  = np.zeros_like(gamma_facets[p],dtype=np.int32)
-        gc = gamma_cells[p]
-        con_facet_cell = p.domain.topology.connectivity(p.dim-1,p.dim)
-        for idx, ifacet in enumerate(gamma_facets[p]):
-            local_con = con_facet_cell.links(ifacet)
-            if p.active_els_func.x.array[local_con[0]]:
-                gc[idx] = local_con[0]
-            else:
-                gc[idx] = local_con[1]
-            if gc[idx] > p.cell_map.size_local:
-                print(f"Rank {rank}, ifacet {ifacet} (/{p.facet_map.size_local}) is connected to {gc[idx]}(/{p.cell_map.size_local})", flush=True)
 
-    gamma_mesh = {}#TODO: Remove
-    Qs_gamma = {}#TODO: Remove
-    Qs_gamma_x = {}#TODO: Check occurences
-    Qs_gamma_po = { p_left : {}, p_right : {}}#TODO: Check occurences
+    gamma_cells = {
+            p_left : p_left.gamma_integration_data[::2],
+            p_right : p_right.gamma_integration_data[::2],
+            }
+    gamma_qpoints_po = {
+            p_left : { p_right : None },
+            p_right : { p_left : None },
+            }
     gamma_renumbered_cells_ext = { p_left : {}, p_right : {}}
     gamma_dofs_cells_ext = { p_left : {}, p_right : {}}
     gamma_geoms_cells_ext = { p_left : {}, p_right : {}}
     gamma_iid = {p_left:{}, p_right:{}}
     ext_conductivity = {}
     midpoints_gamma = {p_left:None, p_right:None}
-    # Robin coupling: i = left, j = right
-    for p in [p_left, p_right]:
-        gamma_mesh[p], \
-        ent_map, _, _ = \
-                mesh.create_submesh(p.domain,p.dim-1,gamma_facets[p])
-        #print(f"Rank {rank}, entity map = {ent_map}, size local = {gamma_mesh[p].topology.index_map(p.dim-1).size_local}", flush=True)
 
     def assemble_robin_matrix(p:Problem, p_ext:Problem, quadrature_degree=2):
         cdim = p.domain.topology.dim
@@ -178,65 +161,36 @@ def main():
         Qe = basix.ufl.quadrature_element(facet_type,
                                           degree=quadrature_degree)
 
-        # GENERATE ALL PERMUTATIONS OF QUADRATURE
-        GPs = []
-        if cdim==2:
-            for ref in range(2):
-                GPs.append(permute_quadrature_interval(Qe._points, ref))
-        elif cdim==3:
-            if facet_type == "triangle":
-                for rot in range(3):
-                    for ref in range(2):
-                        GPs.append(permute_quadrature_triangle(Qe._points, ref, rot))
-            elif facet_type == "quadrilateral":
-                for rot in range(4):
-                    for ref in range(2):
-                        GPs.append(permute_quadrature_quadrilateral(Qe._points, ref, rot))
-            else:
-                raise Exception
-        else:
-            raise Exception
-        permuted_quadrature_points_facet = np.vstack(GPs)
-        num_gps_facet = permuted_quadrature_points_facet.shape[0]
+        num_gps_facet = Qe.num_entity_dofs[-1][0]
         num_facets_cell = p.domain.ufl_cell().num_facets()
-        permuted_quadrature_points_cell  = np.zeros((num_gps_facet * num_facets_cell, cdim), dtype=permuted_quadrature_points_facet.dtype)
+        quadrature_points_cell  = np.zeros((num_gps_facet * num_facets_cell, cdim), dtype=Qe._points.dtype)
         for ifacet in range(num_facets_cell):
-            permuted_quadrature_points_cell[ifacet*num_gps_facet : ifacet*num_gps_facet + num_gps_facet, :cdim] = map_facet_points(permuted_quadrature_points_facet, ifacet, cell_type)
+            quadrature_points_cell[ifacet*num_gps_facet : ifacet*num_gps_facet + num_gps_facet, :cdim] = map_facet_points(Qe._points, ifacet, cell_type)
 
-        Qs_gamma[p] = fem.functionspace(gamma_mesh[p], Qe)
-        Qs_gamma_x[p] = Qs_gamma[p].tabulate_dof_coordinates()
-
-        num_unpermuted_gps_per_facet = Qe.num_entity_dofs[-1][0]
-        # TODO: manually tabulate
+        # Manually tabulate
         num_local_gamma_cells = p.gamma_lcell_facet_map.size
         gamma_qpoints = np.zeros((num_local_gamma_cells * \
-                num_unpermuted_gps_per_facet, 3), dtype=np.float64)
+                num_gps_facet, 3), dtype=np.float64)
         pgeo = p.domain.geometry
         for idx in range(num_local_gamma_cells):
-            # TODO: Make points on ref cell. Maybe tabulate outside of this loop?
             icell   = p.gamma_integration_data[2*idx]
             lifacet = p.gamma_integration_data[2*idx+1]
-            # Grab unpermuted points. Could also grab permuted points respecting facet permutation
-            ref_points = permuted_quadrature_points_cell[lifacet*num_gps_facet:lifacet*num_gps_facet+num_unpermuted_gps_per_facet, :]
+            ref_points = quadrature_points_cell[lifacet*num_gps_facet:lifacet*num_gps_facet+num_gps_facet, :]
             # Push forward
-            gamma_qpoints[idx*num_unpermuted_gps_per_facet:\
-                idx*num_unpermuted_gps_per_facet + num_unpermuted_gps_per_facet, :] =  \
+            gamma_qpoints[idx*num_gps_facet:\
+                idx*num_gps_facet + num_gps_facet, :] =  \
                 pgeo.cmap.push_forward(
                         ref_points, pgeo.x[pgeo.dofmap[icell]])
-        print(f"Rank {rank}, Qs_gamma_x = {Qs_gamma_x[p_left]}", flush=True)
-        print(f"Rank {rank}, gamma_qpoints = {gamma_qpoints}", flush=True)
-        exit()
 
-
-        Qs_gamma_po[p][p_ext] = cellwise_determine_point_ownership(
-                                            p_ext.domain._cpp_object,
-                                            Qs_gamma_x[p],
-                                            gamma_cells[p_ext],
-                                            np.float64(1e-7))
+        gamma_qpoints_po[p][p_ext] = \
+                cellwise_determine_point_ownership(p_ext.domain._cpp_object,
+                                                   gamma_qpoints,
+                                                   gamma_cells[p_ext],
+                                                   np.float64(1e-7))
         gamma_renumbered_cells_ext[p][p_ext], \
         gamma_dofs_cells_ext[p][p_ext], \
         gamma_geoms_cells_ext[p][p_ext] = \
-                        scatter_cell_integration_data_po(Qs_gamma_po[p][p_ext],
+                        scatter_cell_integration_data_po(gamma_qpoints_po[p][p_ext],
                                                           p_ext.v._cpp_object,
                                                           p_ext.restriction)
         midpoints_gamma[p] = mesh.compute_midpoints(p.domain,p.domain.topology.dim-1,p.gamma_facets.find(1))
@@ -255,18 +209,17 @@ def main():
                                   p.gamma_facets_index_map,
                                   p.gamma_imap_to_global_imap)
 
-        A = create_robin_robin_monolithic(Qs_gamma[p]._cpp_object,
-                                          ext_conductivity[p]._cpp_object,
-                                          Qs_gamma_x[p],
-                                          permuted_quadrature_points_cell,
+        p.domain.topology.create_entity_permutations()
+        A = create_robin_robin_monolithic(ext_conductivity[p]._cpp_object,
+                                          gamma_qpoints,
+                                          quadrature_points_cell,
                                           Qe._weights,
                                           p.v._cpp_object,
                                           p.restriction,
                                           p_ext.v._cpp_object,
                                           p_ext.restriction,
-                                          gamma_facets[p],
-                                          gamma_cells[p],
-                                          Qs_gamma_po[p][p_ext],
+                                          p.gamma_integration_data,
+                                          gamma_qpoints_po[p][p_ext],
                                           gamma_renumbered_cells_ext[p][p_ext],
                                           gamma_dofs_cells_ext[p][p_ext],
                                           gamma_geoms_cells_ext[p][p_ext],
@@ -276,39 +229,17 @@ def main():
 
     quadrature_degree = 2
     A_lr = assemble_robin_matrix(p_left, p_right, quadrature_degree)
-    # DEBUG
-    owner_cells_po_lr = fem.Function(p_right.dg0, name="owner_cells_po")
-    for idx, cell in enumerate(Qs_gamma_po[p_left][p_right].dest_cells):
-        print(f"Rank {rank}, Point {Qs_gamma_po[p_left][p_right].dest_points[idx]} is owned by cell {cell} but local size {p_right.cell_map.size_local}")
-        cells = fem.locate_dofs_topological(p_right.dg0, p_right.dim,
-                                           np.asarray([cell], dtype=np.int32),
-                                           remote=False)
-        assert(len(cells)==1)
-        owner_cells_po_lr.x.array[cells[0]] += 1
-    s = comm.allreduce(owner_cells_po_lr.x.array.sum())
-    num_gamma_facets1 = comm.allreduce(len(gamma_facets[p_left]))
-    num_gamma_facets2 = comm.allreduce(len(p_left.gamma_lcell_facet_map))
-    if rank == 0:
-        print(f"Sum dest_cells as func = {s}", flush=True)
-        print(f"num gamma facets OLD = {num_gamma_facets1}, num_gamma_facets NEW = {num_gamma_facets2}", flush=True)
-    owner_cells_po_lr.x.scatter_forward()
-    # EDEBUG
-    #A_rl = assemble_robin_matrix(p_right, p_left, quadrature_degree)
+    A_rl = assemble_robin_matrix(p_right, p_left, quadrature_degree)
     diag_matrix = {}
     rhs_vector = {}
     neumann_facets = {}
     neumann_dofs_debug = {}
-    for p, marker in zip([p_left, p_right], [left_marker_neumann_debug, right_marker_neumann]):
+    for p, marker in zip([p_left, p_right], [left_marker_neumann, right_marker_neumann]):
         p.set_forms_domain()
         # Set-up remaining terms
         neumann_tag = 66
         neumann_facets[p] = mesh.locate_entities(p.domain, p.dim-1, marker)
         neumann_int_ents = p.get_facet_integrations_entities(neumann_facets[p])
-        ##### BDEBUG
-        from mhs_fenicsx.problem import indices_to_function
-        neumann_dofs_debug[p] = indices_to_function(p.v, neumann_facets[p],
-                                           p.dim-1,name="neumann")
-        ##### EDEBUG
         gamma_tag = 44
         subdomain_data = [(neumann_tag, np.asarray(neumann_int_ents, dtype=np.int32)),
                           (gamma_tag, np.asarray(p.gamma_integration_data, dtype=np.int32))]
@@ -318,9 +249,8 @@ def main():
         v = ufl.TestFunction(p.v)
         p.l_ufl += +ufl.inner(n, p.k * grad_exact_sol(p.domain)) * v * ds(neumann_tag)
         # LHS term Robin
-        if p == p_right:
-            dS = ufl.Measure('ds', domain=p.domain, subdomain_data=subdomain_data)
-            p.a_ufl += + p.u * v * dS(gamma_tag)
+        dS = ufl.Measure('ds', domain=p.domain, subdomain_data=subdomain_data)
+        p.a_ufl += + p.u * v * dS(gamma_tag)
 
         p.compile_forms()
         # Pre-assemble
@@ -331,12 +261,11 @@ def main():
         rhs_vector[p] = p.L
 
     # Create nest system
-    #A = petsc4py.PETSc.Mat().createNest([[p_left.A, None], [A_rl, p_right.A]])
+    A = petsc4py.PETSc.Mat().createNest([[p_left.A, A_lr], [A_rl, p_right.A]])
     L = petsc4py.PETSc.Vec().createNest([p_left.L, p_right.L])
     #A.assemble()
-    L.assemble()
+    #L.assemble()
 
-    '''
     # TODO: Solve
     l_cpp = [p_left.mr_compiled, p_right.mr_compiled]
     restriction = [p_left.restriction, p_right.restriction]
@@ -364,18 +293,16 @@ def main():
             with component.x.petsc_vec.localForm() as component_local:
                 component_local[:] = ulur_wrapper_local
     ulur.destroy()
-    for mat in [L, A]:
+
+    for mat in [L, A, A_lr, A_rl]:
         mat.destroy()
-    '''
 
-    #middle_row_func_rl = get_matrix_row_as_func(p_right, p_left, A_rl)
-    middle_row_func_lr = get_matrix_row_as_func(p_left, p_right, A_lr)
-
-    #p_left.writepos(extra_funcs=[ext_conductivity[p_left], p_left.dirichlet_bcs[0].g, neumann_dofs_debug[p_left], middle_row_func_rl])
-    p_right.writepos(extra_funcs=[p_right.dirichlet_bcs[0].g, neumann_dofs_debug[p_right], middle_row_func_lr, owner_cells_po_lr])
+    p_left.writepos(extra_funcs=[ext_conductivity[p_left], p_left.dirichlet_bcs[0].g])
+    p_right.writepos(extra_funcs=[p_right.dirichlet_bcs[0].g])
 
 if __name__=="__main__":
     lp = LineProfiler()
+    lp.add_module(Problem)
     lp_wrapper = lp(main)
     lp_wrapper()
     with open(f"profiling_diff_mesh_robin_rank{rank}.txt", 'w') as pf:

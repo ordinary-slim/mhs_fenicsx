@@ -343,13 +343,9 @@ class Problem:
                                          name="gammaNodes",)
         indices_all_gamma_facets = self.gamma_facets.values.nonzero()[0]
         self.gamma_facets_index_map, \
-        gamma_imap_to_global_imap = cpp.common.create_sub_index_map(self.facet_map,
+        self.gamma_imap_to_global_imap = cpp.common.create_sub_index_map(self.facet_map,
                                                     indices_all_gamma_facets,
                                                     False)
-        self.gamma_imap_to_global_imap = mhs_fenicsx_cpp.int_map()
-        for i in range(len(gamma_imap_to_global_imap)):
-            self.gamma_imap_to_global_imap[gamma_imap_to_global_imap[i]] = i
-
         con_facet_cell = self.domain.topology.connectivity(self.dim-1,self.dim)
         con_cell_facet = self.domain.topology.connectivity(self.dim,self.dim-1)
         # TODO: Optimize this

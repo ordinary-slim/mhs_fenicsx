@@ -23,7 +23,7 @@ void interpolate_dg0_at_facets(std::vector<std::reference_wrapper<const dolfinx:
                                std::span<const std::int32_t> incident_cells,
                                geometry::PointOwnershipData<T> &po,
                                const dolfinx::common::IndexMap &gamma_index_map,
-                               std::map<std::int32_t,std::int32_t> gamma_im_to_global_imap)
+                               std::span<const std::int32_t> gamma_imap_to_global_imap)
 {
   /*
    * Facets are local facets
@@ -124,8 +124,10 @@ void interpolate_dg0_at_facets(std::vector<std::reference_wrapper<const dolfinx:
     interpolated_vals_vectors[ifun].scatter_fwd();
   }
 
-
-
+  // Invert gamma_imap_to_global_imap
+  std::unordered_map<std::int32_t, std::int32_t> global_imap_to_gamma_imap(gamma_imap_to_global_imap.size());
+  for (int i = 0; i < gamma_imap_to_global_imap.size(); ++i)
+    global_imap_to_gamma_imap[gamma_imap_to_global_imap[i]] = i;
 
   for (int i = 0; i < incident_cells.size(); ++i) {
     int icell = incident_cells[i];
@@ -133,7 +135,7 @@ void interpolate_dg0_at_facets(std::vector<std::reference_wrapper<const dolfinx:
     auto it = std::find_if(local_con.begin(),local_con.end(),[&facet_tag_vals](std::int32_t ifacet){return (facet_tag_vals[ifacet]>0);});
     assert(it != std::end(local_con));
     std::int32_t ifacet = *it;
-    std::int32_t ifacet_gamma_imap  = gamma_im_to_global_imap[ifacet];
+    std::int32_t ifacet_gamma_imap  = global_imap_to_gamma_imap[ifacet];
     for (size_t ifun = 0; ifun < num_funs; ++ifun) {
       auto r_x = receiving_fs[ifun]->x()->mutable_array();
       auto interpolated_vals_array = interpolated_vals_vectors[ifun].mutable_array();
@@ -158,7 +160,7 @@ void templated_declare_interpolate_dg0_at_facets(nb::module_ &m) {
          nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> cells,
          geometry::PointOwnershipData<T> &po,
          const dolfinx::common::IndexMap &gamma_index_map,
-         std::map<std::int32_t,std::int32_t> gamma_im_to_global_imap)
+         nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> gamma_imap_to_global_imap)
       {
         std::vector<std::reference_wrapper<const dolfinx::fem::Function<T>>> refs_sending_fs;
         for (auto &sf : ptrs_sending_fs) {
@@ -171,7 +173,7 @@ void templated_declare_interpolate_dg0_at_facets(nb::module_ &m) {
                                             std::span(cells.data(),cells.size()),
                                             po,
                                             gamma_index_map,
-                                            gamma_im_to_global_imap);
+                                            std::span(gamma_imap_to_global_imap.data(), gamma_imap_to_global_imap.size()));
       }
       );
 }

@@ -7,7 +7,8 @@
 template <std::floating_point T>
 std::vector<int32_t> get_facet_integration_entities(const dolfinx::mesh::Mesh<T> &domain,
     std::span<const std::int32_t> facets,
-    const dolfinx::fem::Function<T> &active_els_func) {
+    const dolfinx::fem::Function<T> &active_els_func,
+    std::optional<std::pair<std::reference_wrapper<const dolfinx::common::IndexMap>, std::span<const std::int32_t>>> subindex_map) {
 
   std::vector<int32_t> integration_entities;
 

@@ -4,33 +4,35 @@
 #include <dolfinx/fem/Function.h>
 #include <vector>
 
+/*
+ * facets must be both local and ghosted indices of ents of interest
+ */
 template <std::floating_point T>
 std::vector<int32_t> get_facet_integration_entities(const dolfinx::mesh::Mesh<T> &domain,
     std::span<const std::int32_t> facets,
-    const dolfinx::fem::Function<T> &active_els_func,
-    std::optional<std::pair<std::reference_wrapper<const dolfinx::common::IndexMap>, std::span<const std::int32_t>>> subindex_map) {
+    const dolfinx::fem::Function<T> &active_els_func)
+{
 
-  std::vector<int32_t> integration_entities;
 
   std::span<const T> active_els_vals = active_els_func.x()->array();
   int cdim = domain.topology()->dim();
   auto con_facet_cell = domain.topology()->connectivity(cdim-1,cdim);
   auto con_cell_facet = domain.topology()->connectivity(cdim,cdim-1);
-  std::int32_t num_local_facets = domain.topology()->index_map(cdim-1)->size_local();
+  size_t num_local_cells = domain.topology()->index_map(cdim)->size_local();
 
+  std::vector<int32_t> integration_entities;
   for (const int &ifacet : facets) {
-    if (ifacet >= num_local_facets) {
-      continue;
-    }
+    // Find local active cell that owns the facet
     auto incident_cells = con_facet_cell->links(ifacet);
     int owner_el = -1;
     for (auto &ielem : incident_cells) {
-      if (std::abs(active_els_vals[ielem] - 1) < 1e-7) {
+      if ((active_els_vals[ielem]) and (ielem < num_local_cells)) {
         owner_el = ielem;
         break;
       }
     }
-    assert(owner_el>-1);
+    if (owner_el<=-1)
+      continue;
 
     //Get local index of facet
     auto incident_facets = con_cell_facet->links(owner_el);

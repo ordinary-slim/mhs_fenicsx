@@ -346,35 +346,7 @@ class Problem:
         self.gamma_imap_to_global_imap = cpp.common.create_sub_index_map(self.facet_map,
                                                     indices_all_gamma_facets,
                                                     False)
-        con_facet_cell = self.domain.topology.connectivity(self.dim-1,self.dim)
-        con_cell_facet = self.domain.topology.connectivity(self.dim,self.dim-1)
-        # TODO: Optimize this
-        self.gamma_integration_data = []
-        self.gamma_lcell_facet_map = []
-        for ifacet in indices_all_gamma_facets:
-            incident_cells = con_facet_cell.links(ifacet)
-            submask = np.zeros_like(incident_cells)
-            # Check if owned by active cell
-            submask[:] = self.active_els_func.x.array[incident_cells]
-            submask[:] = np.logical_and(submask,
-                                        incident_cells < self.cell_map.size_local)
-            indices_local_incident_active_cells = submask.nonzero()[0]
-            assert(len(indices_local_incident_active_cells) < 2)
-            for idx in indices_local_incident_active_cells:
-                icell = incident_cells[idx]
-                self.gamma_integration_data.append(icell)
-                # TODO: Find local index facet
-                incident_facets = con_cell_facet.links(icell)
-                found = False
-                for local_index, ifacet_cell in enumerate(incident_facets):
-                    found = ifacet==ifacet_cell
-                    if found:
-                        self.gamma_integration_data.append(local_index)
-                        self.gamma_lcell_facet_map.append(ifacet)
-                        break
-                assert(found)
-        self.gamma_integration_data = np.array(self.gamma_integration_data, dtype=np.int32)
-        self.gamma_lcell_facet_map = np.array(self.gamma_lcell_facet_map, dtype=np.int32)
+        self.gamma_integration_data = self.get_facet_integrations_entities(indices_all_gamma_facets)
 
     def add_dirichlet_bc(self, func, bdofs=None, bfacets_tag=None, marker=None, reset=False):
         if reset:

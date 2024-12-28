@@ -168,7 +168,7 @@ def main():
             quadrature_points_cell[ifacet*num_gps_facet : ifacet*num_gps_facet + num_gps_facet, :cdim] = map_facet_points(Qe._points, ifacet, cell_type)
 
         # Manually tabulate
-        num_local_gamma_cells = p.gamma_lcell_facet_map.size
+        num_local_gamma_cells = p.gamma_integration_data.size // 2
         gamma_qpoints = np.zeros((num_local_gamma_cells * \
                 num_gps_facet, 3), dtype=np.float64)
         pgeo = p.domain.geometry

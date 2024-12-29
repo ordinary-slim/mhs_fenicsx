@@ -33,28 +33,55 @@ def left_marker_dirichlet(x):
     return np.isclose(x[0],0)
 def right_marker_dirichlet(x):
     return np.isclose(x[0],1)
-def left_marker_neumann_2d(x):
-    return np.logical_and(np.logical_or(np.isclose(x[1],0), np.isclose(x[1],1)), x[0] <= 0.5)
-def left_marker_neumann_2d_debug(x):
-    return np.logical_or(
-               np.logical_and(np.logical_or(np.isclose(x[1],0), np.isclose(x[1],1)), x[0] <= 0.5),
-               np.isclose(x[0], 0.5))
-def right_marker_neumann_2d(x):
-    return np.logical_and(np.logical_or(np.isclose(x[1],0), np.isclose(x[1],1)), x[0] >= 0.5)
-def left_marker_neumann_3d(x):
-    return np.logical_or(
-            np.logical_and(np.logical_or(np.isclose(x[1],0), np.isclose(x[1],1)), x[0] <= 0.5),
-            np.logical_and(np.logical_or(np.isclose(x[2],0), np.isclose(x[2],1)), x[0] <= 0.5))
-def left_marker_neumann_3d_debug(x):
-    return np.logical_or(np.isclose(x[0], 0.5),
-            np.logical_or(
-                np.logical_and(np.logical_or(np.isclose(x[1],0), np.isclose(x[1],1)), x[0] <= 0.5),
-                np.logical_and(np.logical_or(np.isclose(x[2],0), np.isclose(x[2],1)), x[0] <= 0.5))
-          )
-def right_marker_neumann_3d(x):
-    return np.logical_or(
-            np.logical_and(np.logical_or(np.isclose(x[1],0), np.isclose(x[1],1)), x[0] >= 0.5),
-            np.logical_and(np.logical_or(np.isclose(x[2],0), np.isclose(x[2],1)), x[0] >= 0.5))
+def left_marker_neumann_2d(p:Problem):
+    return mesh.locate_entities(p.domain, p.dim-1,
+                                lambda x : np.logical_and(np.logical_or(np.isclose(x[1],0), np.isclose(x[1],1)), x[0] <= 0.5)
+                                )
+def right_marker_neumann_2d(p:Problem):
+    return mesh.locate_entities(p.domain, p.dim-1,
+                                lambda x : np.logical_and(np.logical_or(np.isclose(x[1],0), np.isclose(x[1],1)), x[0] >= 0.5)
+                                )
+def left_marker_neumann_3d(p:Problem):
+    y_facets = mesh.locate_entities(p.domain, p.dim-1,
+                lambda x : np.logical_and(
+                            np.logical_or(np.isclose(x[1], 0),
+                                          np.isclose(x[1], 1)),
+                            x[0] <= 0.5))
+    z_facets = mesh.locate_entities(p.domain, p.dim-1,
+                lambda x : np.logical_and(
+                            np.logical_or(np.isclose(x[2], 0),
+                                          np.isclose(x[2], 1)),
+                            x[0] <= 0.5))
+    return np.hstack((y_facets,z_facets))
+
+def left_marker_neumann_3d_debug(p:Problem):
+    y_facets = mesh.locate_entities(p.domain, p.dim-1,
+                lambda x : np.logical_and(
+                            np.logical_or(np.isclose(x[1], 0),
+                                          np.isclose(x[1], 1)),
+                            x[0] <= 0.5))
+    z_facets = mesh.locate_entities(p.domain, p.dim-1,
+                lambda x : np.logical_and(
+                            np.logical_or(np.isclose(x[2], 0),
+                                          np.isclose(x[2], 1)),
+                            x[0] <= 0.5))
+    m_facets = mesh.locate_entities(p.domain, p.dim-1,
+                lambda x : np.isclose(x[0], 0.5))
+    return np.hstack((y_facets,z_facets,m_facets))
+
+def right_marker_neumann_3d(p:Problem):
+    y_facets = mesh.locate_entities(p.domain, p.dim-1,
+                lambda x : np.logical_and(
+                            np.logical_or(np.isclose(x[1], 0),
+                                          np.isclose(x[1], 1)),
+                            x[0] >= 0.5))
+    z_facets = mesh.locate_entities(p.domain, p.dim-1,
+                lambda x : np.logical_and(
+                            np.logical_or(np.isclose(x[2], 0),
+                                          np.isclose(x[2], 1)),
+                            x[0] >= 0.5))
+    return np.hstack((y_facets,z_facets))
+
 def marker_gamma(x):
     return np.isclose(x[0], 0.5)
 
@@ -233,12 +260,11 @@ def main():
     diag_matrix = {}
     rhs_vector = {}
     neumann_facets = {}
-    neumann_dofs_debug = {}
     for p, marker in zip([p_left, p_right], [left_marker_neumann, right_marker_neumann]):
         p.set_forms_domain()
         # Set-up remaining terms
         neumann_tag = 66
-        neumann_facets[p] = mesh.locate_entities(p.domain, p.dim-1, marker)
+        neumann_facets[p] = marker(p)
         neumann_int_ents = p.get_facet_integrations_entities(neumann_facets[p])
         gamma_tag = 44
         subdomain_data = [(neumann_tag, np.asarray(neumann_int_ents, dtype=np.int32)),
@@ -247,7 +273,7 @@ def main():
         ds = ufl.Measure('ds', domain=p.domain, subdomain_data=subdomain_data)
         n = ufl.FacetNormal(p.domain)
         v = ufl.TestFunction(p.v)
-        p.l_ufl += +ufl.inner(n, p.k * grad_exact_sol(p.domain)) * v * ds(neumann_tag)
+        p.l_ufl += +p.k * ufl.inner(n, grad_exact_sol(p.domain)) * v * ds(neumann_tag)
         # LHS term Robin
         dS = ufl.Measure('ds', domain=p.domain, subdomain_data=subdomain_data)
         p.a_ufl += + p.u * v * dS(gamma_tag)
@@ -294,11 +320,14 @@ def main():
                 component_local[:] = ulur_wrapper_local
     ulur.destroy()
 
+    middle_row_func_rl = get_matrix_row_as_func(p_right, p_left, A_rl)
+    middle_row_func_lr = get_matrix_row_as_func(p_left, p_right, A_lr)
+
     for mat in [L, A, A_lr, A_rl]:
         mat.destroy()
 
-    p_left.writepos(extra_funcs=[ext_conductivity[p_left], p_left.dirichlet_bcs[0].g])
-    p_right.writepos(extra_funcs=[p_right.dirichlet_bcs[0].g])
+    p_left.writepos(extra_funcs=[ext_conductivity[p_left], p_left.dirichlet_bcs[0].g, middle_row_func_rl])
+    p_right.writepos(extra_funcs=[p_right.dirichlet_bcs[0].g, middle_row_func_lr])
 
 if __name__=="__main__":
     lp = LineProfiler()

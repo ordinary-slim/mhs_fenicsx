@@ -2,8 +2,6 @@ from dolfinx import fem, mesh, la
 import numpy as np
 import basix, basix.ufl
 from mpi4py import MPI
-from main import exact_sol_2d, grad_exact_sol_2d, Rhs, \
-                 exact_sol_3d, grad_exact_sol_3d
 import yaml
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx_cpp import cellwise_determine_point_ownership, scatter_cell_integration_data_po, \
@@ -20,14 +18,29 @@ from line_profiler import LineProfiler
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-with open("input.yaml", 'r') as f:
-    params = yaml.safe_load(f)
+def exact_sol_2d(x):
+    return 2 -(x[0]**2 + x[1]**2)
+def grad_exact_sol_2d(domain):
+    x = ufl.SpatialCoordinate(domain)
+    return ufl.as_vector((-2*x[0], -2*x[1]))
+def exact_sol_3d(x):
+    return 2 -(x[0]**2 + x[1]**2 + x[2]**2)
+def grad_exact_sol_3d(domain):
+    x = ufl.SpatialCoordinate(domain)
+    return ufl.as_vector((-2*x[0], -2*x[1], -2*x[2]))
+class Rhs:
+    def __init__(self,rho,cp,k,v,dim=None):
+        self.rho = rho
+        self.cp = cp
+        self.k = k
+        self.v = v
+        if dim==None:
+            dim = len(v)
+        self.dim = dim
 
-rhs = Rhs(params["material"]["density"],
-          params["material"]["specific_heat"],
-          params["material"]["conductivity"],
-          params["advection_speed"],
-          params["dim"])
+    def __call__(self,x):
+        return_val = -2*self.rho*self.cp*self.v[0]*x[0] + -2*self.rho*self.cp*self.v[1]*x[1] + (2*self.dim)*self.k
+        return return_val
 
 def left_marker_dirichlet(x):
     return np.isclose(x[0],0)
@@ -53,21 +66,6 @@ def left_marker_neumann_3d(p:Problem):
                                           np.isclose(x[2], 1)),
                             x[0] <= 0.5))
     return np.hstack((y_facets,z_facets))
-
-def left_marker_neumann_3d_debug(p:Problem):
-    y_facets = mesh.locate_entities(p.domain, p.dim-1,
-                lambda x : np.logical_and(
-                            np.logical_or(np.isclose(x[1], 0),
-                                          np.isclose(x[1], 1)),
-                            x[0] <= 0.5))
-    z_facets = mesh.locate_entities(p.domain, p.dim-1,
-                lambda x : np.logical_and(
-                            np.logical_or(np.isclose(x[2], 0),
-                                          np.isclose(x[2], 1)),
-                            x[0] <= 0.5))
-    m_facets = mesh.locate_entities(p.domain, p.dim-1,
-                lambda x : np.isclose(x[0], 0.5))
-    return np.hstack((y_facets,z_facets,m_facets))
 
 def right_marker_neumann_3d(p:Problem):
     y_facets = mesh.locate_entities(p.domain, p.dim-1,
@@ -106,40 +104,43 @@ def get_matrix_row_as_func(p : Problem, p_ext:Problem, mat):
     comm.Allgather(found, found_mask)
     middle_dof_rank = found_mask.nonzero()[0][0]
     comm.Bcast(vals, root=middle_dof_rank)
-    # TODO: middle_dof_rank is restricted, unrestrict
     middle_row_func = fem.Function(p_ext.v, name="middle_row_f")
     rgrange = np.arange(res_right.index_map.local_range[0],
                         res_right.index_map.local_range[1])
     rlrange = np.arange(rgrange.size)
+    # middle_dof_rank is restricted, unrestrict
     for rgidx, rlidx in zip(rgrange, rlrange):
         ulidx = res_right.restricted_to_unrestricted[rlidx]
         middle_row_func.x.array[ulidx] = vals[rgidx]
     middle_row_func.x.scatter_forward()
     return middle_row_func
 
-def main():
-    # Mesh and problems
-    els_side = params["els_side"]
-    dim = params["dim"]
+def run(dim, els_side, el_type, writepos=False):
+    with open("input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    rhs = Rhs(params["material"]["density"],
+              params["material"]["specific_heat"],
+              params["material"]["conductivity"],
+              params["advection_speed"],
+              dim)
 
+    # Mesh and problems
     if dim==2:
         left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, els_side, els_side, mesh.CellType.quadrilateral)
         right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, els_side, els_side, mesh.CellType.triangle)
         exact_sol = exact_sol_2d
         grad_exact_sol = grad_exact_sol_2d
         left_marker_neumann = left_marker_neumann_2d
-        left_marker_neumann_debug = left_marker_neumann_2d_debug
         right_marker_neumann = right_marker_neumann_2d
     else:
         cell_type = mesh.CellType.tetrahedron
-        if params["cell_type"] == "hexa":
+        if el_type == "hexa":
             cell_type = mesh.CellType.hexahedron
         left_mesh  = mesh.create_unit_cube(MPI.COMM_WORLD, els_side, els_side, els_side, cell_type=cell_type)
         right_mesh  = mesh.create_unit_cube(MPI.COMM_WORLD, els_side, els_side, els_side, cell_type=cell_type)
         exact_sol = exact_sol_3d
         grad_exact_sol = grad_exact_sol_3d
         left_marker_neumann = left_marker_neumann_3d
-        left_marker_neumann_debug = left_marker_neumann_3d_debug
         right_marker_neumann = right_marker_neumann_3d
 
     p_left = Problem(left_mesh, params, name=f"diff_mesh_robin_left")
@@ -289,10 +290,8 @@ def main():
     # Create nest system
     A = petsc4py.PETSc.Mat().createNest([[p_left.A, A_lr], [A_rl, p_right.A]])
     L = petsc4py.PETSc.Vec().createNest([p_left.L, p_right.L])
-    #A.assemble()
-    #L.assemble()
 
-    # TODO: Solve
+    # SOLVE
     l_cpp = [p_left.mr_compiled, p_right.mr_compiled]
     restriction = [p_left.restriction, p_right.restriction]
     ulur = multiphenicsx.fem.petsc.create_vector_nest(l_cpp, restriction=restriction)
@@ -302,12 +301,11 @@ def main():
     ksp.setType("preonly")
     petsc4py.PETSc.Options().setValue('-ksp_error_if_not_converged', 'true')
     ksp.getPC().setType("lu")
-    #ksp.getPC().setFactorSolverType("mumps")
+    ksp.getPC().setFactorSolverType("mumps")
     ksp.getPC().setFactorSetUpSolverType()
-    #ksp.getPC().getFactorMatrix().setMumpsIcntl(icntl=7, ival=4)
+    ksp.getPC().getFactorMatrix().setMumpsIcntl(icntl=7, ival=4)
     ksp.setFromOptions()
     ksp.solve(L, ulur)
-    print(f"rank {rank}, converged reason = {ksp.getConvergedReason()}")
     for ulur_sub in ulur.getNestSubVecs():
         ulur_sub.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
     ksp.destroy()
@@ -322,17 +320,109 @@ def main():
 
     middle_row_func_rl = get_matrix_row_as_func(p_right, p_left, A_rl)
     middle_row_func_lr = get_matrix_row_as_func(p_left, p_right, A_lr)
+    #print(f"{rank}: middle_row_func_rl.x.array[:] = {middle_row_func_rl.x.array[:]}", flush=True)
 
     for mat in [L, A, A_lr, A_rl]:
         mat.destroy()
 
-    p_left.writepos(extra_funcs=[ext_conductivity[p_left], p_left.dirichlet_bcs[0].g, middle_row_func_rl])
-    p_right.writepos(extra_funcs=[p_right.dirichlet_bcs[0].g, middle_row_func_lr])
+    if writepos:
+        p_left.writepos(extra_funcs=[ext_conductivity[p_left], p_left.dirichlet_bcs[0].g, middle_row_func_rl])
+        p_right.writepos(extra_funcs=[p_right.dirichlet_bcs[0].g, middle_row_func_lr])
+
+    # 16 elems per side
+    points_2d = {
+        p_left : np.array([[0.25, 0.25, 0.0],
+                           [0.50, 0.50, 0.0],
+                           [0.25, 1.00, 0.0]]),
+        p_right : np.array([[0.75, 0.25, 0.0],
+                            [0.50, 0.50, 0.0],
+                            [0.75, 1.00, 0.0]]),
+            }
+    vals_2d = {
+            p_left : np.array([1.86724959,
+                               1.484520997,
+                               0.9304105402]),
+            p_right :  np.array([1.36746994,
+                                 1.48441414,
+                                 0.428867246]),
+            }
+    # 4 elems per side, tetra
+    points_3d = {
+        p_left : np.array([[0.25, 0.25, 0.25],
+                           [0.50, 0.50, 0.50],
+                           [0.25, 1.00, 1.00]]),
+        p_right : np.array([[0.75, 0.25, 0.25],
+                            [0.50, 0.50, 0.50],
+                            [0.75, 1.00, 1.00]]),
+            }
+    vals_3d_tetra = {
+            p_left : np.array([1.77741894,
+                               1.1950978,
+                               -0.0487715323]),
+            p_right :  np.array([1.29849312,
+                                 1.1950978,
+                                 -0.589351976]),
+            }
+    vals_3d_hexa = {
+            p_left : np.array([1.78125,
+                               1.1875,
+                               -0.09375]),
+            p_right :  np.array([1.28125,
+                                 1.1875,
+                                 -0.59375]),
+            }
+    def assert_pointwise_vals(p:Problem):
+        if dim == 2:
+            points   = points_2d[p]
+            ref_vals = vals_2d[p]
+        elif dim == 3:
+            points   = points_3d[p]
+            if el_type=="hexa":
+                ref_vals = vals_3d_hexa[p]
+            else:
+                ref_vals = vals_3d_tetra[p]
+        else:
+            raise Exception
+        po = cellwise_determine_point_ownership(
+                p.domain._cpp_object,
+                points,
+                p.active_els_func.x.array.nonzero()[0],
+                np.float64(1e-7),
+                )
+        indices_points_found = []
+        for p1 in po.dest_points:
+            for idx, p2 in enumerate(points):
+                if np.isclose(p1, p2).all():
+                    indices_points_found.append(idx)
+
+        vals = p.u.eval(po.dest_points, po.dest_cells).reshape(-1)
+        assert np.isclose(ref_vals[indices_points_found], vals).all()
+
+    for p in [p_left, p_right]:
+        assert_pointwise_vals(p)
+
+def test_monolithic_RR_poisson_2d():
+    run(dim=2, els_side=16, el_type="quadtri")
+
+def test_monolithic_RR_poisson_3d_tetra():
+    run(dim=3, els_side=4, el_type="tetra")
+
+def test_monolithic_RR_poisson_3d_hexa():
+    run(dim=3, els_side=4, el_type="hexa")
 
 if __name__=="__main__":
-    lp = LineProfiler()
-    lp.add_module(Problem)
-    lp_wrapper = lp(main)
-    lp_wrapper()
-    with open(f"profiling_diff_mesh_robin_rank{rank}.txt", 'w') as pf:
-        lp.print_stats(stream=pf)
+    profiling = True
+    writepos = True
+    dim = 3
+    els_side = 4
+    el_type = "hexa"
+    run_func = test_monolithic_RR_poisson
+    if profiling:
+        lp = LineProfiler()
+        lp.add_module(Problem)
+        lp_wrapper = lp(test_monolithic_RR_poisson)
+        run_func = lp_wrapper
+    run_func(dim=dim, els_side=els_side, el_type=el_type, writepos=writepos)
+    if profiling:
+        with open(f"profiling_diff_mesh_robin_rank{rank}.txt", 'w') as pf:
+            lp.print_stats(stream=pf)

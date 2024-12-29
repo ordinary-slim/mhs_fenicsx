@@ -324,10 +324,10 @@ Mat create_robin_robin_monolithic(
           // TODO Consider adding Robin coeff
           v -= phi_j(0, 0, j, 0);
           // dphi: dim, gp, basis func
-          v -= ext_k_arr[icell_i] * \
-               (normal_b[0] * dphi_j(0,0,j) + \
-                normal_b[1] * dphi_j(1,0,j) + \
-                normal_b[2] * dphi_j(2,0,j));
+          double dot_gradj_n = 0.0;
+          for (int w = 0; w < tdim; ++w)
+            dot_gradj_n += normal_b[w] * dphi_j(w,0,j);
+          v -= ext_k_arr[icell_i] * dot_gradj_n;
           v *= phi_i(0,
                      idx_gp_i,
                      lfacet_dofs[i],

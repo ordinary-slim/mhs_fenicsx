@@ -16,7 +16,7 @@ CHECKPOINTS
 - [ ] 3D
 - [ ] 2D AM
 - [ ] 3D AM
-- [ ] Lumped heat source predictor (high priority)
+- [ ] Lumped heat source PREDICTOR (high priority)
 - [ ] 2 staggered iterations at most
 - [x] Phase change
 - [ ] Temperature dependent parameters

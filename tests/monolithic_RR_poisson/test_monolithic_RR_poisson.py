@@ -98,7 +98,7 @@ def get_matrix_row_as_func(p : Problem, p_ext:Problem, mat):
     if middle_dof.size:
         row_middle_dof = res_left.unrestricted_to_restricted[middle_dof[0]]
         grow_middle_dof = res_left.index_map.local_to_global(np.array([row_middle_dof]))
-        c, v = mat.getRow(grow_middle_dof)
+        c, v = mat.getRow(grow_middle_dof[0])
         vals[c] = v
         found[0] = 1
     comm.Allgather(found, found_mask)
@@ -416,11 +416,11 @@ if __name__=="__main__":
     dim = 3
     els_side = 4
     el_type = "hexa"
-    run_func = test_monolithic_RR_poisson
+    run_func = run
     if profiling:
         lp = LineProfiler()
         lp.add_module(Problem)
-        lp_wrapper = lp(test_monolithic_RR_poisson)
+        lp_wrapper = lp(run)
         run_func = lp_wrapper
     run_func(dim=dim, els_side=els_side, el_type=el_type, writepos=writepos)
     if profiling:

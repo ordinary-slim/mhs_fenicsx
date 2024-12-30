@@ -1,19 +1,14 @@
 from dolfinx import fem, mesh, la
 import numpy as np
-import basix, basix.ufl
 from mpi4py import MPI
 import yaml
 from mhs_fenicsx.problem import Problem
-from mhs_fenicsx_cpp import cellwise_determine_point_ownership, scatter_cell_integration_data_po, \
-                            create_robin_robin_monolithic, interpolate_dg0_at_facets
-from ffcx.ir.elementtables import permute_quadrature_interval, \
-                                  permute_quadrature_triangle, \
-                                  permute_quadrature_quadrilateral
-from ffcx.element_interface import map_facet_points
+from mhs_fenicsx_cpp import cellwise_determine_point_ownership
 import multiphenicsx.fem.petsc
 import ufl
 import petsc4py
 from line_profiler import LineProfiler
+from mhs_fenicsx.drivers import MonolithicRRDriver
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -165,101 +160,10 @@ def run(dim, els_side, el_type, writepos=False):
     for p, p_ext in zip([p_left, p_right], [p_right, p_left]):
         p.find_gamma(p.get_active_in_external( p_ext ))
 
-    gamma_cells = {
-            p_left : p_left.gamma_integration_data[::2],
-            p_right : p_right.gamma_integration_data[::2],
-            }
-    gamma_qpoints_po = {
-            p_left : { p_right : None },
-            p_right : { p_left : None },
-            }
-    gamma_renumbered_cells_ext = { p_left : {}, p_right : {}}
-    gamma_dofs_cells_ext = { p_left : {}, p_right : {}}
-    gamma_geoms_cells_ext = { p_left : {}, p_right : {}}
-    gamma_iid = {p_left:{}, p_right:{}}
-    ext_conductivity = {}
-    midpoints_gamma = {p_left:None, p_right:None}
-
-    def assemble_robin_matrix(p:Problem, p_ext:Problem, quadrature_degree=2):
-        cdim = p.domain.topology.dim
-        fdim = cdim - 1
-        # GENERATE QUADRATURE
-        cell_type =  p.domain.topology.entity_types[-1][0].name
-        facet_type = p.domain.topology.entity_types[-2][0].name
-        Qe = basix.ufl.quadrature_element(facet_type,
-                                          degree=quadrature_degree)
-
-        num_gps_facet = Qe.num_entity_dofs[-1][0]
-        num_facets_cell = p.domain.ufl_cell().num_facets()
-        quadrature_points_cell  = np.zeros((num_gps_facet * num_facets_cell, cdim), dtype=Qe._points.dtype)
-        for ifacet in range(num_facets_cell):
-            quadrature_points_cell[ifacet*num_gps_facet : ifacet*num_gps_facet + num_gps_facet, :cdim] = map_facet_points(Qe._points, ifacet, cell_type)
-
-        # Manually tabulate
-        num_local_gamma_cells = p.gamma_integration_data.size // 2
-        gamma_qpoints = np.zeros((num_local_gamma_cells * \
-                num_gps_facet, 3), dtype=np.float64)
-        pgeo = p.domain.geometry
-        for idx in range(num_local_gamma_cells):
-            icell   = p.gamma_integration_data[2*idx]
-            lifacet = p.gamma_integration_data[2*idx+1]
-            ref_points = quadrature_points_cell[lifacet*num_gps_facet:lifacet*num_gps_facet+num_gps_facet, :]
-            # Push forward
-            gamma_qpoints[idx*num_gps_facet:\
-                idx*num_gps_facet + num_gps_facet, :] =  \
-                pgeo.cmap.push_forward(
-                        ref_points, pgeo.x[pgeo.dofmap[icell]])
-
-        gamma_qpoints_po[p][p_ext] = \
-                cellwise_determine_point_ownership(p_ext.domain._cpp_object,
-                                                   gamma_qpoints,
-                                                   gamma_cells[p_ext],
-                                                   np.float64(1e-7))
-        gamma_renumbered_cells_ext[p][p_ext], \
-        gamma_dofs_cells_ext[p][p_ext], \
-        gamma_geoms_cells_ext[p][p_ext] = \
-                        scatter_cell_integration_data_po(gamma_qpoints_po[p][p_ext],
-                                                          p_ext.v._cpp_object,
-                                                          p_ext.restriction)
-        midpoints_gamma[p] = mesh.compute_midpoints(p.domain,p.domain.topology.dim-1,p.gamma_facets.find(1))
-        gamma_iid[p][p_ext] = cellwise_determine_point_ownership(
-                                            p_ext.domain._cpp_object,
-                                            midpoints_gamma[p],
-                                            gamma_cells[p_ext],
-                                            np.float64(1e-6))
-        ext_conductivity[p] = fem.Function(p.dg0, name="ext_k")
-        interpolate_dg0_at_facets([p_ext.k._cpp_object],
-                                  [ext_conductivity[p]._cpp_object],
-                                  p.active_els_func._cpp_object,
-                                  p.gamma_facets._cpp_object,
-                                  gamma_cells[p],
-                                  gamma_iid[p][p_ext],
-                                  p.gamma_facets_index_map,
-                                  p.gamma_imap_to_global_imap)
-
-        p.domain.topology.create_entity_permutations()
-        A = create_robin_robin_monolithic(ext_conductivity[p]._cpp_object,
-                                          gamma_qpoints,
-                                          quadrature_points_cell,
-                                          Qe._weights,
-                                          p.v._cpp_object,
-                                          p.restriction,
-                                          p_ext.v._cpp_object,
-                                          p_ext.restriction,
-                                          p.gamma_integration_data,
-                                          gamma_qpoints_po[p][p_ext],
-                                          gamma_renumbered_cells_ext[p][p_ext],
-                                          gamma_dofs_cells_ext[p][p_ext],
-                                          gamma_geoms_cells_ext[p][p_ext],
-                                          )
-        A.assemble()
-        return A
-
     quadrature_degree = 2
-    A_lr = assemble_robin_matrix(p_left, p_right, quadrature_degree)
-    A_rl = assemble_robin_matrix(p_right, p_left, quadrature_degree)
-    diag_matrix = {}
-    rhs_vector = {}
+    driver = MonolithicRRDriver(p_left, p_right, quadrature_degree=quadrature_degree)
+
+    driver.pre_iterate()
     neumann_facets = {}
     for p, marker in zip([p_left, p_right], [left_marker_neumann, right_marker_neumann]):
         p.set_forms_domain()
@@ -284,11 +188,9 @@ def run(dim, els_side, el_type, writepos=False):
         p.pre_assemble()
         p.assemble_jacobian()
         p.assemble_residual()
-        diag_matrix[p] = p.A
-        rhs_vector[p] = p.L
 
     # Create nest system
-    A = petsc4py.PETSc.Mat().createNest([[p_left.A, A_lr], [A_rl, p_right.A]])
+    A = petsc4py.PETSc.Mat().createNest([[p_left.A, driver.A12], [driver.A21, p_right.A]])
     L = petsc4py.PETSc.Vec().createNest([p_left.L, p_right.L])
 
     # SOLVE
@@ -318,15 +220,15 @@ def run(dim, els_side, el_type, writepos=False):
                 component_local[:] = ulur_wrapper_local
     ulur.destroy()
 
-    middle_row_func_rl = get_matrix_row_as_func(p_right, p_left, A_rl)
-    middle_row_func_lr = get_matrix_row_as_func(p_left, p_right, A_lr)
+    middle_row_func_rl = get_matrix_row_as_func(p_right, p_left, driver.A21)
+    middle_row_func_lr = get_matrix_row_as_func(p_left, p_right, driver.A12)
     #print(f"{rank}: middle_row_func_rl.x.array[:] = {middle_row_func_rl.x.array[:]}", flush=True)
 
-    for mat in [L, A, A_lr, A_rl]:
+    for mat in [L, A, driver.A12, driver.A12]:
         mat.destroy()
 
     if writepos:
-        p_left.writepos(extra_funcs=[ext_conductivity[p_left], p_left.dirichlet_bcs[0].g, middle_row_func_rl])
+        p_left.writepos(extra_funcs=[driver.ext_conductivity[p_left], p_left.dirichlet_bcs[0].g, middle_row_func_rl])
         p_right.writepos(extra_funcs=[p_right.dirichlet_bcs[0].g, middle_row_func_lr])
 
     # 16 elems per side

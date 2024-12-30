@@ -1,13 +1,10 @@
-from mhs_fenicsx import problem, geometry
-from mhs_fenicsx.problem.helpers import interpolate, interpolate_dg_at_facets
+from mhs_fenicsx import problem
 import numpy as np
 from mpi4py import MPI
-from dolfinx import mesh, fem, io
-import ufl
+from dolfinx import mesh
 import yaml
-from helpers import interpolate_solution_to_inactive, mesh_around_hs, build_moving_problem, get_active_in_external_trees
+from helpers import interpolate_solution_to_inactive, build_moving_problem
 from line_profiler import LineProfiler
-from mhs_fenicsx.geometry import mesh_containment
 from mhs_fenicsx.drivers.staggered_drivers import StaggeredDNDriver, StaggeredRRDriver
 
 comm = MPI.COMM_WORLD

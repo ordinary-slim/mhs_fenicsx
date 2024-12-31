@@ -163,7 +163,6 @@ def run(dim, els_side, el_type, writepos=False):
     quadrature_degree = 2
     driver = MonolithicRRDriver(p_left, p_right, quadrature_degree=quadrature_degree)
 
-    driver.pre_iterate()
     neumann_facets = {}
     for p, marker in zip([p_left, p_right], [left_marker_neumann, right_marker_neumann]):
         p.set_forms_domain()
@@ -171,61 +170,31 @@ def run(dim, els_side, el_type, writepos=False):
         neumann_tag = 66
         neumann_facets[p] = marker(p)
         neumann_int_ents = p.get_facet_integrations_entities(neumann_facets[p])
-        gamma_tag = 44
-        subdomain_data = [(neumann_tag, np.asarray(neumann_int_ents, dtype=np.int32)),
-                          (gamma_tag, np.asarray(p.gamma_integration_data, dtype=np.int32))]
+        subdomain_data = [(neumann_tag, np.asarray(neumann_int_ents, dtype=np.int32))]
         # Neumann condition
         ds = ufl.Measure('ds', domain=p.domain, subdomain_data=subdomain_data)
         n = ufl.FacetNormal(p.domain)
         v = ufl.TestFunction(p.v)
         p.l_ufl += +p.k * ufl.inner(n, grad_exact_sol(p.domain)) * v * ds(neumann_tag)
-        # LHS term Robin
-        dS = ufl.Measure('ds', domain=p.domain, subdomain_data=subdomain_data)
-        p.a_ufl += + p.u * v * dS(gamma_tag)
 
         p.compile_forms()
         # Pre-assemble
         p.pre_assemble()
-        p.assemble_jacobian()
+        p.assemble_jacobian(finalize=False)
         p.assemble_residual()
 
     # Create nest system
-    A = petsc4py.PETSc.Mat().createNest([[p_left.A, driver.A12], [driver.A21, p_right.A]])
-    L = petsc4py.PETSc.Vec().createNest([p_left.L, p_right.L])
-
-    # SOLVE
-    l_cpp = [p_left.mr_compiled, p_right.mr_compiled]
-    restriction = [p_left.restriction, p_right.restriction]
-    ulur = multiphenicsx.fem.petsc.create_vector_nest(l_cpp, restriction=restriction)
-    ksp = petsc4py.PETSc.KSP()
-    ksp.create(p_left.domain.comm)
-    ksp.setOperators(A)
-    ksp.setType("preonly")
-    petsc4py.PETSc.Options().setValue('-ksp_error_if_not_converged', 'true')
-    ksp.getPC().setType("lu")
-    ksp.getPC().setFactorSolverType("mumps")
-    ksp.getPC().setFactorSetUpSolverType()
-    ksp.getPC().getFactorMatrix().setMumpsIcntl(icntl=7, ival=4)
-    ksp.setFromOptions()
-    ksp.solve(L, ulur)
-    for ulur_sub in ulur.getNestSubVecs():
-        ulur_sub.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
-    ksp.destroy()
-
-    # Split the block solution in components
-    with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(
-            ulur, [p_left.v.dofmap, p_right.v.dofmap], restriction) as ulur_wrapper:
-        for ulur_wrapper_local, component in zip(ulur_wrapper, (p_left.u, p_right.u)):
-            with component.x.petsc_vec.localForm() as component_local:
-                component_local[:] = ulur_wrapper_local
-    ulur.destroy()
+    driver.setup_coupling()
+    for p in [p_left, p_right]:
+        p.A.assemble()
+    driver.solve()
 
     middle_row_func_rl = get_matrix_row_as_func(p_right, p_left, driver.A21)
     middle_row_func_lr = get_matrix_row_as_func(p_left, p_right, driver.A12)
-    #print(f"{rank}: middle_row_func_rl.x.array[:] = {middle_row_func_rl.x.array[:]}", flush=True)
 
-    for mat in [L, A, driver.A12, driver.A12]:
-        mat.destroy()
+    driver.post_iterate()
+    for p in [p_left, p_right]:
+        p.post_iterate()
 
     if writepos:
         p_left.writepos(extra_funcs=[driver.ext_conductivity[p_left], p_left.dirichlet_bcs[0].g, middle_row_func_rl])

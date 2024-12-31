@@ -1,4 +1,5 @@
 from mhs_fenicsx import problem
+from mhs_fenicsx.drivers.monolithic_drivers import MonolithicRRDriver
 import numpy as np
 import yaml
 from mpi4py import MPI
@@ -14,6 +15,7 @@ def main():
         speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
         return adim_dt * (radius / speed)
     radius = params["heat_source"]["radius"]
+    max_temporal_iters = params["max_iter"]
     T_env = params["environment_temperature"]
     els_per_radius = params["els_per_radius"]
     box = [-10*radius,-4*radius,+10*radius,+4*radius]
@@ -29,9 +31,40 @@ def main():
               mesh.CellType.quadrilateral,
               )
 
-    p_fixed = problem.Problem(domain, params, name=params["case_name"])
+    p_fixed = problem.Problem(domain, params, name="monolithic")
     p_moving = build_moving_problem(p_fixed,els_per_radius)
 
+    p_fixed.set_initial_condition(T_env)
+    p_moving.set_initial_condition(T_env)
+
+    driver = MonolithicRRDriver(p_fixed, p_moving, quadrature_degree=2)
+
+    for _ in range(max_temporal_iters):
+        for p in [p_fixed, p_moving]:
+            p.pre_iterate()
+        p_fixed.subtract_problem(p_moving)
+        p_moving.find_gamma(p_moving.get_active_in_external(p_fixed))
+
+        for p in [p_fixed, p_moving]:
+            p.set_forms_domain()
+            p.set_forms_boundary()
+            p.compile_forms()
+            p.pre_assemble()
+            p.assemble_residual()
+            p.assemble_jacobian(finalize=False)
+        driver.setup_coupling()
+        for p in [p_fixed, p_moving]:
+            p.A.assemble()
+        driver.solve()
+
+        driver.post_iterate()
+        extra_funs = {
+                p_fixed : [p_fixed.u_prev],
+                p_moving : [p_moving.u_prev],
+                }
+        for p in [p_fixed, p_moving]:
+            p.post_iterate()
+            p.writepos(extra_funcs=extra_funs[p])
 
 if __name__=="__main__":
     main()

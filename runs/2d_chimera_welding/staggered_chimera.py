@@ -38,7 +38,7 @@ def main():
               mesh.CellType.quadrilateral,
               )
     params["petsc_opts"] = params["petsc_opts_fixed"]
-    p_fixed = problem.Problem(domain, params, name=params["case_name"])
+    p_fixed = problem.Problem(domain, params, name="staggered")
     p_moving = build_moving_problem(p_fixed,els_per_radius)
 
     p_fixed.set_initial_condition(T_env)

@@ -454,13 +454,14 @@ class Problem:
         self.x = multiphenicsx.fem.petsc.create_vector(self.mr_compiled, restriction=self.restriction)
         self.has_preassembled = True
 
-    def assemble_jacobian(self):
+    def assemble_jacobian(self, finalize=True):
         self.A.zeroEntries()
         multiphenicsx.fem.petsc.assemble_matrix(self.A,
                                                 self.j_compiled,
                                                 bcs=self.dirichlet_bcs,
                                                 restriction=(self.restriction, self.restriction))
-        self.A.assemble()
+        if finalize:
+            self.A.assemble()
 
     def assemble_residual(self):
         with self.L.localForm() as l_local:

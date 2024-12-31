@@ -5,6 +5,9 @@ from mhs_fenicsx_cpp import cellwise_determine_point_ownership, scatter_cell_int
                             create_robin_robin_monolithic, interpolate_dg0_at_facets
 from ffcx.element_interface import map_facet_points
 import numpy as np
+import petsc4py
+import multiphenicsx, multiphenicsx.fem.petsc
+import ufl
 
 class MonolithicDomainDecompositionDriver:
     def __init__(self, sub_problem_1:Problem,sub_problem_2:Problem, quadrature_degree):
@@ -13,7 +16,7 @@ class MonolithicDomainDecompositionDriver:
         self.p2 = p2
         self.quadrature_degree = quadrature_degree
 
-    def pre_iterate(self):
+    def setup_coupling(self):
         ''' Find interface '''
         (p1,p2) = (self.p1,self.p2)
         self.gamma_cells = {
@@ -31,25 +34,69 @@ class MonolithicDomainDecompositionDriver:
         self.ext_conductivity = {}
         self.midpoints_gamma = {p1:None, p2:None}
 
-
-    def iterate(self):
+    def solve(self):
         ''' Solve '''
-        pass
+        # Create nest system
+        (p1, p2) = (self.p1, self.p2)
+        self.A = petsc4py.PETSc.Mat().createNest([[p1.A, self.A12], [self.A21, p2.A]])
+        self.L = petsc4py.PETSc.Vec().createNest([p1.L, p2.L])
+        # SOLVE
+        l_cpp = [p1.mr_compiled, p2.mr_compiled]
+        restriction = [p1.restriction, p2.restriction]
+        du1du2 = multiphenicsx.fem.petsc.create_vector_nest(l_cpp, restriction=restriction)
+        ksp = petsc4py.PETSc.KSP()
+        ksp.create(p1.domain.comm)
+        ksp.setOperators(self.A)
+        ksp.setType("preonly")
+        petsc4py.PETSc.Options().setValue('-ksp_error_if_not_converged', 'true')
+        ksp.getPC().setType("lu")
+        ksp.getPC().setFactorSolverType("mumps")
+        ksp.getPC().setFactorSetUpSolverType()
+        ksp.getPC().getFactorMatrix().setMumpsIcntl(icntl=7, ival=4)
+        ksp.setFromOptions()
+        ksp.solve(self.L, du1du2)
+        for du1du2_sub in du1du2.getNestSubVecs():
+            du1du2_sub.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
+        ksp.destroy()
+        # Split the block solution in components
+        with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(
+                du1du2, [p1.v.dofmap, p2.v.dofmap], restriction) as u1u2_wrapper:
+            for u1u2_wrapper_local, component in zip(u1u2_wrapper, (p1.du, p2.du)):
+                with component.x.petsc_vec.localForm() as component_local:
+                    component_local[:] = u1u2_wrapper_local
+        du1du2.destroy()
+        for p in [p1, p2]:
+            p.u.x.array[:] += p.du.x.array[:]
 
     def post_iterate(self):
-        ''' Solve '''
-        pass
+        for mat in [self.A12, self.A21]:
+            mat.destroy()
 
 class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
     def __init__(self, sub_problem_1:Problem,sub_problem_2:Problem, quadrature_degree):
         (p1,p2) = (sub_problem_1,sub_problem_2)
         super().__init__(p1, p2, quadrature_degree)
 
-    def pre_iterate(self):
-        super().pre_iterate()
+    def setup_coupling(self):
+        super().setup_coupling()
         (p1,p2) = (self.p1,self.p2)
         self.A12 = self.assemble_robin_matrix(p1, p2, self.quadrature_degree)
         self.A21 = self.assemble_robin_matrix(p2, p1, self.quadrature_degree)
+        # Add LHS term
+        gamma_tag = 44
+        for p in [p1, p2]:
+            subdomain_data = [(gamma_tag, np.asarray(p.gamma_integration_data, dtype=np.int32))]
+            # LHS term Robin
+            ds = ufl.Measure('ds', domain=p.domain, subdomain_data=subdomain_data)
+            (u, v) = (ufl.TrialFunction(p.v), ufl.TestFunction(p.v))
+            a_ufl  = + u * v * ds(gamma_tag)
+            a_com = fem.form(a_ufl)
+            p.A.assemble(petsc4py.PETSc.Mat.AssemblyType.FLUSH)
+            multiphenicsx.fem.petsc.assemble_matrix(
+                    p.A,
+                    a_com,
+                    bcs=p.dirichlet_bcs,
+                    restriction=(p.restriction, p.restriction))
 
     def assemble_robin_matrix(self, p:Problem, p_ext:Problem, quadrature_degree=2):
         cdim = p.domain.topology.dim

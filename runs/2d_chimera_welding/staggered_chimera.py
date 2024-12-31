@@ -49,8 +49,8 @@ def main():
     if (type(driver)==StaggeredRRDriver):
         h = get_el_size(els_per_radius)
         k = float(params["material_metal"]["conductivity"])
-        driver.dirichlet_coeff[driver.p1] = 1/2.0
-        driver.dirichlet_coeff[driver.p2] = k / h
+        driver.dirichlet_coeff[driver.p1] = 1.0
+        driver.dirichlet_coeff[driver.p2] = 1.0
         driver.relaxation_coeff[driver.p1].value = 1.0
 
     for _ in range(max_temporal_iters):

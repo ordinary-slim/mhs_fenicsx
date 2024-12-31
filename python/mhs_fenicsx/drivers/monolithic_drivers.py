@@ -41,9 +41,9 @@ class MonolithicDomainDecompositionDriver:
         self.A = petsc4py.PETSc.Mat().createNest([[p1.A, self.A12], [self.A21, p2.A]])
         self.L = petsc4py.PETSc.Vec().createNest([p1.L, p2.L])
         # SOLVE
-        l_cpp = [p1.mr_compiled, p2.mr_compiled]
+        l_cpp = [p1.l_compiled, p2.l_compiled]
         restriction = [p1.restriction, p2.restriction]
-        du1du2 = multiphenicsx.fem.petsc.create_vector_nest(l_cpp, restriction=restriction)
+        u1u2 = multiphenicsx.fem.petsc.create_vector_nest(l_cpp, restriction=restriction)
         ksp = petsc4py.PETSc.KSP()
         ksp.create(p1.domain.comm)
         ksp.setOperators(self.A)
@@ -54,19 +54,17 @@ class MonolithicDomainDecompositionDriver:
         ksp.getPC().setFactorSetUpSolverType()
         ksp.getPC().getFactorMatrix().setMumpsIcntl(icntl=7, ival=4)
         ksp.setFromOptions()
-        ksp.solve(self.L, du1du2)
-        for du1du2_sub in du1du2.getNestSubVecs():
+        ksp.solve(self.L, u1u2)
+        for du1du2_sub in u1u2.getNestSubVecs():
             du1du2_sub.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
         ksp.destroy()
         # Split the block solution in components
         with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(
-                du1du2, [p1.v.dofmap, p2.v.dofmap], restriction) as u1u2_wrapper:
-            for u1u2_wrapper_local, component in zip(u1u2_wrapper, (p1.du, p2.du)):
+                u1u2, [p1.v.dofmap, p2.v.dofmap], restriction) as u1u2_wrapper:
+            for u1u2_wrapper_local, component in zip(u1u2_wrapper, (p1.u, p2.u)):
                 with component.x.petsc_vec.localForm() as component_local:
                     component_local[:] = u1u2_wrapper_local
-        du1du2.destroy()
-        for p in [p1, p2]:
-            p.u.x.array[:] += p.du.x.array[:]
+        u1u2.destroy()
 
     def post_iterate(self):
         for mat in [self.A12, self.A21]:

@@ -8,6 +8,7 @@ from dolfinx import fem
 import mhs_fenicsx_cpp
 
 def interpolate_solution_to_inactive(p:Problem, p_ext:Problem):
+    ''' TODO: Optimize this '''
     u_ext = fem.Function(p.v)
     interpolate(p_ext.u,u_ext)
     inactive_nodes = np.where(p.active_nodes_func.x.array==0)[0]

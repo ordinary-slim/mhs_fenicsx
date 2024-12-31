@@ -3,7 +3,7 @@ from mhs_fenicsx.drivers.monolithic_drivers import MonolithicRRDriver
 import numpy as np
 import yaml
 from mpi4py import MPI
-from helpers import build_moving_problem
+from helpers import build_moving_problem, interpolate_solution_to_inactive
 from dolfinx import mesh
 
 def main():
@@ -62,6 +62,7 @@ def main():
                 p_fixed : [p_fixed.u_prev],
                 p_moving : [p_moving.u_prev],
                 }
+        interpolate_solution_to_inactive(p_fixed,p_moving)
         for p in [p_fixed, p_moving]:
             p.post_iterate()
             p.writepos(extra_funcs=extra_funs[p])

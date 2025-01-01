@@ -301,7 +301,7 @@ Mat create_robin_robin_monolithic(
       auto _K_j = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
         K_j, icell_j, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
 
-      cmdspan2_t coord_dofs_j(_geoms_cells_mesh_j.data() + idx * (num_dofs_g_j * 3), num_dofs_g_j, 3);
+      cmdspan2_t coord_dofs_j(_geoms_cells_mesh_j.data() + icell_j * (num_dofs_g_j * 3), num_dofs_g_j, 3);
       std::array<U, 3> x0_j = {0, 0, 0};
       for (std::size_t i = 0; i < coord_dofs_j.extent(1); ++i)
         x0_j[i] += coord_dofs_j(0, i);

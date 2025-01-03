@@ -1,11 +1,11 @@
 from mhs_fenicsx.problem import Problem
-from dolfinx import fem, mesh
+from dolfinx import fem, mesh, la
 import basix.ufl
 from mhs_fenicsx_cpp import cellwise_determine_point_ownership, scatter_cell_integration_data_po, \
                             create_robin_robin_monolithic, interpolate_dg0_at_facets
 from ffcx.element_interface import map_facet_points
 import numpy as np
-import petsc4py
+from petsc4py import PETSc
 import multiphenicsx, multiphenicsx.fem.petsc
 import ufl
 
@@ -38,17 +38,17 @@ class MonolithicDomainDecompositionDriver:
         ''' Solve '''
         # Create nest system
         (p1, p2) = (self.p1, self.p2)
-        self.A = petsc4py.PETSc.Mat().createNest([[p1.A, self.A12], [self.A21, p2.A]])
-        self.L = petsc4py.PETSc.Vec().createNest([p1.L, p2.L])
+        self.A = PETSc.Mat().createNest([[p1.A, self.A12], [self.A21, p2.A]])
+        self.L = PETSc.Vec().createNest([p1.L, p2.L])
         # SOLVE
         l_cpp = [p1.mr_compiled, p2.mr_compiled]
         restriction = [p1.restriction, p2.restriction]
         du1du2 = multiphenicsx.fem.petsc.create_vector_nest(l_cpp, restriction=restriction)
-        ksp = petsc4py.PETSc.KSP()
+        ksp = PETSc.KSP()
         ksp.create(p1.domain.comm)
         ksp.setOperators(self.A)
         ksp.setType("preonly")
-        petsc4py.PETSc.Options().setValue('-ksp_error_if_not_converged', 'true')
+        PETSc.Options().setValue('-ksp_error_if_not_converged', 'true')
         ksp.getPC().setType("lu")
         ksp.getPC().setFactorSolverType("mumps")
         ksp.getPC().setFactorSetUpSolverType()
@@ -56,7 +56,7 @@ class MonolithicDomainDecompositionDriver:
         ksp.setFromOptions()
         ksp.solve(self.L, du1du2)
         for du1du2_sub in du1du2.getNestSubVecs():
-            du1du2_sub.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
+            du1du2_sub.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
         ksp.destroy()
         # Split the block solution in components
         with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(
@@ -78,25 +78,59 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         super().__init__(p1, p2, quadrature_degree)
 
     def setup_coupling(self):
+        # WARNING: Incompatibility with strongly enforced Dirichlet BC!
         super().setup_coupling()
         (p1,p2) = (self.p1,self.p2)
         self.A12 = self.assemble_robin_matrix(p1, p2, self.quadrature_degree)
         self.A21 = self.assemble_robin_matrix(p2, p1, self.quadrature_degree)
         # Add LHS term
         gamma_tag = 44
-        for p in [p1, p2]:
+        for p, p_ext in zip([p1, p2], [p2, p1]):
             subdomain_data = [(gamma_tag, np.asarray(p.gamma_integration_data, dtype=np.int32))]
             # LHS term Robin
             ds = ufl.Measure('ds', domain=p.domain, subdomain_data=subdomain_data)
-            (u, v) = (ufl.TrialFunction(p.v), ufl.TestFunction(p.v))
+            (u, v) = (p.u, ufl.TestFunction(p.v))
             a_ufl  = + u * v * ds(gamma_tag)
-            a_com = fem.form(a_ufl)
-            p.A.assemble(petsc4py.PETSc.Mat.AssemblyType.FLUSH)
+            j_ufl = ufl.derivative(a_ufl, p.u)
+            j_com = fem.form(j_ufl)
+            p.A.assemble(PETSc.Mat.AssemblyType.FLUSH)
             multiphenicsx.fem.petsc.assemble_matrix(
                     p.A,
-                    a_com,
+                    j_com,
                     bcs=p.dirichlet_bcs,
                     restriction=(p.restriction, p.restriction))
+            # RHS term Robin for residual formulation
+            res = p.restriction
+            ext_res = p_ext.restriction
+            in_flux = la.create_petsc_vector(res.index_map, p.v.value_size)
+            ext_flux = la.create_petsc_vector(res.index_map, p.v.value_size)
+
+            # EXT CONTRIBUTION
+            indices = np.array(tuple(ext_res.restricted_to_unrestricted.values())[:ext_res.index_map.size_local],dtype=np.int32)
+            indices = ext_res.dofmap.index_map.local_to_global(indices).astype(np.int32)
+            iset = PETSc.IS().createGeneral(indices, p_ext.domain.comm)
+            ext_res_sol = p_ext.u.x.petsc_vec.getSubVector(iset)
+            A_coupling = self.A12
+            if p_ext == p1:
+                A_coupling = self.A21
+            A_coupling.mult(ext_res_sol, ext_flux)
+            ext_flux.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
+            p_ext.u.x.petsc_vec.restoreSubVector(iset, ext_res_sol)
+
+            # LOC CONTRIBUTION
+            r_ufl = a_ufl
+            r_com = fem.form(r_ufl)
+            multiphenicsx.fem.petsc.assemble_vector(
+                    in_flux,
+                    r_com,
+                    restriction=p.restriction)
+            in_flux.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
+
+            # Add
+            p.L += - in_flux - ext_flux
+            for f in [in_flux, ext_flux]:
+                f.destroy()
+            p.L.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
 
     def assemble_robin_matrix(self, p:Problem, p_ext:Problem, quadrature_degree=2):
         cdim = p.domain.topology.dim

@@ -5,6 +5,10 @@ import yaml
 from mpi4py import MPI
 from helpers import build_moving_problem, interpolate_solution_to_inactive
 from dolfinx import mesh
+from line_profiler import LineProfiler
+
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
 
 def main():
     with open("input.yaml", 'r') as f:
@@ -68,4 +72,12 @@ def main():
             p.writepos(extra_funcs=extra_funs[p])
 
 if __name__=="__main__":
-    main()
+    lp = LineProfiler()
+    lp.add_module(problem)
+    lp.add_function(build_moving_problem)
+    lp.add_function(interpolate_solution_to_inactive)
+    lp.add_module(MonolithicRRDriver)
+    lp_wrapper = lp(main)
+    lp_wrapper()
+    with open(f"monolithic_profiling_{rank}.txt", 'w') as pf:
+        lp.print_stats(stream=pf)

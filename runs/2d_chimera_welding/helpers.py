@@ -10,9 +10,11 @@ import mhs_fenicsx_cpp
 def interpolate_solution_to_inactive(p:Problem, p_ext:Problem):
     ''' TODO: Optimize this '''
     u_ext = fem.Function(p.v)
-    interpolate(p_ext.u,u_ext)
+    inactive_cells = (1-p.active_els_func.x.array).nonzero()[0]
+    interpolate(p_ext.u,u_ext,cells=inactive_cells)
     inactive_nodes = np.where(p.active_nodes_func.x.array==0)[0]
     p.u.x.array[inactive_nodes] = u_ext.x.array[inactive_nodes]
+    p.u.x.scatter_forward()
 
 def get_active_in_external_trees(p_loc:Problem, p_ext:Problem ):
     '''

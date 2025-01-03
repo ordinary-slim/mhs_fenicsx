@@ -15,15 +15,17 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
 def interpolate(sending_func,
-                receiving_func,):
+                receiving_func,
+                cells=None):
     '''
     Interpolate sending_func to receiving_func,
     each comming from separate meshes
     '''
     topology = receiving_func.function_space.mesh.topology
     cmap = topology.index_map(topology.dim)
-    num_cells = cmap.size_local + cmap.num_ghosts
-    cells = np.arange(num_cells,dtype=np.int32)
+    if cells is None:
+        num_cells = cmap.size_local + cmap.num_ghosts
+        cells = np.arange(num_cells,dtype=np.int32)
     nmmid = fem.create_interpolation_data(
                                  receiving_func.function_space,
                                  sending_func.function_space,

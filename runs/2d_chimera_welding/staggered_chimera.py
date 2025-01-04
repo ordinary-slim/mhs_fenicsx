@@ -63,7 +63,7 @@ def main():
             driver.pre_iterate()
             driver.iterate()
             driver.post_iterate(verbose=True)
-            driver.writepos()
+            #driver.writepos()
             if driver.convergence_crit < driver.convergence_threshold:
                 break
         driver.post_loop()
@@ -81,7 +81,7 @@ if __name__=="__main__":
         lp.add_module(StaggeredDNDriver)
         lp_wrapper = lp(main)
         lp_wrapper()
-        with open(f"profiling_{rank}.txt", 'w') as pf:
+        with open(f"staggered_profiling_{rank}.txt", 'w') as pf:
             lp.print_stats(stream=pf)
 
     else:

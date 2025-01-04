@@ -11,7 +11,7 @@ python3 -m pip -v install -e python --config-settings=build-dir="build" --no-bui
 CHECKPOINTS
 ===========
 
-- [ ] Monolithic Chimera
+- [x] Monolithic Chimera
 - [x] Square track case
 - [ ] 3D
 - [ ] 2D AM
@@ -20,7 +20,7 @@ CHECKPOINTS
 - [ ] 2 staggered iterations at most
 - [x] Phase change
 - [ ] Temperature dependent parameters
-- [ ] 5 tests
+- [x] 5 tests
 - [ ] 10 tests
 - [ ] Chimera inside of substepper (difficult)
 - [x] Coupling of Hodge
@@ -44,8 +44,8 @@ TODO
 - [ ] h for Robin's gamma not computed explicitly
 - [ ] Profile 5on5 test
 - [ ] Add shifting of bbox tree at c++ level
-- [ ] Checkout `compute_integration_domain`
-- [ ] (IMPORTANT) Update SUPG with phase change
+- [x] Checkout `compute_integration_domain`
+- [ ] (VERY IMPORTANT) Update SUPG with phase change
 - [ ] (IMPORTANT) Substepper + Dirichlet conditions
 - [ ] Material rework to subdomains
 - [ ] On delete of substepper, set activation to physical (high priority)
@@ -55,7 +55,7 @@ TODO
 - [x] Assemble manually mass matrix
 - [x] Assemble manually stiffness matrix
 - [x] Assemble manually mass boundary
-- [ ] Assemble manually flux boundary
+- [x] Assemble manually flux boundary
 - [x] Same mesh blocked Poisson problem
-- [ ] Different mesh blocked Poisson problem
-- [ ] Interface data as dictionnary
+- [x] Different mesh blocked Poisson problem
+- [x] Interface data as dictionnary

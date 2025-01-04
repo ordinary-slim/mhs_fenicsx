@@ -63,7 +63,7 @@ def main():
             driver.pre_iterate()
             driver.iterate()
             driver.post_iterate(verbose=True)
-            driver.writepos()
+            #driver.writepos()
             if driver.convergence_crit < driver.convergence_threshold:
                 break
         driver.post_loop()

@@ -38,7 +38,7 @@ class Problem:
                                                            self.domain.basix_cell(),
                                                            0,
                                                            shape=(self.dim,)))
-        self.restriction = None
+        self.restriction: multiphenicsx.fem.DofMapRestriction = None
 
         for dim in [self.dim, self.dim-1]:
             self.domain.topology.create_entities(dim)

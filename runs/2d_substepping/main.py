@@ -117,7 +117,7 @@ def run_staggered():
         ps.u.interpolate(pf.u,
                          cells0=np.arange(pf.num_cells),
                          cells1=substeppin_driver.submesh_data["subcell_map"])
-        big_p.writepos()
+        ps.writepos()
 
 def run_semi_monolithic():
     big_mesh = get_mesh()
@@ -182,16 +182,15 @@ if __name__=="__main__":
     parser.add_argument('-ss','--run-sub-sta',action='store_true')
     parser.add_argument('-sms','--run-sub-mon',action='store_true')
     parser.add_argument('-r','--run-ref',action='store_true')
-    parser.add_argument('-t','--run-test',action='store_true')
     args = parser.parse_args()
     lp = LineProfiler()
     lp.add_module(Problem)
     write_gcode()
+    profiling_file = None
     if args.run_sub_sta:
         from mhs_fenicsx.submesh import build_subentity_to_parent_mapping, find_submesh_interface, \
         compute_dg0_interpolation_data
         from mhs_fenicsx.drivers import StaggeredRRDriver, StaggeredDNDriver
-        from mhs_fenicsx.problem.helpers import indices_to_function
         import mhs_fenicsx.geometry
         lp.add_module(MHSStaggeredSubstepper)
         lp.add_module(StaggeredRRDriver)
@@ -199,21 +198,21 @@ if __name__=="__main__":
         lp.add_function(build_subentity_to_parent_mapping)
         lp.add_function(compute_dg0_interpolation_data)
         lp.add_function(find_submesh_interface)
-        lp.add_function(indices_to_function)
         lp_wrapper = lp(run_staggered)
         lp_wrapper()
-        profiling_file = f"profiling_sub_{rank}.txt"
+        profiling_file = f"profiling_ss_{rank}.txt"
     if args.run_sub_mon:
-        run_semi_monolithic()
+        lp.add_module(MHSSemiMonolithicSubstepper)
+        lp_wrapper = lp(run_semi_monolithic)
+        lp_wrapper()
+        profiling_file = f"profiling_sms_{rank}.txt"
     if args.run_ref:
         lp_wrapper = lp(run_reference)
         lp_wrapper()
         profiling_file = f"profiling_ref_{rank}.txt"
-    if args.run_test:
-        lp_wrapper = lp(run_test)
-        lp_wrapper()
-    try:
+    if profiling_file is not None:
         with open(profiling_file, 'w') as pf:
             lp.print_stats(stream=pf)
-    except NameError:
-        pass
+    else:
+        if rank==0:
+            parser.print_help()

@@ -4,6 +4,7 @@ import numpy as np
 from mpi4py import MPI
 import yaml
 from mhs_fenicsx_cpp import cellwise_determine_point_ownership
+from mhs_fenicsx.problem.helpers import assert_pointwise_vals
 
 comm = MPI.COMM_WORLD
 
@@ -22,29 +23,7 @@ points = np.array([
     [+0.005, -0.025, 0.02],
     [+0.005, +0.015, 0.02],
     ],dtype=np.float64)
-target_vals = np.array([
-    [87.69508918580138],
-    [784.1606374650604],
-    [913.5767591386578],
-    ],dtype=np.float64)
-tol = 1e-7
-
-def assert_pointwisediff(problem,points,target_vals):
-    po = cellwise_determine_point_ownership(
-                    problem.domain._cpp_object,
-                    points,
-                    problem.active_els_func.x.array.nonzero()[0],
-                    np.float64(1e-9),
-                    )
-    indices_found = []
-    for p in po.dest_points:
-        for idx,p2compare in enumerate(points):
-            if (p==p2compare).all():
-                indices_found.append(idx)
-
-    vals = problem.u.eval(po.dest_points,po.dest_cells)
-    pointwise_diff = np.abs(target_vals[indices_found]-vals)
-    assert (pointwise_diff < tol).all()
+target_vals = np.array([87.69508918580138, 784.1606374650604, 913.5767591386578],dtype=np.float64)
 
 def run():
     with open("input.yaml", 'r') as f:
@@ -77,7 +56,7 @@ def run():
 
 def test_3d_printing_5on5():
     p = run()
-    assert_pointwisediff(p,points,target_vals)
+    assert_pointwise_vals(p,points,target_vals)
 
 if __name__=="__main__":
     test_3d_printing_5on5()

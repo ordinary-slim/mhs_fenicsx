@@ -3,13 +3,11 @@ from dolfinx import fem, mesh, geometry
 import ufl
 import numpy as np
 from mpi4py import MPI
-from petsc4py import PETSc
-import multiphenicsx.fem.petsc
 import dolfinx.fem.petsc
 import petsc4py.PETSc
-from dolfinx import default_scalar_type
 from abc import ABC, abstractmethod
 import mhs_fenicsx_cpp
+from mhs_fenicsx_cpp import cellwise_determine_point_ownership
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -138,3 +136,17 @@ def indices_to_function(space, indices, dim, name="f", remote=True, f = None):
         f.x.array[:] = 0
     f.x.array[dofs] = 1
     return f
+
+def assert_pointwise_vals(p:Problem, points, ref_vals):
+    '''Test util'''
+    po = cellwise_determine_point_ownership(
+            p.domain._cpp_object,
+            points,
+            p.active_els_func.x.array.nonzero()[0],
+            np.float64(1e-7),
+            )
+    indices_points_found = (po.src_owner == rank).nonzero()[0]
+    rindices_points_found = (po.dest_owners == rank).nonzero()[0]
+
+    vals = p.u.eval(po.dest_points[rindices_points_found], po.dest_cells[rindices_points_found]).reshape(-1)
+    assert np.isclose(ref_vals[indices_points_found], vals).all()

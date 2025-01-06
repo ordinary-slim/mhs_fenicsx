@@ -2,6 +2,7 @@ from dolfinx import fem, mesh
 import numpy as np
 from mpi4py import MPI
 from mhs_fenicsx.problem import Problem
+from mhs_fenicsx.problem.helpers import assert_pointwise_vals
 import yaml
 from mhs_fenicsx.drivers.staggered_drivers import StaggeredDNDriver, StaggeredRRDriver
 from mhs_fenicsx_cpp import cellwise_determine_point_ownership
@@ -93,40 +94,24 @@ def run(dd_type="dn"):
 tol = 1e-7
 points_left = np.array([[0.25,0.5,0.0],[0.5,0.5,0.0],])
 points_right = np.array([[0.5,0.5,0.0],[0.75,0.5,0.0],])
-vals_left_dn = np.array([[1.68532511425681], [1.49462879481564],])
-vals_right_dn = np.array([[1.4946288473], [1.1853250916],])
-vals_left_robin = np.array([[1.6853234504], [1.4946274331],])
-vals_right_robin = np.array([[1.4946278829], [1.1853250921],])
-def assert_pointwisediff_exact(problem,points,target_vals):
-    po = cellwise_determine_point_ownership(
-                    problem.domain._cpp_object,
-                    points,
-                    problem.active_els_func.x.array.nonzero()[0],
-                    np.float64(1e-7),
-                    )
-    indices_found = []
-    for p in po.dest_points:
-        for idx,p2compare in enumerate(points):
-            if (p==p2compare).all():
-                indices_found.append(idx)
-
-    vals = problem.u.eval(po.dest_points,po.dest_cells)
-    pointwise_diff = np.abs(target_vals[indices_found]-vals)
-    assert (pointwise_diff < tol).all()
+vals_left_dn = np.array([1.68532511425681, 1.49462879481564])
+vals_right_dn = np.array([1.4946288473, 1.1853250916])
+vals_left_robin = np.array([1.6853234504, 1.4946274331])
+vals_right_robin = np.array([1.4946278829, 1.1853250921])
 
 def test_poisson_dd_dn():
     driver = run("dn")
     p_right,p_left = (driver.p1,driver.p2)
     assert (driver.iter == 11)
     for problem,points,vals in zip([p_left,p_right],[points_left,points_right],[vals_left_dn,vals_right_dn]):
-        assert_pointwisediff_exact(problem,points,vals)
+        assert_pointwise_vals(problem,points,vals)
 
 def test_poisson_dd_robin():
     driver = run("robin")
     p_right,p_left = (driver.p1,driver.p2)
     assert (driver.iter == 14)
     for problem,points,vals in zip([p_left,p_right],[points_left,points_right],[vals_left_robin,vals_right_robin]):
-        assert_pointwisediff_exact(problem,points,vals)
+        assert_pointwise_vals(problem,points,vals)
 
 if __name__=="__main__":
     test_poisson_dd_dn()

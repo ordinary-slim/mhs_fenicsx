@@ -3,12 +3,10 @@ import numpy as np
 from mpi4py import MPI
 import yaml
 from mhs_fenicsx.problem import Problem
-from mhs_fenicsx_cpp import cellwise_determine_point_ownership
-import multiphenicsx.fem.petsc
 import ufl
-import petsc4py
 from line_profiler import LineProfiler
 from mhs_fenicsx.drivers import MonolithicRRDriver
+from mhs_fenicsx.problem.helpers import assert_pointwise_vals
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -242,7 +240,8 @@ def run(dim, els_side, el_type, writepos=False):
                                  1.1875,
                                  -0.59375]),
             }
-    def assert_pointwise_vals(p:Problem):
+
+    for p in [p_left, p_right]:
         if dim == 2:
             points   = points_2d[p]
             ref_vals = vals_2d[p]
@@ -254,23 +253,7 @@ def run(dim, els_side, el_type, writepos=False):
                 ref_vals = vals_3d_tetra[p]
         else:
             raise Exception
-        po = cellwise_determine_point_ownership(
-                p.domain._cpp_object,
-                points,
-                p.active_els_func.x.array.nonzero()[0],
-                np.float64(1e-7),
-                )
-        indices_points_found = []
-        for p1 in po.dest_points:
-            for idx, p2 in enumerate(points):
-                if np.isclose(p1, p2).all():
-                    indices_points_found.append(idx)
-
-        vals = p.u.eval(po.dest_points, po.dest_cells).reshape(-1)
-        assert np.isclose(ref_vals[indices_points_found], vals).all()
-
-    for p in [p_left, p_right]:
-        assert_pointwise_vals(p)
+        assert_pointwise_vals(p, points, ref_vals)
 
 def test_monolithic_RR_poisson_2d():
     run(dim=2, els_side=16, el_type="quadtri")

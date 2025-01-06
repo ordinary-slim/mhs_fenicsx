@@ -1,3 +1,4 @@
+import numpy as np
 from mhs_fenicsx.problem import Problem
 
 class NewtonRaphson:
@@ -37,7 +38,7 @@ class NewtonRaphson:
                     p.u.x.array[:] = un.x.array[:] + relaxation_coeff*p.du.x.array[:]
                     p.assemble_residual()
                     residual_work_np1 = p.x.dot(p.L)
-            correction_norm = relaxation_coeff*p.du.x.petsc_vec.norm(0)
+            correction_norm = relaxation_coeff*np.sqrt(p.du.x.petsc_vec.dot(p.du.x.petsc_vec))
             solution_norm = p.u.x.petsc_vec.norm(0)
             relative_change = correction_norm / solution_norm
             print(f"NR iter #{nr_iter}, residual_work = {residual_work_np1}, did {ls_iter} line search iterations, step norm = {correction_norm}, relative_change = {relative_change}.")

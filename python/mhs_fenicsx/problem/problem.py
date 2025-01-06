@@ -517,7 +517,7 @@ class Problem:
         self._solve_linear_system()
         self._restrict_solution()
         self.u.x.array[:] += self.du.x.array[:]
-        self.is_grad_computed   = False#dubious line
+        self.is_grad_computed = False#dubious line
     
     def initialize_post(self):
         self.result_folder = f"post_{self.name}"

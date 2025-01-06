@@ -3,7 +3,6 @@ from mhs_fenicsx.problem import Problem
 import numpy as np
 from mpi4py import MPI
 import yaml
-from mhs_fenicsx_cpp import cellwise_determine_point_ownership
 from mhs_fenicsx.problem.helpers import assert_pointwise_vals
 
 comm = MPI.COMM_WORLD

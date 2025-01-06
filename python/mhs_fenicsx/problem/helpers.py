@@ -137,7 +137,7 @@ def indices_to_function(space, indices, dim, name="f", remote=True, f = None):
     f.x.array[dofs] = 1
     return f
 
-def assert_pointwise_vals(p:Problem, points, ref_vals):
+def assert_pointwise_vals(p:Problem, points, ref_vals, rtol=1e-5):
     '''Test util'''
     po = cellwise_determine_point_ownership(
             p.domain._cpp_object,
@@ -149,4 +149,4 @@ def assert_pointwise_vals(p:Problem, points, ref_vals):
     rindices_points_found = (po.dest_owners == rank).nonzero()[0]
 
     vals = p.u.eval(po.dest_points[rindices_points_found], po.dest_cells[rindices_points_found]).reshape(-1)
-    assert np.isclose(ref_vals[indices_points_found], vals).all()
+    assert np.isclose(ref_vals[indices_points_found], vals, rtol=rtol).all()

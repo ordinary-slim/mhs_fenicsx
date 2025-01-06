@@ -6,31 +6,26 @@ from mhs_fenicsx.drivers import MHSStaggeredSubstepper, MHSSemiMonolithicSubstep
 import yaml
 import numpy as np
 import argparse
+from mhs_fenicsx.problem.helpers import assert_pointwise_vals
+from mhs_fenicsx.drivers import StaggeredRRDriver, StaggeredDNDriver
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-with open("input.yaml", 'r') as f:
-    params = yaml.safe_load(f)
-radius = params["heat_source"]["radius"]
-speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
-els_per_radius = params["els_per_radius"]
-T_env = np.float64(params["environment_temperature"])
+def get_initial_condition(params):
+    T_env = np.float64(params["environment_temperature"])
+    if params["initial_condition"]:
+        initial_condition_fun = lambda x : abs(300*np.cos(4*(x[0]-0.5)*(x[1]-0.5)))
+    else:
+        initial_condition_fun = lambda x : T_env*np.ones_like(x[0])
+    return initial_condition_fun
 
-max_nr_iters = np.int32(params["max_nr_iters"])
-max_ls_iters = np.int32(params["max_ls_iters"])
-
-case_name = "big"
-if params["initial_condition"]:
-    initial_condition_fun = lambda x : abs(300*np.cos(4*(x[0]-0.5)*(x[1]-0.5)))
-else:
-    initial_condition_fun = lambda x : T_env*np.ones_like(x[0])
-
-def get_dt(adim_dt):
+def get_dt(adim_dt, radius, speed):
     return adim_dt * (radius / speed)
 
-def write_gcode():
+def write_gcode(params):
     (Lx, Ly) = (params["domain_width"], params["domain_height"])
+    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
     hlenx = + 3.0 * Lx / 8.0
     hleny = + 3.0 * Ly / 8.0
     gcode_lines = []
@@ -51,13 +46,14 @@ def mesh_rectangle(box,el_density):
            #mesh.CellType.quadrilateral,
            )
 
-def get_mesh():
+def get_mesh(params, els_per_radius, radius):
     el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)
     (Lx, Ly) = (params["domain_width"], params["domain_height"])
     return mesh_rectangle([-Lx/2.0, -Ly/2.0, +Lx/2.0, +Ly/2.0], el_density)
 
-def run_staggered():
-    driver_type = params["driver_type"]
+def run_staggered(params, driver_type, els_per_radius, writepos=True):
+    radius = params["heat_source"]["radius"]
+    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
     if   driver_type=="robin":
         driver_constructor = StaggeredRRDriver
         initial_relaxation_factors=[1.0,1.0]
@@ -66,17 +62,18 @@ def run_staggered():
         initial_relaxation_factors=[0.5,1]
     else:
         raise ValueError("Undefined staggered driver type.")
-    big_mesh = get_mesh()
+    big_mesh = get_mesh(params, els_per_radius, radius)
 
     macro_params = params.copy()
-    macro_params["dt"] = get_dt(params["macro_adim_dt"])
+    macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    big_p = Problem(big_mesh, macro_params, name=f"{case_name}_ss_{driver_type}")
+    big_p = Problem(big_mesh, macro_params, name=f"big_ss_{driver_type}")
+    initial_condition_fun = get_initial_condition(params)
     big_p.set_initial_condition(  initial_condition_fun )
 
     max_timesteps = params["max_timesteps"]
     for _ in range(max_timesteps):
-        substeppin_driver = MHSStaggeredSubstepper(big_p,writepos=params["writepos"])
+        substeppin_driver = MHSStaggeredSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos))
 
         substeppin_driver.define_subproblem() # generates driver.fast_problem
         (ps,pf) = (substeppin_driver.ps,substeppin_driver.pf)
@@ -98,7 +95,7 @@ def run_staggered():
         substeppin_driver.pre_loop()
         if params["predictor_step"]:
             substeppin_driver.predictor_step()
-            if substeppin_driver.do_writepos:
+            if (substeppin_driver.do_writepos and writepos):
                 substeppin_driver.writepos("predictor")
         substeppin_driver.subtract_fast()
         staggered_driver.prepare_subproblems()
@@ -108,7 +105,8 @@ def run_staggered():
             substeppin_driver.iterate()
             substeppin_driver.post_iterate()
             staggered_driver.post_iterate(verbose=True)
-            substeppin_driver.writepos(case="macro")
+            if writepos:
+                substeppin_driver.writepos(case="macro")
 
             if staggered_driver.convergence_crit < staggered_driver.convergence_threshold:
                 break
@@ -117,27 +115,32 @@ def run_staggered():
         ps.u.interpolate(pf.u,
                          cells0=np.arange(pf.num_cells),
                          cells1=substeppin_driver.submesh_data["subcell_map"])
-        ps.writepos()
+        if writepos:
+            ps.writepos()
+    return big_p
 
-def run_semi_monolithic():
-    big_mesh = get_mesh()
+def run_semi_monolithic(params, els_per_radius, writepos=True):
+    radius = params["heat_source"]["radius"]
+    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    big_mesh = get_mesh(params, els_per_radius, radius)
 
     macro_params = params.copy()
-    macro_params["dt"] = get_dt(params["macro_adim_dt"])
+    macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    big_p = Problem(big_mesh, macro_params, name=f"{case_name}_sms")
+    big_p = Problem(big_mesh, macro_params, name=f"big_sms")
+    initial_condition_fun = get_initial_condition(params)
     big_p.set_initial_condition(  initial_condition_fun )
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSSemiMonolithicSubstepper(big_p,writepos=params["writepos"])
+    substeppin_driver = MHSSemiMonolithicSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos))
     for _ in range(max_timesteps):
         substeppin_driver.define_subproblem()
         (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
         substeppin_driver.pre_loop()
         if params["predictor_step"]:
             substeppin_driver.predictor_step()
-            if substeppin_driver.do_writepos:
+            if (substeppin_driver.do_writepos and writepos):
                 substeppin_driver.writepos("predictor")
         substeppin_driver.subtract_fast()
         for _ in range(params["max_staggered_iters"]):
@@ -146,18 +149,23 @@ def run_semi_monolithic():
             substeppin_driver.monolithic_step()
             substeppin_driver.post_iterate()
         substeppin_driver.post_loop()
-        for p in [ps,pf]:
-            p.writepos(extra_funcs=[p.u_prev])
+        if writepos:
+            for p in [ps,pf]:
+                p.writepos(extra_funcs=[p.u_prev])
+    return big_p
 
-def run_reference():
-    big_mesh = get_mesh()
+def run_reference(params, els_per_radius):
+    radius = params["heat_source"]["radius"]
+    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    big_mesh = get_mesh(params, els_per_radius, radius)
 
     macro_params = params.copy()
-    macro_params["dt"] = get_dt(params["micro_adim_dt"])
-    final_t = get_dt(params["macro_adim_dt"])*params["max_timesteps"]
+    macro_params["dt"] = get_dt(params["micro_adim_dt"], radius, speed)
+    final_t = macro_params["dt"]*params["max_timesteps"]
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    big_p = Problem(big_mesh, macro_params, name=case_name)
+    big_p = Problem(big_mesh, macro_params, name="big")
 
+    initial_condition_fun = get_initial_condition(params)
     big_p.set_initial_condition(  initial_condition_fun )
 
     big_p.set_forms_domain()
@@ -177,20 +185,59 @@ def run_reference():
         big_p.post_iterate()
         big_p.writepos()
 
+def test_staggered_robin_substepper():
+    with open("test_input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    p = run_staggered(params, "robin", 2, writepos=False)
+    points = np.array([
+        [-0.250, -0.250, 0.0],
+        [-0.250, -0.375, 0.0],
+        [+0.250, +0.000, 0.0],
+        [+0.375, -0.125, 0.0],
+        ])
+    vals = np.array([
+        224.21221,
+        757.62624,
+        24.993306,
+        1451.8855,
+        ])
+    assert_pointwise_vals(p,points,vals,1e-3)
+
+def test_hodge_semi_monolothic_substepper():
+    with open("test_input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    p = run_semi_monolithic(params, 2, writepos=False)
+    points = np.array([
+        [-0.250, -0.250, 0.0],
+        [-0.250, -0.375, 0.0],
+        [+0.250, +0.000, 0.0],
+        [+0.375, -0.125, 0.0],
+        ])
+    vals = np.array([
+        225.76946,
+        757.97848,
+        25.23716,
+        1452.3217,
+        ])
+    assert_pointwise_vals(p,points,vals)
+
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-ss','--run-sub-sta',action='store_true')
     parser.add_argument('-sms','--run-sub-mon',action='store_true')
     parser.add_argument('-r','--run-ref',action='store_true')
+    parser.add_argument('-t','--run-test',action='store_true')
     args = parser.parse_args()
     lp = LineProfiler()
     lp.add_module(Problem)
-    write_gcode()
+    with open("input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    write_gcode(params)
+    els_per_radius = params["els_per_radius"]
     profiling_file = None
     if args.run_sub_sta:
         from mhs_fenicsx.submesh import build_subentity_to_parent_mapping, find_submesh_interface, \
         compute_dg0_interpolation_data
-        from mhs_fenicsx.drivers import StaggeredRRDriver, StaggeredDNDriver
         import mhs_fenicsx.geometry
         lp.add_module(MHSStaggeredSubstepper)
         lp.add_module(StaggeredRRDriver)
@@ -198,21 +245,22 @@ if __name__=="__main__":
         lp.add_function(build_subentity_to_parent_mapping)
         lp.add_function(compute_dg0_interpolation_data)
         lp.add_function(find_submesh_interface)
+        driver_type = params["driver_type"]
         lp_wrapper = lp(run_staggered)
-        lp_wrapper()
+        lp_wrapper(params, driver_type, els_per_radius)
         profiling_file = f"profiling_ss_{rank}.txt"
     if args.run_sub_mon:
         lp.add_module(MHSSemiMonolithicSubstepper)
         lp_wrapper = lp(run_semi_monolithic)
-        lp_wrapper()
+        lp_wrapper(params, els_per_radius)
         profiling_file = f"profiling_sms_{rank}.txt"
     if args.run_ref:
         lp_wrapper = lp(run_reference)
-        lp_wrapper()
+        lp_wrapper(params, els_per_radius)
         profiling_file = f"profiling_ref_{rank}.txt"
+    if args.run_test:
+        test_staggered_robin_substepper()
+        test_hodge_semi_monolothic_substepper()
     if profiling_file is not None:
         with open(profiling_file, 'w') as pf:
             lp.print_stats(stream=pf)
-    else:
-        if rank==0:
-            parser.print_help()

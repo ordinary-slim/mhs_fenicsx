@@ -188,6 +188,7 @@ def run_reference(params, els_per_radius):
 def test_staggered_robin_substepper():
     with open("test_input.yaml", 'r') as f:
         params = yaml.safe_load(f)
+    write_gcode(params)
     p = run_staggered(params, "robin", 2, writepos=False)
     points = np.array([
         [-0.250, -0.250, 0.0],

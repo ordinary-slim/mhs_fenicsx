@@ -2,13 +2,14 @@ from line_profiler import LineProfiler
 from mhs_fenicsx.problem.helpers import get_mask, indices_to_function
 from mpi4py import MPI
 from dolfinx import mesh, fem, cpp, io
-from mhs_fenicsx.problem import Problem, ufl
+import ufl
+from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.submesh import build_subentity_to_parent_mapping, find_submesh_interface, \
 compute_dg0_interpolation_data
 from mhs_fenicsx_cpp import mesh_collision
 from mhs_fenicsx.drivers.staggered_drivers import StaggeredRRDriver, StaggeredDNDriver, interpolate_dg0_cells_to_cells
 from mhs_fenicsx.drivers.newton_raphson import NewtonRaphson
-import mhs_fenicsx.geometry
+from mhs_fenicsx.geometry import OBB
 import numpy as np
 import shutil
 import typing
@@ -72,7 +73,7 @@ class MHSSubstepper(ABC):
         direction = track_t0.get_direction()
         p0 -= direction*back_pad
         p1 += direction*front_pad
-        obb = mhs_fenicsx.geometry.OBB(p0,p1,width=back_pad,height=side_pad,depth=side_pad,dim=cdim,
+        obb = OBB(p0,p1,width=back_pad,height=side_pad,depth=side_pad,dim=cdim,
                                        shrink=False)
         obb_mesh = obb.get_dolfinx_mesh()
         #subproblem_els = mhs_fenicsx.geometry.mesh_collision(ps.domain,obb_mesh,bb_tree_mesh_big=ps.bb_tree)
@@ -439,6 +440,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
             self.writepos(case="micro")
 
     def define_subproblem(self):
+        ''' Build subproblem in submesh '''
         ps = self.ps
         cdim = ps.domain.topology.dim
         subproblem_els = self.find_subproblem_els()

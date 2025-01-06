@@ -413,14 +413,15 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         if prepare_subproblems:
             self.prepare_subproblems()
 
-    def prepare_subproblems(self):
+    def prepare_subproblems(self, finalize=True):
         for p in [self.p1,self.p2]:
             # Forms and allocation
             p.set_forms_domain()
             p.set_forms_boundary()
             self.set_robin(p)
-            p.compile_forms() # This shouldnt be done if substepping
-            p.pre_assemble() # This shouldnt be done if substepping
+            if finalize:# This shouldnt be done if substepping
+                p.compile_forms()
+                p.pre_assemble()
 
     def post_iterate(self, verbose=False):
         (p2, p1) = (self.p2, self.p1)

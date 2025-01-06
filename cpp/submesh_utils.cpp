@@ -82,11 +82,11 @@ void templated_declare_build_subentity_to_parent_mapping(nb::module_ &m) {
          nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> subcell_map,
          nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> subvertex_map)
       {
-        return build_subentity_to_parent_mapping<T>(edim,
-                                                    pmesh,
-                                                    cmesh,
-                                                    std::span(subcell_map.data(),subcell_map.size()),
-                                                    std::span(subvertex_map.data(),subvertex_map.size()));
+        std::vector<std::int32_t> mapping = build_subentity_to_parent_mapping<T>(edim,
+            pmesh, cmesh, std::span(subcell_map.data(),subcell_map.size()),
+            std::span(subvertex_map.data(),subvertex_map.size()));
+        return nb::ndarray<const std::int32_t, nb::numpy>(mapping.data(),
+                                                  {mapping.size()}).cast();
       }
       );
 }

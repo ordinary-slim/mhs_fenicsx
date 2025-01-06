@@ -1,9 +1,9 @@
 from mhs_fenicsx import problem
 from mhs_fenicsx.drivers.monolithic_drivers import MonolithicRRDriver
+from mhs_fenicsx.chimera import build_moving_problem, interpolate_solution_to_inactive
 import numpy as np
 import yaml
 from mpi4py import MPI
-from helpers import build_moving_problem, interpolate_solution_to_inactive
 from dolfinx import mesh
 from line_profiler import LineProfiler
 

@@ -1,9 +1,9 @@
 from mhs_fenicsx import problem
+from mhs_fenicsx.chimera import build_moving_problem, interpolate_solution_to_inactive
 import numpy as np
 from mpi4py import MPI
 from dolfinx import mesh
 import yaml
-from helpers import interpolate_solution_to_inactive, build_moving_problem
 from line_profiler import LineProfiler
 from mhs_fenicsx.drivers.staggered_drivers import StaggeredDNDriver, StaggeredRRDriver
 

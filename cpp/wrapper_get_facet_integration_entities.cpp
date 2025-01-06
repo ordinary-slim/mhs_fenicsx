@@ -3,7 +3,6 @@
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/tuple.h>
 #include <array.h>
-#include <nanobind/stl/optional.h>
 
 namespace nb = nanobind;
 template <std::floating_point T>

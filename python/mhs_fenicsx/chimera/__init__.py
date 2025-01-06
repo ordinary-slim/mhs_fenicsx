@@ -5,7 +5,6 @@ from mhs_fenicsx.problem import Problem, HeatSource
 from mhs_fenicsx.problem.helpers import interpolate
 from mhs_fenicsx.geometry import mesh_containment
 from dolfinx import fem
-import mhs_fenicsx_cpp
 
 def interpolate_solution_to_inactive(p:Problem, p_ext:Problem):
     ''' TODO: Optimize this '''
@@ -15,24 +14,6 @@ def interpolate_solution_to_inactive(p:Problem, p_ext:Problem):
     inactive_nodes = np.where(p.active_nodes_func.x.array==0)[0]
     p.u.x.array[inactive_nodes] = u_ext.x.array[inactive_nodes]
     p.u.x.scatter_forward()
-
-def get_active_in_external_trees(p_loc:Problem, p_ext:Problem ):
-    '''
-    Return nodal function with nodes active in p_ext
-    '''
-    # Get function on p_ext
-    loc_active_dofs = fem.Function( p_loc.v )
-    #inodes = mhs_fenicsx_cpp.get_active_dofs_external(loc_active_dofs._cpp_object,
-                                                      #p_ext.active_els_func._cpp_object,
-                                                      #p_loc.bb_tree_nodes._cpp_object,
-                                                      #p_loc.domain._cpp_object,
-                                                      #p_ext.bb_tree._cpp_object,
-                                                      #p_ext.domain._cpp_object,)
-    inodes = mesh_containment(p_loc.bb_tree_nodes,p_loc.domain,
-                              p_ext.bb_tree,p_ext.domain,)
-    loc_active_dofs.x.array[fem.locate_dofs_topological(p_loc.v, 0, inodes)] = 1.0
-    loc_active_dofs.x.scatter_forward()
-    return loc_active_dofs
 
 def build_moving_problem(p_fixed:Problem,els_per_radius=2):
     moving_domain = mesh_around_hs(p_fixed.source,p_fixed.domain.topology.dim,els_per_radius)

@@ -59,3 +59,4 @@ TODO
 - [x] Same mesh blocked Poisson problem
 - [x] Different mesh blocked Poisson problem
 - [x] Interface data as dictionnary
+- [ ] Remove submesh support in favor of same mesh approach

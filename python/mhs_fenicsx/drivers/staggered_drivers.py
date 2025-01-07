@@ -3,7 +3,7 @@ from mhs_fenicsx.problem.helpers import indices_to_function
 import ufl
 import numpy as np
 from mpi4py import MPI
-from mhs_fenicsx.problem import Problem, GammaL2Dotter
+from mhs_fenicsx.problem import Problem, GammaL2Dotter, propagate_dg0_at_facets_same_mesh
 from mhs_fenicsx_cpp import interpolate_dg0_at_facets, cellwise_determine_point_ownership
 from line_profiler import LineProfiler
 from petsc4py import PETSc
@@ -14,7 +14,7 @@ rank = comm.Get_rank()
 
 class StaggeredDomainDecompositionDriver:
     def __init__(self,sub_problem_1:Problem,sub_problem_2:Problem,
-                 max_staggered_iters=40,submesh_data={},
+                 max_staggered_iters=40,
                  initial_relaxation_factors=[1.0,1.0]):
         (p1,p2) = (sub_problem_1,sub_problem_2)
         self.p1 = p1
@@ -24,23 +24,14 @@ class StaggeredDomainDecompositionDriver:
         self.convergence_threshold = 1e-6
         self.writers = dict()
         self.iter = -1
-        self.is_chimera = not(bool(submesh_data)) # Different meshes
+        self.is_chimera = not(p1.domain == p2.domain) # Different meshes
         self.active_gamma_cells = dict()
         if self.is_chimera:
             self.midpoints_facets = dict()
             self.iid_border = dict()
         else:
-            self.submesh_cells = dict()
-            if submesh_data["parent"]==self.p1:
-                parent_p = self.p1
-                child_p = self.p2
-            else:
-                parent_p = self.p2
-                child_p = self.p1
-            self.active_gamma_cells[parent_p] = submesh_data["pinterface_cells"]
-            self.active_gamma_cells[child_p] = submesh_data["cinterface_cells"]
-            self.submesh_cells[child_p] = np.arange(child_p.num_cells)
-            self.submesh_cells[parent_p] = submesh_data["subcell_map"]
+            for p, p_ext in [(p1, p2), (p2, p1)]:
+                self.active_gamma_cells[p] = p.gamma_integration_data[p_ext][::2]
         # Relaxation
         self.relaxation_coeff = {p1:fem.Constant(p1.domain, 1.0),p2:fem.Constant(p2.domain, 1.0)}
         for relaxation,p in zip(initial_relaxation_factors,[p1,p2]):
@@ -105,10 +96,10 @@ class StaggeredDomainDecompositionDriver:
         self.gamma_cells = dict()
         self.iid = dict()
         for p,p_ext in zip([p1,p2],[p2,p1]):
-            p.find_gamma(p.get_active_in_external( p_ext ))
+            p.find_gamma(p_ext)
             # Interpolation data: TODO: Cleanup
             self.gamma_cells[p] = mesh.compute_incident_entities(p.domain.topology,
-                                                                np.hstack((p.gamma_facets.find(1),p.gamma_facets.find(2))),
+                                                                np.hstack((p.gamma_facets[p_ext].find(1),p.gamma_facets[p_ext].find(2))),
                                                                 p.dim-1,
                                                                 p.dim)
             self.iid[p_ext] = dict()
@@ -140,8 +131,8 @@ class StaggeredDomainDecompositionDriver:
         if self.is_chimera:
             self.set_interface()
         self.gamma_dofs = dict()
-        for p in [p1,p2]:
-            self.gamma_dofs[p] = fem.locate_dofs_topological(p.v,0,p.gamma_nodes.x.array.nonzero()[0],True)
+        for p, p_ext in [(p1,p2),(p2,p1)]:
+            self.gamma_dofs[p] = fem.locate_dofs_topological(p.v,0,p.gamma_nodes[p_ext].x.array.nonzero()[0],True)
         # Ext bc
         if set_bc is not None:
             #TODO: Fix this, bug prone!
@@ -152,14 +143,12 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
                  p_dirichlet:Problem,
                  p_neumann:Problem,
                  max_staggered_iters=40,
-                 submesh_data={},
                  initial_relaxation_factors=[1.0,1.0]):
         initial_relaxation_factors[0] = 0.5 # Force relaxation of Dirichlet problem (Aitken)
         StaggeredDomainDecompositionDriver.__init__(self,
                                                     p_dirichlet,
                                                     p_neumann,
                                                     max_staggered_iters,
-                                                    submesh_data,
                                                     initial_relaxation_factors)
         self.p_dirichlet = p_dirichlet
         self.p_neumann = p_neumann
@@ -182,7 +171,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         StaggeredDomainDecompositionDriver.pre_loop(self,set_bc=set_bc)
         (pd,pn) = (self.p_dirichlet,self.p_neumann)
         if self.is_chimera:
-            midpoints_neumann_facets = mesh.compute_midpoints(pn.domain,pn.domain.topology.dim-1,pn.gamma_facets.find(1))
+            midpoints_neumann_facets = mesh.compute_midpoints(pn.domain,pn.domain.topology.dim-1,pn.gamma_facets[pd].find(1))
             self.iid_d2n_border = cellwise_determine_point_ownership(
                                         pd.domain._cpp_object,
                                         midpoints_neumann_facets,
@@ -209,8 +198,8 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         self.dirichlet_prev_res = fem.Function(pd.v,name="previous residual")
         self.dirichlet_res_diff = fem.Function(pd.v,name="residual difference")
 
-        self.l2_dot_neumann = GammaL2Dotter(pn)
-        self.l2_dot_dirichlet = GammaL2Dotter(pd)
+        self.l2_dot_neumann = GammaL2Dotter(pn, pd)
+        self.l2_dot_dirichlet = GammaL2Dotter(pd, pn)
 
         # Forms and allocation
         if prepare_subproblems:
@@ -244,7 +233,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
     def set_dirichlet_interface(self,update=True):
         (pd,pn) = (self.p_dirichlet,self.p_neumann)
         # Get Gamma DOFS right
-        gamma_dofs = fem.locate_dofs_topological(pd.v, pd.dim-1, pd.gamma_facets.find(1))
+        gamma_dofs = fem.locate_dofs_topological(pd.v, pd.dim-1, pd.gamma_facets[pn].find(1))
         # Set Gamma dirichlet
         self.dirichlet_tcon = pd.add_dirichlet_bc(self.ext_sol[pd],bdofs=gamma_dofs, reset=False)
         if update:
@@ -264,7 +253,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
                                                      cells=self.gamma_cells[pd],
                                                      interpolation_data=self.iid[pn][pd])
         else:
-            self.ext_sol[pd].interpolate(pn.u,cells0=self.submesh_cells[pn],cells1=self.submesh_cells[pd])
+            self.ext_sol[pd].interpolate(pn.u,cells0=pn.active_els_func.x.array.nonzero()[0],cells1=pd.active_els_func.x.array.nonzero()[0])
         self.ext_sol[pd].x.scatter_forward()
 
     def update_relaxation_factor(self):
@@ -294,11 +283,11 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         self.dirichlet_tcon.g.x.scatter_forward()
     
     def set_neumann_interface(self):
-        p = self.p_neumann
+        (p, p_ext) = (self.p_neumann, self.p_dirichlet)
         self.update_neumann_interface()
         # Custom measure
         dS = ufl.Measure('ds', domain=p.domain, subdomain_data=[
-            (8,p.gamma_integration_data)])
+            (8,p.gamma_integration_data[p_ext])])
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
         neumann_con = +ufl.inner(n,self.net_ext_flux[p])
@@ -312,14 +301,14 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
             interpolate_dg0_at_facets([p_ext.grad_u._cpp_object,p_ext.k._cpp_object],
                                       [self.ext_flux[p]._cpp_object,self.ext_conductivity[p]._cpp_object],
                                       p.active_els_func._cpp_object,
-                                      p.gamma_facets._cpp_object,
+                                      p.gamma_facets[p_ext]._cpp_object,
                                       self.active_gamma_cells[p],
                                       self.iid_d2n_border,
-                                      p.gamma_facets_index_map,
-                                      p.gamma_imap_to_global_imap)
+                                      p.gamma_facets_index_map[p_ext],
+                                      p.gamma_imap_to_global_imap[p_ext])
         else:
-            interpolate_dg0_cells_to_cells(self.ext_flux[p],p_ext.grad_u,self.active_gamma_cells[p_ext],self.active_gamma_cells[p])
-            interpolate_dg0_cells_to_cells(self.ext_conductivity[p],p_ext.k,self.active_gamma_cells[p_ext],self.active_gamma_cells[p])
+            propagate_dg0_at_facets_same_mesh(p_ext, p_ext.grad_u, p, self.ext_flux[p])
+            propagate_dg0_at_facets_same_mesh(p_ext, p_ext.k, p, self.ext_conductivity[p])
 
         # TODO: Pass this to c++
         dim = self.ext_flux[p].function_space.value_size
@@ -351,13 +340,11 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
                  p1:Problem,
                  p2:Problem,
                  max_staggered_iters=40,
-                 submesh_data={},
                  initial_relaxation_factors=[1.0,1.0]):
         StaggeredDomainDecompositionDriver.__init__(self,
                                                     p1,
                                                     p2,
                                                     max_staggered_iters,
-                                                    submesh_data,
                                                     initial_relaxation_factors)
         self.dirichlet_tcon = None
         # Dirichlet coeffs
@@ -369,7 +356,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         if not(self.writers):
             self.initialize_post()
         for p in [p1,p2]:
-            extra_funcs[p] = [self.ext_sol[p], self.ext_flux[p]] + extra_funcs[p]
+            extra_funcs[p] = [p.grad_u, self.ext_sol[p], self.ext_flux[p]] + extra_funcs[p]
         StaggeredDomainDecompositionDriver.write_results(self,extra_funcs_p1=extra_funcs[p1],extra_funcs_p2=extra_funcs[p2])
 
     def pre_iterate(self):
@@ -391,7 +378,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         for p,p_ext in zip([p1,p2],[p2,p1]):
             if self.is_chimera: # If different meshes, build interp data
                 self.iid_border[p_ext] = dict()
-                self.midpoints_facets[p] = mesh.compute_midpoints(p.domain,p.domain.topology.dim-1,p.gamma_facets.find(1))
+                self.midpoints_facets[p] = mesh.compute_midpoints(p.domain,p.domain.topology.dim-1,p.gamma_facets[p_ext].find(1))
 
                 self.iid_border[p_ext][p] = cellwise_determine_point_ownership(
                                             p_ext.domain._cpp_object,
@@ -409,7 +396,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
                 self.prev_ext_sol[p] = fem.Function(p.v,name="prev_ext_sol")
 
             self.gamma_residual[p] = fem.Function(p.v,name="residual")
-            self.l2_dot[p] = GammaL2Dotter(p)
+            self.l2_dot[p] = GammaL2Dotter(p, p_ext)
         if prepare_subproblems:
             self.prepare_subproblems()
 
@@ -434,10 +421,14 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
                 print(f"Staggered iteration RR #{self.iter}, relative norm of difference: {self.convergence_crit}")
 
     def set_robin(self,p):
+        if p==self.p1:
+            p_ext=self.p2
+        else:
+            p_ext=self.p1
         self.update_robin(p)
         # Custom measure
         dS = ufl.Measure('ds', domain=p.domain, subdomain_data=[
-            (8,p.gamma_integration_data)])
+            (8,p.gamma_integration_data[p_ext])])
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
         (u, v) = (p.u,ufl.TestFunction(p.v))
@@ -455,24 +446,25 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
 
         if self.is_chimera:
             # Update flux
-            interpolate_dg0_at_facets([p_ext.grad_u._cpp_object,p_ext.k._cpp_object],
-                                      [self.ext_flux[p]._cpp_object,self.ext_conductivity[p]._cpp_object],
+            interpolate_dg0_at_facets([p_ext.grad_u._cpp_object,
+                                       p_ext.k._cpp_object],
+                                      [self.ext_flux[p]._cpp_object,
+                                       self.ext_conductivity[p]._cpp_object],
                                       p.active_els_func._cpp_object,
-                                      p.gamma_facets._cpp_object,
+                                      p.gamma_facets[p_ext]._cpp_object,
                                       self.active_gamma_cells[p],
                                       self.iid_border[p_ext][p],
-                                      p.gamma_facets_index_map,
-                                      p.gamma_imap_to_global_imap)
+                                      p.gamma_facets_index_map[p_ext],
+                                      p.gamma_imap_to_global_imap[p_ext])
             # Update ext solution
             self.ext_sol[p].interpolate_nonmatching(p_ext.u,
                                                       cells=self.gamma_cells[p],
                                                       interpolation_data=self.iid[p_ext][p])
             self.ext_sol[p].x.scatter_forward()
         else:
-            interpolate_dg0_cells_to_cells(self.ext_flux[p],p_ext.grad_u,self.active_gamma_cells[p_ext],self.active_gamma_cells[p])
-            interpolate_dg0_cells_to_cells(self.ext_conductivity[p],p_ext.k,self.active_gamma_cells[p_ext],self.active_gamma_cells[p])
-            self.ext_sol[p].interpolate(p_ext.u,cells0=self.submesh_cells[p_ext],cells1=self.submesh_cells[p])
-            self.ext_sol[p].x.scatter_forward()
+            propagate_dg0_at_facets_same_mesh(p_ext, p_ext.grad_u, p, self.ext_flux[p])
+            propagate_dg0_at_facets_same_mesh(p_ext, p_ext.k, p, self.ext_conductivity[p])
+            self.ext_sol[p] = p_ext.u
 
         # Compute flux
         dim = self.ext_flux[p].function_space.value_size
@@ -500,9 +492,3 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         self.update_robin(p2)
         p2.assemble()
         p2.solve()
-
-def interpolate_dg0_cells_to_cells(fr,fs,scells,rcells):
-    block_size = fr.function_space.value_size
-    for rcell,scell in zip(rcells,scells):
-        fr.x.array[rcell*block_size:rcell*block_size+block_size] = fs.x.array[scell*block_size:scell*block_size+block_size]
-    fr.x.scatter_forward()

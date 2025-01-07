@@ -20,8 +20,8 @@ class MonolithicDomainDecompositionDriver:
         ''' Find interface '''
         (p1,p2) = (self.p1,self.p2)
         self.gamma_cells = {
-                    p1 : p1.gamma_integration_data[::2],
-                    p2 : p2.gamma_integration_data[::2],
+                    p1 : p1.gamma_integration_data[p2][::2],
+                    p2 : p2.gamma_integration_data[p1][::2],
                     }
         self.gamma_qpoints_po = {
                     p1 : { p2 : None },
@@ -86,7 +86,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         # Add LHS term
         gamma_tag = 44
         for p, p_ext in zip([p1, p2], [p2, p1]):
-            subdomain_data = [(gamma_tag, np.asarray(p.gamma_integration_data, dtype=np.int32))]
+            subdomain_data = [(gamma_tag, np.asarray(p.gamma_integration_data[p_ext], dtype=np.int32))]
             # LHS term Robin
             ds = ufl.Measure('ds', domain=p.domain, subdomain_data=subdomain_data)
             (u, v) = (p.u, ufl.TestFunction(p.v))
@@ -147,13 +147,13 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
             quadrature_points_cell[ifacet*num_gps_facet : ifacet*num_gps_facet + num_gps_facet, :cdim] = map_facet_points(Qe._points, ifacet, cell_type)
 
         # Manually tabulate
-        num_local_gamma_cells = p.gamma_integration_data.size // 2
+        num_local_gamma_cells = p.gamma_integration_data[p_ext].size // 2
         gamma_qpoints = np.zeros((num_local_gamma_cells * \
                 num_gps_facet, 3), dtype=np.float64)
         pgeo = p.domain.geometry
         for idx in range(num_local_gamma_cells):
-            icell   = p.gamma_integration_data[2*idx]
-            lifacet = p.gamma_integration_data[2*idx+1]
+            icell   = p.gamma_integration_data[p_ext][2*idx]
+            lifacet = p.gamma_integration_data[p_ext][2*idx+1]
             ref_points = quadrature_points_cell[lifacet*num_gps_facet:lifacet*num_gps_facet+num_gps_facet, :]
             # Push forward
             gamma_qpoints[idx*num_gps_facet:\
@@ -172,7 +172,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                         scatter_cell_integration_data_po(self.gamma_qpoints_po[p][p_ext],
                                                           p_ext.v._cpp_object,
                                                           p_ext.restriction)
-        self.midpoints_gamma[p] = mesh.compute_midpoints(p.domain,p.domain.topology.dim-1,p.gamma_facets.find(1))
+        self.midpoints_gamma[p] = mesh.compute_midpoints(p.domain,p.domain.topology.dim-1,p.gamma_facets[p_ext].find(1))
         self.gamma_iid[p][p_ext] = cellwise_determine_point_ownership(
                                             p_ext.domain._cpp_object,
                                             self.midpoints_gamma[p],
@@ -182,11 +182,11 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         interpolate_dg0_at_facets([p_ext.k._cpp_object],
                                   [self.ext_conductivity[p]._cpp_object],
                                   p.active_els_func._cpp_object,
-                                  p.gamma_facets._cpp_object,
+                                  p.gamma_facets[p_ext]._cpp_object,
                                   self.gamma_cells[p],
                                   self.gamma_iid[p][p_ext],
-                                  p.gamma_facets_index_map,
-                                  p.gamma_imap_to_global_imap)
+                                  p.gamma_facets_index_map[p_ext],
+                                  p.gamma_imap_to_global_imap[p_ext])
 
         p.domain.topology.create_entity_permutations()
         A = create_robin_robin_monolithic(self.ext_conductivity[p]._cpp_object,
@@ -197,7 +197,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                           p.restriction,
                                           p_ext.v._cpp_object,
                                           p_ext.restriction,
-                                          p.gamma_integration_data,
+                                          p.gamma_integration_data[p_ext],
                                           self.gamma_qpoints_po[p][p_ext],
                                           self.gamma_renumbered_cells_ext[p][p_ext],
                                           self.gamma_dofs_cells_ext[p][p_ext],

@@ -47,7 +47,7 @@ def main():
         for p in [p_fixed, p_moving]:
             p.pre_iterate()
         p_fixed.subtract_problem(p_moving)
-        p_moving.find_gamma(p_moving.get_active_in_external(p_fixed))
+        p_moving.find_gamma(p_fixed)
 
         for p in [p_fixed, p_moving]:
             p.set_forms_domain()

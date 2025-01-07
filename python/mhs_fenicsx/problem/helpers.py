@@ -5,9 +5,7 @@ import numpy as np
 from mpi4py import MPI
 import dolfinx.fem.petsc
 import petsc4py.PETSc
-from abc import ABC, abstractmethod
 import mhs_fenicsx_cpp
-from mhs_fenicsx_cpp import cellwise_determine_point_ownership
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -137,14 +135,34 @@ def indices_to_function(space, indices, dim, name="f", remote=True, f = None):
     f.x.array[dofs] = 1
     return f
 
+def set_same_mesh_interface(p1:Problem, p2:Problem):
+    assert(p1.domain == p2.domain)
+    gamma_facets = np.logical_and(p1.bfacets_tag.values, p2.bfacets_tag.values).nonzero()[0]
+    cdim = p1.domain.topology.dim
+    gamma_facets_tag = mesh.meshtags(p1.domain, cdim-1,
+                          np.arange(p1.num_facets, dtype=np.int32),
+                          get_mask(p1.num_facets,gamma_facets))
+    for p, p_ext in [(p2,p1), (p1,p2)]:
+        p.set_gamma(p_ext, gamma_facets_tag)
+
+def propagate_dg0_at_facets_same_mesh(ps:Problem, sf:fem.Function, pr:Problem, rf:fem.Function):
+    assert(ps.domain == pr.domain)
+    mhs_fenicsx_cpp.propagate_dg0_at_facets_same_mesh(
+            sf._cpp_object,
+            rf._cpp_object,
+            ps.active_els_func._cpp_object,
+            pr.active_els_func._cpp_object,
+            ps.gamma_facets_index_map[pr],
+            ps.gamma_imap_to_global_imap[pr]
+            )
+
 def assert_pointwise_vals(p:Problem, points, ref_vals, rtol=1e-5):
     '''Test util'''
-    po = cellwise_determine_point_ownership(
+    po = mhs_fenicsx_cpp.cellwise_determine_point_ownership(
             p.domain._cpp_object,
             points,
             p.active_els_func.x.array.nonzero()[0],
-            np.float64(1e-7),
-            )
+            np.float64(1e-7),)
     indices_points_found = (po.src_owner == rank).nonzero()[0]
     rindices_points_found = (po.dest_owners == rank).nonzero()[0]
 

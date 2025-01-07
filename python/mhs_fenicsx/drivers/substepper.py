@@ -3,11 +3,11 @@ from mhs_fenicsx.problem.helpers import get_mask, indices_to_function
 from mpi4py import MPI
 from dolfinx import mesh, fem, cpp, io
 import ufl
-from mhs_fenicsx.problem import Problem
+from mhs_fenicsx.problem import Problem, set_same_mesh_interface
 from mhs_fenicsx.submesh import build_subentity_to_parent_mapping, find_submesh_interface, \
 compute_dg0_interpolation_data
 from mhs_fenicsx_cpp import mesh_collision
-from mhs_fenicsx.drivers.staggered_drivers import StaggeredRRDriver, StaggeredDNDriver, interpolate_dg0_cells_to_cells
+from mhs_fenicsx.drivers.staggered_drivers import StaggeredRRDriver, StaggeredDNDriver
 from mhs_fenicsx.drivers.newton_raphson import NewtonRaphson
 from mhs_fenicsx.geometry import OBB
 import numpy as np
@@ -131,21 +131,8 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         pf.set_dt( ps.input_parameters["micro_adim_dt"] * (hs_radius / hs_speed) )
         pf.set_activation(subproblem_els)
         pf.set_linear_solver(pf.input_parameters["petsc_opts_micro"])
-        self.set_interface()
+        set_same_mesh_interface(ps, pf)
         self.dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim, subproblem_els)
-
-    def set_interface(self):
-        # Find Gamma facets
-        (ps, pf) = (self.ps, self.pf)
-        gamma_facets_candidates = pf.bfacets_tag.values.nonzero()[0]
-        gamma_facets_subindices = np.where(ps.bfacets_tag.values[gamma_facets_candidates] == 0)[0]
-        gamma_facets = gamma_facets_candidates[gamma_facets_subindices]
-        cdim = ps.domain.topology.dim
-        gamma_facets_tag = mesh.meshtags(ps.domain, cdim-1,
-                              np.arange(ps.num_facets, dtype=np.int32),
-                              get_mask(ps.num_facets,gamma_facets))
-        for p in [pf, ps]:
-            p.set_gamma(gamma_facets_tag)
 
     def subtract_fast(self):
         (ps, pf) = (self.ps, self.pf)
@@ -191,7 +178,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         (ps,pf) = (self.ps,self.pf)
         pf.clear_dirchlet_bcs()
         dirichlet_fun_fast = fem.Function(pf.v, name="dirichlet_con_fast")
-        self.gamma_dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim-1, pf.gamma_facets.find(1))
+        self.gamma_dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim-1, pf.gamma_facets[ps].find(1))
         # Set Gamma dirichlet
         self.fast_dirichlet_tcon = fem.dirichletbc(dirichlet_fun_fast, self.gamma_dofs_fast)
         pf.dirichlet_bcs.append(self.fast_dirichlet_tcon)
@@ -348,15 +335,15 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         if not(self.writers):
             self.initialize_post()
         if case=="predictor":
-            p = ps
+            p, p_ext = (ps, pf)
             time = 0.0
         elif case=="micro":
-            p = pf
+            p, p_ext = (pf, ps)
             time = (self.macro_iter-1) + self.fraction_macro_step
         else:
-            p = ps
+            p, p_ext = (ps, pf)
             time = (self.macro_iter-1) + self.fraction_macro_step
-        funs = [p.u,p.gamma_nodes,p.source.fem_function,p.active_els_func,p.grad_u,
+        funs = [p.u, p.gamma_nodes[p_ext],p.source.fem_function,p.active_els_func,p.grad_u,
                 p.u_prev,self.u_prev[p]]
         funs += extra_funs
 
@@ -387,15 +374,15 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         if not(self.writers):
             self.initialize_post()
         if case=="predictor":
-            p = ps
+            p, p_ext = (ps, pf)
             time = 0.0
         elif case=="micro":
-            p = pf
+            p, p_ext = (pf, ps)
             time = (self.macro_iter-1) + self.fraction_macro_step
         else:
-            p = ps
+            p, p_ext = (ps, pf)
             time = (self.macro_iter-1) + self.fraction_macro_step
-        funs = [p.u,p.gamma_nodes,p.source.fem_function,p.active_els_func,p.grad_u,
+        funs = [p.u,p.gamma_nodes[p_ext],p.source.fem_function,p.active_els_func,p.grad_u,
                 p.u_prev,self.u_prev[p]]
         for fun_dic in [sd.ext_flux,sd.net_ext_flux,sd.ext_conductivity,sd.ext_sol,
                         sd.prev_ext_flux,sd.prev_ext_sol]:

@@ -13,8 +13,6 @@
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/vector.h>
 
-using int_vector = std::vector<int>;
-
 template <std::floating_point T>
 void interpolate_dg0_at_facets(std::vector<std::reference_wrapper<const dolfinx::fem::Function<T>>> &sending_fs,
                                std::vector<std::shared_ptr<dolfinx::fem::Function<T>>> &receiving_fs,
@@ -147,6 +145,67 @@ void interpolate_dg0_at_facets(std::vector<std::reference_wrapper<const dolfinx:
   delete[] block_sizes;
 }
 
+template <std::floating_point T>
+void propagate_dg0_at_facets_same_mesh(const dolfinx::fem::Function<T> &sending_f,
+                                       dolfinx::fem::Function<T> &receiving_f,
+                                       const dolfinx::fem::Function<T> &sending_active_els_f,
+                                       const dolfinx::fem::Function<T> &receiving_active_els_f,
+                                       const dolfinx::common::IndexMap &gamma_index_map,
+                                       std::span<const std::int32_t> gamma_imap_to_global_imap)
+{
+  std::shared_ptr smesh = sending_f.function_space()->mesh();//sending mesh
+  std::shared_ptr rmesh = receiving_f.function_space()->mesh();//receiving mesh
+  assert(smesh == rmesh);
+  int sbsize = sending_f.function_space().get()->element()->value_size();
+  assert(sbsize == receiving_f.function_space().get()->element()->value_size());
+  auto vals = la::Vector<T>(std::shared_ptr<const dolfinx::common::IndexMap>(&gamma_index_map, [](const dolfinx::common::IndexMap*){}), sbsize);
+  auto vals_arr = vals.mutable_array();
+  int cdim = smesh->topology()->dim();
+  auto cell_map = smesh->topology()->index_map(cdim);
+  assert(cdim == rmesh->topology()->dim());
+  auto sactive_els_arr = sending_active_els_f.x()->array();
+  auto sending_f_arr = sending_f.x()->array();
+  // Pack
+  auto con_facet_cell = smesh->topology()->connectivity(cdim-1,cdim);
+  for (int i = 0; i < gamma_index_map.size_local(); ++i) {
+    std::int32_t ifacet = gamma_imap_to_global_imap[i];
+    auto incident_cells = con_facet_cell->links(ifacet);
+    int owner_el = -1;
+    for (auto &ielem : incident_cells) {
+      if (sactive_els_arr[ielem]) {
+        owner_el = ielem;
+        break;
+      }
+    }
+    assert(owner_el > -1);
+    for (int j = 0; j < sbsize; ++j) {
+      vals_arr[i*sbsize+j] = sending_f_arr[owner_el*sbsize + j];
+    }
+  }
+  // Communicate accross ranks
+  vals.scatter_fwd();
+  // Unpack
+  int num_gamma_facets_processor = (gamma_index_map.size_local() + gamma_index_map.num_ghosts());
+  auto receiving_f_marr = receiving_f.x()->mutable_array();
+  auto ractive_els_arr = receiving_active_els_f.x()->array();
+  for (int i = 0; i < num_gamma_facets_processor; ++i) {
+    std::int32_t ifacet = gamma_imap_to_global_imap[i];
+    auto incident_cells = con_facet_cell->links(ifacet);
+    int owner_el = -1;
+    for (auto &ielem : incident_cells) {
+      if ((ractive_els_arr[ielem]) and (ielem < cell_map->size_local())) {
+        owner_el = ielem;
+        break;
+      }
+    }
+    if (owner_el == -1)
+      continue;
+    for (int j = 0; j < sbsize; ++j)
+      receiving_f_marr[owner_el*sbsize + j] = vals_arr[i*sbsize+j];
+  }
+  receiving_f.x()->scatter_fwd();
+}
+
 namespace nb = nanobind;
 template <std::floating_point T>
 void templated_declare_interpolate_dg0_at_facets(nb::module_ &m) {
@@ -174,6 +233,24 @@ void templated_declare_interpolate_dg0_at_facets(nb::module_ &m) {
                                             po,
                                             gamma_index_map,
                                             std::span(gamma_imap_to_global_imap.data(), gamma_imap_to_global_imap.size()));
+      }
+      );
+  m.def(
+      "propagate_dg0_at_facets_same_mesh",
+      [](
+        const dolfinx::fem::Function<T> &sending_f,
+        dolfinx::fem::Function<T> &receiving_f,
+        const dolfinx::fem::Function<T> &sending_active_els_f,
+        const dolfinx::fem::Function<T> &receiving_active_els_f,
+        const dolfinx::common::IndexMap &gamma_index_map,
+        nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> gamma_imap_to_global_imap)
+      {
+        return propagate_dg0_at_facets_same_mesh<T>(sending_f,
+                                                    receiving_f,
+                                                    sending_active_els_f,
+                                                    receiving_active_els_f,
+                                                    gamma_index_map,
+                                                    std::span(gamma_imap_to_global_imap.data(), gamma_imap_to_global_imap.size()));
       }
       );
 }

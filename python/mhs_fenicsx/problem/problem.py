@@ -2,6 +2,7 @@ from __future__ import annotations
 from dolfinx import io, fem, mesh, cpp, geometry, la
 import ufl
 import numpy as np
+import numpy.typing as npt
 from mpi4py import MPI
 from petsc4py import PETSc
 import multiphenicsx
@@ -38,7 +39,7 @@ class Problem:
                                                            self.domain.basix_cell(),
                                                            0,
                                                            shape=(self.dim,)))
-        self.restriction: multiphenicsx.fem.DofMapRestriction = None
+        self.restriction: typing.Optional[multiphenicsx.fem.DofMapRestriction] = None
 
         for dim in [self.dim, self.dim-1]:
             self.domain.topology.create_entities(dim)
@@ -62,9 +63,12 @@ class Problem:
         self.dirichlet_bcs = []
 
         # BCs / Interface
-        # Ideally remove this from here and driver takes care of this
-        self.gamma_nodes = None
-
+        self.gamma_nodes : dict['Problem', fem.Function] = {}
+        self.gamma_facets : dict['Problem', mesh.MeshTags] = {}
+        self.gamma_facets_index_map : dict['Problem', dolfinx.common.IndexMap] = {}
+        self.gamma_imap_to_global_imap : dict['Problem', npt.NDArray[np.int32]] = {}
+        self.gamma_integration_data : dict['Problem', npt.NDArray[np.int32]] = {}
+                         
         # Source term
         try:
             hs_type = self.input_parameters["heat_source"]["type"]
@@ -133,6 +137,11 @@ class Problem:
             "linear_solver_opts",
             "source",
             "dirichlet_bcs",
+            "gamma_nodes",
+            "gamma_facets",
+            "gamma_facets_index_map",
+            "gamma_imap_to_global_imap",
+            "gamma_integration_data",
             ])
         attributes = (set(self.__dict__.keys()) - to_be_skipped) - to_be_deep_copied
         result = object.__new__(self.__class__)
@@ -312,41 +321,45 @@ class Problem:
                                                                 1e-7,)
         return np.array(po.src_owner>=0,dtype=np.int32)
 
-    def subtract_problem(self,p_ext:Problem):
+    def subtract_problem(self, p_ext : 'Problem'):
         self.ext_nodal_activation = self.get_active_in_external(p_ext)
         active_els_cpp = mhs_fenicsx_cpp.deactivate_from_nodes(self.domain._cpp_object,
                                                               self.ext_nodal_activation)
         self.set_activation(active_els_cpp)
-        self.find_gamma(self.ext_nodal_activation)
+        self.find_gamma(p_ext, self.ext_nodal_activation)
 
-    def find_gamma(self,ext_active_dofs_array):
+    def find_gamma(self, p_ext : 'Problem', ext_active_dofs_array = None):
         # TODO: Add p_ext as argument
-        self.gamma_facets = mesh.MeshTags(mhs_fenicsx_cpp.find_interface(self.domain._cpp_object,
-                                                       self.bfacets_tag._cpp_object,
-                                                       self.v.dofmap.index_map,
-                                                       ext_active_dofs_array))
-        self.update_gamma_data()
+        if ext_active_dofs_array is None:
+            ext_active_dofs_array = self.get_active_in_external(p_ext)
+        self.gamma_facets[p_ext] = mesh.MeshTags(mhs_fenicsx_cpp.find_interface(
+            self.domain._cpp_object,
+            self.bfacets_tag._cpp_object,
+            self.v.dofmap.index_map,
+            ext_active_dofs_array))
 
-    def set_gamma(self,gamma_facets_tag):
+        self.update_gamma_data(p_ext)
+
+    def set_gamma(self, p_ext : 'Problem', gamma_facets_tag : mesh.MeshTags):
         dim = gamma_facets_tag.dim
         assert(dim==self.dim-1)
         im = gamma_facets_tag.topology.index_map(dim)
         assert((im is not None) and (im == self.domain.topology.index_map(dim)))
-        self.gamma_facets = gamma_facets_tag
-        self.update_gamma_data()
+        self.gamma_facets[p_ext] = gamma_facets_tag
+        self.update_gamma_data(p_ext)
 
-    def update_gamma_data(self,p_ext=None):
+    def update_gamma_data(self, p_ext : 'Problem'):
         # TODO: Add p_ext as argument
-        self.gamma_nodes = indices_to_function(self.v,
-                                         self.gamma_facets.find(1),
-                                         self.dim-1,
-                                         name="gammaNodes",)
-        indices_all_gamma_facets = self.gamma_facets.values.nonzero()[0]
-        self.gamma_facets_index_map, \
-        self.gamma_imap_to_global_imap = cpp.common.create_sub_index_map(self.facet_map,
+        self.gamma_nodes[p_ext] = indices_to_function(self.v,
+                                                      self.gamma_facets[p_ext].find(1),
+                                                      self.dim-1,
+                                                      name=f"gamma_{p_ext.name}",)
+        indices_all_gamma_facets = self.gamma_facets[p_ext].values.nonzero()[0]
+        self.gamma_facets_index_map[p_ext], \
+        self.gamma_imap_to_global_imap[p_ext] = cpp.common.create_sub_index_map(self.facet_map,
                                                     indices_all_gamma_facets,
                                                     False)
-        self.gamma_integration_data = self.get_facet_integrations_entities(indices_all_gamma_facets)
+        self.gamma_integration_data[p_ext] = self.get_facet_integrations_entities(indices_all_gamma_facets)
 
     def add_dirichlet_bc(self, func, bdofs=None, bfacets_tag=None, marker=None, reset=False):
         if reset:
@@ -365,9 +378,7 @@ class Problem:
         self.dirichlet_bcs.append(bc)
         return bc
 
-    def get_facet_integrations_entities(self, facet_indices=None):
-        if facet_indices is None:
-            facet_indices = self.gamma_facets.find(1)
+    def get_facet_integrations_entities(self, facet_indices):
         return get_facet_integration_entities(self.domain,facet_indices,self.active_els_func)
 
     def set_forms_domain(self, subdomain_data=None, argument=None):
@@ -537,8 +548,8 @@ class Problem:
                  self.source.fem_function,
                  #self.k,
                  ]
-        if self.gamma_nodes is not None:
-            funcs.append(self.gamma_nodes)
+        for f in self.gamma_nodes.values():
+            funcs.append(f)
         if self.is_grad_computed:
             funcs.append(self.grad_u)
         #BPARTITIONTAG
@@ -564,8 +575,8 @@ class Problem:
             ofile.write_mesh(bmesh)
 
 class GammaL2Dotter:
-    def __init__(self,p:Problem):
-        gamma_ents = p.gamma_integration_data
+    def __init__(self, p:Problem, p_ext:Problem):
+        gamma_ents = p.gamma_integration_data[p_ext]
         ds_neumann = ufl.Measure('ds', domain=p.domain, subdomain_data=[
             (8,np.asarray(gamma_ents, dtype=np.int32))])
         self.f, self.g = (fem.Function(p.v),fem.Function(p.v))

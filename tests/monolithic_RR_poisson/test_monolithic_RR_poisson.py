@@ -156,7 +156,7 @@ def run(dim, els_side, el_type, writepos=False):
 
     # Set up interface Gamma
     for p, p_ext in zip([p_left, p_right], [p_right, p_left]):
-        p.find_gamma(p.get_active_in_external( p_ext ))
+        p.find_gamma(p_ext)
 
     quadrature_degree = 2
     driver = MonolithicRRDriver(p_left, p_right, quadrature_degree=quadrature_degree)

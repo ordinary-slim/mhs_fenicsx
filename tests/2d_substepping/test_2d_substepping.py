@@ -78,7 +78,6 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
         substeppin_driver.define_subproblem() # generates driver.fast_problem
         (ps,pf) = (substeppin_driver.ps,substeppin_driver.pf)
         staggered_driver = driver_constructor(pf,ps,
-                                       submesh_data=substeppin_driver.submesh_data,
                                        max_staggered_iters=params["max_staggered_iters"],
                                        initial_relaxation_factors=initial_relaxation_factors,)
         substeppin_driver.set_staggered_driver(staggered_driver)

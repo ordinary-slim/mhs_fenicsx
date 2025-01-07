@@ -23,14 +23,16 @@ def find_submesh_interface(parent_problem:Problem,child_problem:Problem,submesh_
     bfacets_gamma_tag = np.int32(1) - pp.bfacets_tag.values[submesh_data["subfacet_map"][fast_bfacet_indices]]
     fgamma_facets_indices = fast_bfacet_indices[bfacets_gamma_tag.nonzero()[0]]
     cmask[fgamma_facets_indices] = 1
-    cp.set_gamma(mesh.meshtags(cp.domain, cdim-1,
-                               np.arange(cp.num_facets, dtype=np.int32),
-                               cmask))
+    cp.set_gamma(pp,
+            mesh.meshtags(cp.domain, cdim-1,
+                          np.arange(cp.num_facets, dtype=np.int32),
+                          cmask))
     pmask = np.zeros(pp.num_facets, dtype=np.int32)
     pmask[submesh_data["subfacet_map"][fgamma_facets_indices]] = 1
-    pp.set_gamma(mesh.meshtags(pp.domain, cdim-1,
-                               np.arange(pp.num_facets, dtype=np.int32),
-                               pmask))
+    pp.set_gamma(cp,
+            mesh.meshtags(pp.domain, cdim-1,
+                          np.arange(pp.num_facets, dtype=np.int32),
+                          pmask))
 
 def compute_dg0_interpolation_data(parent_problem:Problem,child_problem:Problem,submesh_data):
     (pp,cp) = (parent_problem,child_problem)

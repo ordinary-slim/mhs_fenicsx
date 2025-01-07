@@ -57,7 +57,7 @@ def main():
         p_fixed.pre_iterate()
         p_moving.pre_iterate()
         p_fixed.subtract_problem(p_moving)
-        p_moving.find_gamma(p_moving.get_active_in_external(p_fixed))
+        p_moving.find_gamma(p_fixed)
         driver.pre_loop()
         for _ in range(driver.max_staggered_iters):
             driver.pre_iterate()

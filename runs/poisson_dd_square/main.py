@@ -3,7 +3,8 @@ from mhs_fenicsx.problem.helpers import indices_to_function
 import ufl
 import numpy as np
 from mpi4py import MPI
-from mhs_fenicsx.problem import Problem, interpolate_dg_at_facets, interpolate
+from mhs_fenicsx.problem import Problem, interpolate_dg_at_facets, set_same_mesh_interface
+        
 from mhs_fenicsx.submesh import build_subentity_to_parent_mapping,compute_dg0_interpolation_data,\
         find_submesh_interface
 from line_profiler import LineProfiler
@@ -85,24 +86,10 @@ def run(run_type="dd"):
     p_left = Problem(left_mesh, params, name=f"left_{dd_type}")
     submesh_data = {}
     if run_type=="submesh":
-        right_els = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] >= 0.5 )
-        submesh = mesh.create_submesh(left_mesh,2,right_els)
-        right_mesh = submesh[0]
-        submesh_data["subcell_map"] = submesh[1]
-        submesh_data["subvertex_map"] = submesh[2]
-        submesh_data["subgeom_map"] = submesh[3]
+        p_right = p_left.copy(name=f"right_{dd_type}")
     else:
         right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, els_side, els_side, mesh.CellType.triangle)
-    p_right = Problem(right_mesh, params, name=f"right_{dd_type}")
-
-    if run_type=="submesh":
-        submesh_data["parent"] = p_left
-        submesh_data["child"] = p_right
-        submesh_data["subfacet_map"] = build_subentity_to_parent_mapping(1,p_left.domain,p_right.domain,
-                                                                         submesh_data["subcell_map"],
-                                                                         submesh_data["subvertex_map"],)
-        find_submesh_interface(p_left,p_right,submesh_data)
-        compute_dg0_interpolation_data(p_left,p_right,submesh_data)
+        p_right = Problem(right_mesh, params, name=f"right_{dd_type}")
 
     # Activation
     active_els = dict()
@@ -115,10 +102,12 @@ def run(run_type="dd"):
         f_exact[p] = fem.Function(p.v,name="exact")
         f_exact[p].interpolate(exact_sol_2d)
         p.set_rhs(rhs)
+    if run_type=="submesh":
+        set_same_mesh_interface(p_left, p_right)
 
     driver = driver_type(p_right,p_left,max_staggered_iters=params["max_staggered_iters"],
-                         submesh_data=submesh_data,
                          initial_relaxation_factors=[0.5,1.0])
+
     if (type(driver)==StaggeredRRDriver):
         h = 1.0 / els_side
         k = float(params["material"]["conductivity"])
@@ -217,7 +206,6 @@ if __name__=="__main__":
         lp.add_module(StaggeredDNDriver)
         lp.add_module(StaggeredRRDriver)
         lp.add_module(Problem)
-        lp.add_function(interpolate)
         lp.add_function(fem.Function.interpolate)
         lp.add_function(interpolate_dg_at_facets)
         lp_wrapper = lp(func)

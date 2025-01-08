@@ -131,7 +131,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         pf.set_dt( ps.input_parameters["micro_adim_dt"] * (hs_radius / hs_speed) )
         pf.set_activation(subproblem_els)
         pf.set_linear_solver(pf.input_parameters["petsc_opts_micro"])
-        set_same_mesh_interface(ps, pf)
+        set_same_mesh_interface(ps, pf, is_subtracted=False)
         self.dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim, subproblem_els)
 
     def subtract_fast(self):

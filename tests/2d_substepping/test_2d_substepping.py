@@ -259,8 +259,8 @@ if __name__=="__main__":
         lp_wrapper(params, els_per_radius)
         profiling_file = f"profiling_ref_{rank}.txt"
     if args.run_test:
-        test_staggered_robin_substepper()
         test_hodge_semi_monolothic_substepper()
+        test_staggered_robin_substepper()
     if profiling_file is not None:
         with open(profiling_file, 'w') as pf:
             lp.print_stats(stream=pf)

@@ -135,9 +135,12 @@ def indices_to_function(space, indices, dim, name="f", remote=True, f = None):
     f.x.array[dofs] = 1
     return f
 
-def set_same_mesh_interface(p1:Problem, p2:Problem):
+def set_same_mesh_interface(p1:Problem, p2:Problem, is_subtracted=True):
     assert(p1.domain == p2.domain)
-    gamma_facets = np.logical_and(p1.bfacets_tag.values, p2.bfacets_tag.values).nonzero()[0]
+    if is_subtracted:
+        gamma_facets = np.logical_and(p1.bfacets_tag.values, p2.bfacets_tag.values).nonzero()[0]
+    else:
+        gamma_facets = np.logical_and(np.logical_not(p1.bfacets_tag.values), p2.bfacets_tag.values).nonzero()[0]
     cdim = p1.domain.topology.dim
     gamma_facets_tag = mesh.meshtags(p1.domain, cdim-1,
                           np.arange(p1.num_facets, dtype=np.int32),

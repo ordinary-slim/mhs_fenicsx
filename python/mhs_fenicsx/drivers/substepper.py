@@ -1,11 +1,8 @@
-from line_profiler import LineProfiler
-from mhs_fenicsx.problem.helpers import get_mask, indices_to_function
+from mhs_fenicsx.problem.helpers import propagate_dg0_at_facets_same_mesh, set_same_mesh_interface
 from mpi4py import MPI
-from dolfinx import mesh, fem, cpp, io
+from dolfinx import fem, io
 import ufl
-from mhs_fenicsx.problem import Problem, set_same_mesh_interface
-from mhs_fenicsx.submesh import build_subentity_to_parent_mapping, find_submesh_interface, \
-compute_dg0_interpolation_data
+from mhs_fenicsx.problem import Problem
 from mhs_fenicsx_cpp import mesh_collision
 from mhs_fenicsx.drivers.staggered_drivers import StaggeredRRDriver, StaggeredDNDriver
 from mhs_fenicsx.drivers.newton_raphson import NewtonRaphson
@@ -20,22 +17,38 @@ import multiphenicsx.fem.petsc
 class MHSSubstepper(ABC):
     def __init__(self,slow_problem:Problem,writepos=True,
                  max_nr_iters=25,max_ls_iters=5,):
-        self.ps = slow_problem
-        self.pf: Problem = None
+        ps = slow_problem
+        self.ps = ps
+        ps.clear_gamma_data()
+        self.pf = self.ps.copy(name=f"{self.ps.name}_micro_iters")
         self.fraction_macro_step = 0
         self.do_writepos = writepos
         self.writers = dict()
         self.max_nr_iters = max_nr_iters
         self.max_ls_iters = max_ls_iters
-        self.physical_domain_restriction = self.ps.restriction
+        # TODO: Complete. Data to set activation in predictor_step
+        self.initial_active_els = self.ps.active_els_func.x.array.nonzero()[0]
+        self.initial_restriction = self.ps.restriction
     
     def __del__(self):
         for w in self.writers.values():
             w.close()
 
-    @abstractmethod
-    def define_subproblem(self):
-        pass
+    def define_subproblem(self, subproblem_els=None):
+        (ps, pf) = (self.ps, self.pf)
+        # Store this and use it for deactivation?
+        if not(subproblem_els):
+            subproblem_els = self.find_subproblem_els()
+        hs_radius = pf.source.R
+        track_t0 = pf.source.path.get_track(self.t0_macro_step)
+        hs_speed  = track_t0.speed# TODO: Can't use this speed!
+        pf.set_dt( ps.input_parameters["micro_adim_dt"] * (hs_radius / hs_speed) )
+        pf.set_activation(subproblem_els)
+        pf.set_linear_solver(pf.input_parameters["petsc_opts_micro"])
+        # Subtract fast
+        ps.set_activation(np.logical_not(pf.active_els_func.x.array).nonzero()[0])
+        set_same_mesh_interface(ps, pf)
+        self.dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim, subproblem_els)
 
     @abstractmethod
     def pre_loop(self):
@@ -46,10 +59,7 @@ class MHSSubstepper(ABC):
         pass
 
     @abstractmethod
-    def subtract_fast(self):
-        '''
-        I think this can be in the parent class, maybe not
-        '''
+    def writepos(self,case="macro",extra_funs=[]):
         pass
 
     def find_subproblem_els(self):
@@ -80,12 +90,12 @@ class MHSSubstepper(ABC):
         subproblem_els = mesh_collision(ps.domain._cpp_object,obb_mesh._cpp_object,bb_tree_big=ps.bb_tree._cpp_object)
         return np.array(subproblem_els,dtype=np.int32)
 
-    def predictor_step(self):
-        '''
-        Always linear
-        '''
+    def predictor_step(self, writepos=False):
+        ''' Always linear '''
         ps = self.ps
-
+        # Save current activation data
+        slow_els = ps.active_els_func.x.array.nonzero()[0]
+        ps.set_activation(self.initial_active_els)
         # MACRO-STEP
         ps.pre_iterate()
         ps.set_forms_domain()
@@ -99,6 +109,9 @@ class MHSSubstepper(ABC):
         # Reset iter to prev.
         # Useful for writepos
         ps.iter -= 1
+        if writepos:
+            self.writepos("predictor")
+        ps.set_activation(slow_els)
 
     def micro_post_iterate(self):
         '''
@@ -118,26 +131,6 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
     def __init__(self,slow_problem: Problem ,writepos=True,
                  max_nr_iters=25,max_ls_iters=5,):
         super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters)
-        self.pf = self.ps.copy(name=f"{self.ps.name}_micro_iters")
-
-    def define_subproblem(self, subproblem_els=None):
-        (ps, pf) = (self.ps, self.pf)
-        # Store this and use it for deactivation?
-        if not(subproblem_els):
-            subproblem_els = self.find_subproblem_els()
-        hs_radius = pf.source.R
-        track_t0 = pf.source.path.get_track(self.t0_macro_step)
-        hs_speed  = track_t0.speed# TODO: Can't use this speed!
-        pf.set_dt( ps.input_parameters["micro_adim_dt"] * (hs_radius / hs_speed) )
-        pf.set_activation(subproblem_els)
-        pf.set_linear_solver(pf.input_parameters["petsc_opts_micro"])
-        set_same_mesh_interface(ps, pf, is_subtracted=False)
-        self.dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim, subproblem_els)
-
-    def subtract_fast(self):
-        (ps, pf) = (self.ps, self.pf)
-        ps.set_activation((ps.active_els_func.x.array - pf.active_els_func.x.array).nonzero()[0])
-
 
     def pre_loop(self):
         (ps,pf) = (self.ps,self.pf)
@@ -229,7 +222,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         j_compiled = fem.form(j_ufl)
 
         ps_restriction = ps.restriction
-        ps.restriction = self.physical_domain_restriction
+        ps.restriction = self.initial_restriction
 
         # SOLVE
         nr_iter = 0
@@ -389,7 +382,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
             try:
                 funs.append(fun_dic[p])
             except (AttributeError,KeyError):
-                pass
+                continue
 
         p.compute_gradient()
         self.writers[p].write_function(funs,t=time)
@@ -425,47 +418,6 @@ class MHSStaggeredSubstepper(MHSSubstepper):
             #pf.post_iterate()
             self.micro_post_iterate()
             self.writepos(case="micro")
-
-    def define_subproblem(self):
-        ''' Build subproblem in submesh '''
-        ps = self.ps
-        cdim = ps.domain.topology.dim
-        subproblem_els = self.find_subproblem_els()
-        # Extract subproblem:
-        self.submesh_data = {}
-        submesh_data = mesh.create_submesh(ps.domain,cdim,subproblem_els)
-        submesh = submesh_data[0]
-        self.submesh_data["subcell_map"] = submesh_data[1]
-        self.submesh_data["subvertex_map"] = submesh_data[2]
-        self.submesh_data["subgeom_map"] = submesh_data[3]
-        micro_params = ps.input_parameters.copy()
-        hs_radius = ps.source.R
-        track_t0 = ps.source.path.get_track(self.t0_macro_step)
-        hs_speed  = track_t0.speed# TODO: Can't use this speed!
-        micro_params["dt"] = micro_params["micro_adim_dt"] * (hs_radius / hs_speed)
-        micro_params["petsc_opts"] = micro_params["petsc_opts_micro"]
-        self.pf = Problem(submesh_data[0],micro_params, name="small")
-        pf = self.pf
-        self.submesh_data["parent"] = ps
-        self.submesh_data["child"] = pf
-        self.submesh_data["subfacet_map"] = build_subentity_to_parent_mapping(cdim-1,
-                                                               ps.domain,
-                                                               submesh,
-                                                               self.submesh_data["subcell_map"],
-                                                               self.submesh_data["subvertex_map"])
-        find_submesh_interface(ps,pf,self.submesh_data)
-        compute_dg0_interpolation_data(ps,pf,self.submesh_data)
-        pf.u.interpolate(ps.u,cells0=self.submesh_data["subcell_map"],cells1=np.arange(len(self.submesh_data["subcell_map"])))
-
-    def subtract_fast(self):
-        # Subtract child from parent
-        # TODO: Make this more efficient, redundancy in setting active_els_func
-        # here and inside of set_activation
-        (ps,pf) = self.ps, self.pf
-        ps.active_els_func.x.array[self.submesh_data["subcell_map"]] = 0
-        ps.active_els_func.x.scatter_forward()
-        active_els = ps.active_els_func.x.array[:ps.cell_map.size_local].nonzero()[0]
-        ps.set_activation(active_els)
 
     def iterate_substepped_rr(self):
         (ps,pf) = (self.ps,self.pf)
@@ -561,16 +513,16 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         # TODO: Are these necessary? Can I get them from my own data?
         if type(sd)==StaggeredRRDriver:
             self.ext_sol_tn = {p:fem.Function(p.v,name="ext_sol_tn")}
-            interpolate_dg0_cells_to_cells(self.ext_flux_tn[p],p_ext.grad_u,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
-            interpolate_dg0_cells_to_cells(self.ext_conductivity_tn[p],p_ext.k,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
-            self.ext_sol_tn[p].interpolate(p_ext.u,cells0=sd.submesh_cells[p_ext],cells1=sd.submesh_cells[p])
-            self.ext_sol_tn[p].x.scatter_forward()
+            propagate_dg0_at_facets_same_mesh(p_ext, p_ext.grad_u, p, self.ext_flux_tn[p])
+            propagate_dg0_at_facets_same_mesh(p_ext, p_ext.k, p, self.ext_conductivity_tn[p])
+            self.ext_sol_tn[p].x.array[:] = p_ext.u.x.array[:]
         elif type(sd)==StaggeredDNDriver:
             if sd.p_dirichlet==pf:
-                self.ext_sol_tn[p].interpolate(p_ext.u,cells0=sd.submesh_cells[p_ext],cells1=sd.submesh_cells[p])
+                self.ext_sol_tn = {p:fem.Function(p.v,name="ext_sol_tn")}
+                self.ext_sol_tn[p].x.array[:] = p_ext.u.x.array[:]
             else:
-                interpolate_dg0_cells_to_cells(self.ext_flux_tn[p],p_ext.grad_u,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
-                interpolate_dg0_cells_to_cells(self.ext_conductivity_tn[p],p_ext.k,sd.active_gamma_cells[p_ext],sd.active_gamma_cells[p])
+                propagate_dg0_at_facets_same_mesh(p_ext, p_ext.grad_u, p, self.ext_flux_tn[p])
+                propagate_dg0_at_facets_same_mesh(p_ext, p_ext.k, p, self.ext_conductivity_tn[p])
 
         dim = self.ext_flux_tn[p].function_space.value_size
         for cell in sd.active_gamma_cells[p]:

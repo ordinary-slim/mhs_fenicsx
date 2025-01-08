@@ -88,15 +88,11 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
             staggered_driver.dirichlet_coeff[staggered_driver.p1] = 1.0/4.0
             staggered_driver.dirichlet_coeff[staggered_driver.p2] =  k / (2 * h)
             staggered_driver.relaxation_coeff[staggered_driver.p1].value = 3.0 / 3.0
-        # Move extra_subproblem here
-        #TODO: Check on pre_iterate / post_iterate of problems
         staggered_driver.pre_loop(prepare_subproblems=False)
         substeppin_driver.pre_loop()
         if params["predictor_step"]:
-            substeppin_driver.predictor_step()
-            if (substeppin_driver.do_writepos and writepos):
-                substeppin_driver.writepos("predictor")
-        substeppin_driver.subtract_fast()
+            substeppin_driver.predictor_step(writepos=substeppin_driver.do_writepos and writepos)
+                
         staggered_driver.prepare_subproblems()
         for _ in range(staggered_driver.max_staggered_iters):
             substeppin_driver.pre_iterate()
@@ -110,10 +106,10 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
             if staggered_driver.convergence_crit < staggered_driver.convergence_threshold:
                 break
         substeppin_driver.post_loop()
-        #TODO: Interpolate solution to inactive ps
+        # Interpolate solution to inactive ps
         ps.u.interpolate(pf.u,
-                         cells0=np.arange(pf.num_cells),
-                         cells1=substeppin_driver.submesh_data["subcell_map"])
+                         cells0=pf.active_els_func.x.array.nonzero()[0],
+                         cells1=pf.active_els_func.x.array.nonzero()[0])
         if writepos:
             ps.writepos()
     return big_p
@@ -138,10 +134,7 @@ def run_semi_monolithic(params, els_per_radius, writepos=True):
         (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
         substeppin_driver.pre_loop()
         if params["predictor_step"]:
-            substeppin_driver.predictor_step()
-            if (substeppin_driver.do_writepos and writepos):
-                substeppin_driver.writepos("predictor")
-        substeppin_driver.subtract_fast()
+            substeppin_driver.predictor_step(writepos=substeppin_driver.do_writepos and writepos)
         for _ in range(params["max_staggered_iters"]):
             substeppin_driver.pre_iterate()
             substeppin_driver.micro_steps()
@@ -196,12 +189,12 @@ def test_staggered_robin_substepper():
         [+0.375, -0.125, 0.0],
         ])
     vals = np.array([
-        224.21221,
-        757.62624,
-        24.993306,
-        1451.8855,
+        224.88049,
+        757.965243,
+        24.9966748,
+        1451.8787,
         ])
-    assert_pointwise_vals(p,points,vals,1e-3)
+    assert_pointwise_vals(p,points,vals)
 
 def test_hodge_semi_monolothic_substepper():
     with open("test_input.yaml", 'r') as f:
@@ -259,8 +252,8 @@ if __name__=="__main__":
         lp_wrapper(params, els_per_radius)
         profiling_file = f"profiling_ref_{rank}.txt"
     if args.run_test:
-        test_hodge_semi_monolothic_substepper()
         test_staggered_robin_substepper()
+        test_hodge_semi_monolothic_substepper()
     if profiling_file is not None:
         with open(profiling_file, 'w') as pf:
             lp.print_stats(stream=pf)

@@ -135,12 +135,9 @@ def indices_to_function(space, indices, dim, name="f", remote=True, f = None):
     f.x.array[dofs] = 1
     return f
 
-def set_same_mesh_interface(p1:Problem, p2:Problem, is_subtracted=True):
+def set_same_mesh_interface(p1:Problem, p2:Problem):
     assert(p1.domain == p2.domain)
-    if is_subtracted:
-        gamma_facets = np.logical_and(p1.bfacets_tag.values, p2.bfacets_tag.values).nonzero()[0]
-    else:
-        gamma_facets = np.logical_and(np.logical_not(p1.bfacets_tag.values), p2.bfacets_tag.values).nonzero()[0]
+    gamma_facets = np.logical_and(p1.bfacets_tag.values, p2.bfacets_tag.values).nonzero()[0]
     cdim = p1.domain.topology.dim
     gamma_facets_tag = mesh.meshtags(p1.domain, cdim-1,
                           np.arange(p1.num_facets, dtype=np.int32),
@@ -159,7 +156,7 @@ def propagate_dg0_at_facets_same_mesh(ps:Problem, sf:fem.Function, pr:Problem, r
             ps.gamma_imap_to_global_imap[pr]
             )
 
-def assert_pointwise_vals(p:Problem, points, ref_vals, rtol=1e-5):
+def assert_pointwise_vals(p:Problem, points, ref_vals, rtol=1.e-5):
     '''Test util'''
     po = mhs_fenicsx_cpp.cellwise_determine_point_ownership(
             p.domain._cpp_object,

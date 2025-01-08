@@ -137,9 +137,9 @@ class Problem:
             "linear_solver_opts",
             "source",
             "dirichlet_bcs",
-            "gamma_nodes",
             ])
         to_be_reset = set([
+            "gamma_nodes",
             "gamma_facets",
             "gamma_facets_index_map",
             "gamma_imap_to_global_imap",
@@ -255,6 +255,7 @@ class Problem:
         # Mesh motion
         if self.domain_speed is not None and not(self.is_mesh_shared):
             self.domain.geometry.x[:] += np.round(self.domain_speed*self.dt.value,7)
+            self.clear_gamma_data()
             # This can be done more efficiently C++ level
             self.set_bb_trees()
 
@@ -314,6 +315,13 @@ class Problem:
         if not(self.is_grad_computed):
             self.grad_u.interpolate( fem.Expression(ufl.grad(self.u),self.grad_u.function_space.element.interpolation_points) )
             self.is_grad_computed = True
+
+    def clear_gamma_data(self):
+        self.gamma_nodes.clear()
+        self.gamma_facets.clear()
+        self.gamma_facets_index_map.clear()
+        self.gamma_imap_to_global_imap.clear()
+        self.gamma_integration_data.clear()
 
     def get_active_in_external(self, p_ext:Problem ):
         '''

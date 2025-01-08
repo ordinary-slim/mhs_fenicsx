@@ -47,7 +47,6 @@ TODO
 - [x] Checkout `compute_integration_domain`
 - [ ] (VERY IMPORTANT) Update SUPG with phase change
 - [ ] (IMPORTANT) Substepper + Dirichlet conditions
-- [ ] Material rework to subdomains
 - [ ] On delete of substepper, set activation to physical (high priority)
 - [ ] In substepper, update physical domain restriction where relevant
 - [x] (FIRST PRIORITY) Fix bug SMS
@@ -59,4 +58,6 @@ TODO
 - [x] Same mesh blocked Poisson problem
 - [x] Different mesh blocked Poisson problem
 - [x] Interface data as dictionnary
-- [ ] Remove submesh support in favor of same mesh approach
+- [x] Remove submesh support in favor of same mesh approach
+- [ ] Material rework to subdomains
+- [ ] Store material properties as functions of Temperature

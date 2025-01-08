@@ -253,7 +253,8 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
                                                      cells=self.gamma_cells[pd],
                                                      interpolation_data=self.iid[pn][pd])
         else:
-            self.ext_sol[pd] = pn.u
+            # If this is expensive, consider `self.ext_sol[pd] = pn.u`
+            self.ext_sol[pd].x.array[:] = pn.u.x.array[:]
         self.ext_sol[pd].x.scatter_forward()
 
     def update_relaxation_factor(self):
@@ -464,12 +465,13 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         else:
             propagate_dg0_at_facets_same_mesh(p_ext, p_ext.grad_u, p, self.ext_flux[p])
             propagate_dg0_at_facets_same_mesh(p_ext, p_ext.k, p, self.ext_conductivity[p])
-            self.ext_sol[p] = p_ext.u
+            # If this is expensive, consider `self.ext_sol[p] = p_ext.u`
+            self.ext_sol[p].x.array[:] = p_ext.u.x.array[:]
 
         # Compute flux
-        dim = self.ext_flux[p].function_space.value_size
-        for cell in self.active_gamma_cells[p]:
-            self.ext_flux[p].x.array[cell*dim:cell*dim+dim] *= self.ext_conductivity[p].x.array[cell]
+        bsize = self.ext_flux[p].function_space.value_size
+        for idx in range(bsize):
+            self.ext_flux[p].x.array[self.active_gamma_cells[p]*bsize+idx] *= self.ext_conductivity[p].x.array[self.active_gamma_cells[p]]
         self.ext_flux[p].x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
 
         self.net_ext_sol[p].x.array[:] = self.ext_sol[p].x.array[:]

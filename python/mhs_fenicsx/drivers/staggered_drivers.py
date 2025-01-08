@@ -313,8 +313,8 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
 
         # TODO: Pass this to c++
         dim = self.ext_flux[p].function_space.value_size
-        for cell in self.active_gamma_cells[p]:
-            self.ext_flux[p].x.array[cell*dim:cell*dim+dim] *= self.ext_conductivity[p].x.array[cell]
+        for idx in range(dim):
+            self.ext_flux[p].x.array[self.active_gamma_cells[p]*dim+idx] *= self.ext_conductivity[p].x.array[self.active_gamma_cells[p]]
         self.ext_flux[p].x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
 
         self.net_ext_flux[p].x.array[:] = self.ext_flux[p].x.array[:]

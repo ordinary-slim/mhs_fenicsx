@@ -74,8 +74,6 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
     max_timesteps = params["max_timesteps"]
     for _ in range(max_timesteps):
         substeppin_driver = MHSStaggeredSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos))
-
-        substeppin_driver.define_subproblem() # generates driver.fast_problem
         (ps,pf) = (substeppin_driver.ps,substeppin_driver.pf)
         staggered_driver = driver_constructor(pf,ps,
                                        max_staggered_iters=params["max_staggered_iters"],
@@ -128,9 +126,8 @@ def run_semi_monolithic(params, els_per_radius, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSSemiMonolithicSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos))
     for _ in range(max_timesteps):
-        substeppin_driver.define_subproblem()
+        substeppin_driver = MHSSemiMonolithicSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos))
         (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
         substeppin_driver.pre_loop()
         if params["predictor_step"]:

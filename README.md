@@ -61,3 +61,4 @@ TODO
 - [x] Remove submesh support in favor of same mesh approach
 - [ ] Material rework to subdomains
 - [ ] Store material properties as functions of Temperature
+- [ ] Move Chimera problem to initial position in pre_loop of substepper

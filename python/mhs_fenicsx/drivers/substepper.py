@@ -29,6 +29,7 @@ class MHSSubstepper(ABC):
         # TODO: Complete. Data to set activation in predictor_step
         self.initial_active_els = self.ps.active_els_func.x.array.nonzero()[0]
         self.initial_restriction = self.ps.restriction
+        self.define_subproblem()
     
     def __del__(self):
         for w in self.writers.values():
@@ -359,7 +360,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         for p in [self.ps,self.pf]:
             self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{self.name}_{p.name}.pvd", "wb")
 
-    def writepos(self,case="macro"):
+    def writepos(self,case="macro",extra_funs=[]):
         if not(self.do_writepos):
             return
         (ps,pf) = (self.ps,self.pf)
@@ -384,6 +385,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
             except (AttributeError,KeyError):
                 continue
 
+        funs += extra_funs
         p.compute_gradient()
         self.writers[p].write_function(funs,t=time)
 
@@ -525,6 +527,6 @@ class MHSStaggeredSubstepper(MHSSubstepper):
                 propagate_dg0_at_facets_same_mesh(p_ext, p_ext.k, p, self.ext_conductivity_tn[p])
 
         dim = self.ext_flux_tn[p].function_space.value_size
-        for cell in sd.active_gamma_cells[p]:
-            self.ext_flux_tn[p].x.array[cell*dim:cell*dim+dim] *= self.ext_conductivity_tn[p].x.array[cell]
+        for idx in range(dim):
+            self.ext_flux_tn[p].x.array[sd.active_gamma_cells[p]*dim+idx] *= self.ext_conductivity_tn[p].x.array[sd.active_gamma_cells[p]]
         self.ext_flux_tn[p].x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)

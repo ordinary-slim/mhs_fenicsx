@@ -21,7 +21,7 @@ CHECKPOINTS
 - [x] Phase change
 - [ ] Temperature dependent parameters
 - [x] 5 tests
-- [ ] 10 tests
+- [x] 10 tests
 - [ ] Chimera inside of substepper (difficult)
 - [x] Coupling of Hodge
 - [x] Try out no submesh

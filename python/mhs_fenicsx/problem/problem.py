@@ -138,6 +138,8 @@ class Problem:
             "source",
             "dirichlet_bcs",
             "gamma_nodes",
+            ])
+        to_be_reset = set([
             "gamma_facets",
             "gamma_facets_index_map",
             "gamma_imap_to_global_imap",
@@ -157,6 +159,8 @@ class Problem:
                 setattr(result, k, attr)
         for k in to_be_deep_copied:
             setattr(result, k, copy.deepcopy(self.__dict__[k]))
+        for k in to_be_reset:
+            setattr(result, k, type(self.__dict__[k])())
         if not(name):
             name = result.name + "_bis"
         result.name = name

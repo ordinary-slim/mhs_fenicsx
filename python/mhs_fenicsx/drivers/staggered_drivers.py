@@ -253,7 +253,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
                                                      cells=self.gamma_cells[pd],
                                                      interpolation_data=self.iid[pn][pd])
         else:
-            self.ext_sol[pd].interpolate(pn.u,cells0=pn.active_els_func.x.array.nonzero()[0],cells1=pd.active_els_func.x.array.nonzero()[0])
+            self.ext_sol[pd] = pn.u
         self.ext_sol[pd].x.scatter_forward()
 
     def update_relaxation_factor(self):

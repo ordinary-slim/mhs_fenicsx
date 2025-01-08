@@ -2,7 +2,7 @@ from dolfinx import fem, mesh
 import numpy as np
 from mpi4py import MPI
 from mhs_fenicsx.problem import Problem
-from mhs_fenicsx.problem.helpers import assert_pointwise_vals
+from mhs_fenicsx.problem.helpers import assert_pointwise_vals, set_same_mesh_interface
 import yaml
 from mhs_fenicsx.drivers.staggered_drivers import StaggeredDNDriver, StaggeredRRDriver
 from mhs_fenicsx_cpp import cellwise_determine_point_ownership
@@ -44,7 +44,7 @@ def set_bc(pright,pleft):
     pright.add_dirichlet_bc(exact_sol,marker=right_marker_gamma_dirichlet, reset=True)
     pleft.add_dirichlet_bc(exact_sol,marker=left_marker_dirichlet,reset=True)
 
-def run(dd_type="dn"):
+def run(dd_type="dn", chimera=True):
     with open("input.yaml", 'r') as f:
         params = yaml.safe_load(f)
     rhs = Rhs(params["material"]["density"],
@@ -59,12 +59,16 @@ def run(dd_type="dn"):
         initial_relaxation_factors=[0.5,1.0]
     else:
         raise ValueError("dd_type must be 'dn' or 'robin'")
+    descriptor = dd_type + ("_chimera" if chimera else "_same_mesh")
     # Mesh and problems
     points_side = params["points_side"]
     left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.quadrilateral)
-    right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.triangle)
-    p_left = Problem(left_mesh, params, name=f"left_{dd_type}")
-    p_right = Problem(right_mesh, params, name=f"right_{dd_type}")
+    p_left = Problem(left_mesh, params, name=f"left_{descriptor}")
+    if chimera:
+        right_mesh = mesh.create_unit_square(MPI.COMM_WORLD, points_side, points_side, mesh.CellType.triangle)
+        p_right = Problem(right_mesh, params, name=f"right_{descriptor}")
+    else:
+        p_right = p_left.copy(name=f"right_{descriptor}")
     # Activation
     active_els = dict()
     active_els[p_left] = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] <= 0.5 )
@@ -76,6 +80,8 @@ def run(dd_type="dn"):
         f_exact[p] = fem.Function(p.v,name="exact")
         f_exact[p].interpolate(exact_sol)
         p.set_rhs(rhs)
+    if not(chimera):
+        set_same_mesh_interface(p_left, p_right)
 
     driver = driver_type(p_right,p_left,max_staggered_iters=params["max_staggered_iters"],
                          initial_relaxation_factors=initial_relaxation_factors)
@@ -94,25 +100,45 @@ def run(dd_type="dn"):
 tol = 1e-7
 points_left = np.array([[0.25,0.5,0.0],[0.5,0.5,0.0],])
 points_right = np.array([[0.5,0.5,0.0],[0.75,0.5,0.0],])
-vals_left_dn = np.array([1.68532511425681, 1.49462879481564])
-vals_right_dn = np.array([1.4946288473, 1.1853250916])
-vals_left_robin = np.array([1.6853234504, 1.4946274331])
-vals_right_robin = np.array([1.4946278829, 1.1853250921])
+vals_left_dn_chimera = np.array([1.68532511425681, 1.49462879481564])
+vals_right_dn_chimera = np.array([1.4946288473, 1.1853250916])
+vals_left_robin_chimera = np.array([1.6853234504, 1.4946274331])
+vals_right_robin_chimera = np.array([1.4946278829, 1.1853250921])
+vals_left_dn_same_mesh = np.array([1.68532459, 1.49462805]) 
+vals_right_dn_same_mesh = np.array([1.49462794, 1.18532456]) 
+vals_left_robin_same_mesh = np.array([1.68532444, 1.49462667]) 
+vals_right_robin_same_mesh = np.array([1.49462996, 1.18532476]) 
 
-def test_poisson_dd_dn():
+def test_chimera_poisson_dd_dn():
     driver = run("dn")
     p_right,p_left = (driver.p1,driver.p2)
     assert (driver.iter == 11)
-    for problem,points,vals in zip([p_left,p_right],[points_left,points_right],[vals_left_dn,vals_right_dn]):
+    for problem,points,vals in zip([p_left,p_right],[points_left,points_right],[vals_left_dn_chimera,vals_right_dn_chimera]):
         assert_pointwise_vals(problem,points,vals)
 
-def test_poisson_dd_robin():
+def test_chimera_poisson_dd_robin():
     driver = run("robin")
     p_right,p_left = (driver.p1,driver.p2)
     assert (driver.iter == 14)
-    for problem,points,vals in zip([p_left,p_right],[points_left,points_right],[vals_left_robin,vals_right_robin]):
+    for problem,points,vals in zip([p_left,p_right],[points_left,points_right],[vals_left_robin_chimera,vals_right_robin_chimera]):
+        assert_pointwise_vals(problem,points,vals)
+
+def test_same_mesh_poisson_dd_robin():
+    driver = run("robin", chimera=False)
+    p_right,p_left = (driver.p1,driver.p2)
+    assert (driver.iter == 14)
+    for problem,points,vals in zip([p_left,p_right],[points_left,points_right],[vals_left_robin_same_mesh,vals_right_robin_same_mesh]):
+        assert_pointwise_vals(problem,points,vals)
+
+def test_same_mesh_poisson_dd_dn():
+    driver = run("dn", chimera=False)
+    p_right,p_left = (driver.p1,driver.p2)
+    assert (driver.iter == 10)
+    for problem,points,vals in zip([p_left,p_right],[points_left,points_right],[vals_left_dn_same_mesh,vals_right_dn_same_mesh]):
         assert_pointwise_vals(problem,points,vals)
 
 if __name__=="__main__":
-    test_poisson_dd_dn()
-    test_poisson_dd_robin()
+    test_chimera_poisson_dd_dn()
+    test_chimera_poisson_dd_robin()
+    test_same_mesh_poisson_dd_dn()
+    test_same_mesh_poisson_dd_robin()

@@ -9,6 +9,7 @@ import shutil
 from dolfinx import mesh, fem, io
 import numpy as np
 from petsc4py import PETSc
+from line_profiler import LineProfiler
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -103,8 +104,13 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
 
             for p in [pm, pf]:
                 p.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
-            pf.subtract_problem(pm)
-            pm.find_gamma(pf)
+
+            fast_subproblem_els = pf.active_els_func.x.array.nonzero()[0]
+            pm.intersect_problem(pf, finalize=False)
+            pf.subtract_problem(pm, finalize=False)
+            for p, p_ext in [(pm, pf), (pf, pm)]:
+                p.finalize_activation()
+                p.find_gamma(p_ext)#TODO: Re-use previous data here
             assert(self.check_assumptions())
 
             self.micro_iter += 1
@@ -129,7 +135,9 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
             chimera_driver.solve()
 
             self.micro_post_iterate()
+            interpolate_solution_to_inactive(pf,pm)
             self.writepos(case="micro")
+            pf.set_activation(fast_subproblem_els, finalize=False)
 
     def initialize_post(self):
         if not(self.do_writepos):
@@ -234,4 +242,12 @@ if __name__=="__main__":
     with open("input.yaml", 'r') as f:
         params = yaml.safe_load(f)
     write_gcode(params)
-    run_staggered_RR(params,True)
+    lp = LineProfiler()
+    lp.add_module(MHSStaggeredChimeraSubstepper)
+    lp.add_module(MHSStaggeredSubstepper)
+    lp.add_module(MHSSubstepper)
+    lp_wrapper = lp(run_staggered_RR)
+    lp_wrapper(params,True)
+    profiling_file = f"profiling_chimera_rss_{rank}.txt"
+    with open(profiling_file, 'w') as pf:
+        lp.print_stats(stream=pf)

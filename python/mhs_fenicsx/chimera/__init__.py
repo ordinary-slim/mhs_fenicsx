@@ -18,13 +18,12 @@ def interpolate_solution_to_inactive(p:Problem, p_ext:Problem):
 def build_moving_problem(p_fixed:Problem,els_per_radius=2):
     moving_domain = mesh_around_hs(p_fixed.source,p_fixed.domain.topology.dim,els_per_radius)
     params = p_fixed.input_parameters.copy()
-    if "path" in params:
-        params.pop("path")
     params["domain_speed"]    = p_fixed.source.speed
     params["advection_speed"] = -p_fixed.source.speed
     if "petsc_opts_moving" in params:
         params["petsc_opts"] = params["petsc_opts_moving"]
-    return Problem(moving_domain, params,name=p_fixed.name+"_moving")
+    p = Problem(moving_domain, params,name=p_fixed.name+"_moving")
+    return p
 
 def mesh_around_hs(hs:HeatSource, dim:int,els_per_radius:int):
     center_of_mesh = np.array(hs.x)

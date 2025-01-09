@@ -67,6 +67,7 @@ class MonolithicDomainDecompositionDriver:
         du1du2.destroy()
         for p in [p1, p2]:
             p.u.x.array[:] += p.du.x.array[:]
+            p.is_grad_computed = False
 
     def post_iterate(self):
         for mat in [self.A12, self.A21]:

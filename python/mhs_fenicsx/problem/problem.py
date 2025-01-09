@@ -284,22 +284,25 @@ class Problem:
     def set_activation(self, active_els=typing.Optional[list], finalize=True):
         if active_els is None:
             active_els = np.arange(self.num_cells,dtype=np.int32)
+        self.active_els = active_els
         indices_to_function(self.dg0,active_els,self.dim,name="active_els",remote=False, f=self.active_els_func)
-
         if finalize:
-            self.local_active_els = self.active_els_func.x.array.nonzero()[0][:np.searchsorted(self.active_els_func.x.array.nonzero()[0], self.cell_map.size_local)]
-            self.active_els_func.x.scatter_forward()
+            self.finalize_activation()
 
-            old_active_dofs_array  = self.active_nodes_func.x.array.copy()
-            self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,remote=True)
-            self.active_nodes_func.x.array[:] = np.float64(0.0)
-            self.active_nodes_func.x.array[self.active_dofs] = np.float64(1.0)
-            #self.active_nodes_func.x.scatter_forward()
-            just_active_dofs_array = self.active_nodes_func.x.array - old_active_dofs_array
-            self.just_activated_nodes = np.flatnonzero(just_active_dofs_array)
+    def finalize_activation(self):
+        self.local_active_els = self.active_els_func.x.array.nonzero()[0][:np.searchsorted(self.active_els_func.x.array.nonzero()[0], self.cell_map.size_local)]
+        self.active_els_func.x.scatter_forward()
 
-            self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
-            self.update_boundary()
+        old_active_dofs_array  = self.active_nodes_func.x.array.copy()
+        self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, self.active_els, remote=True)
+        self.active_nodes_func.x.array[:] = np.float64(0.0)
+        self.active_nodes_func.x.array[self.active_dofs] = np.float64(1.0)
+        #self.active_nodes_func.x.scatter_forward()
+        just_active_dofs_array = self.active_nodes_func.x.array - old_active_dofs_array
+        self.just_activated_nodes = np.flatnonzero(just_active_dofs_array)
+
+        self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
+        self.update_boundary()
 
     def update_boundary(self):
         bfacets_indices  = locate_active_boundary(self.domain, self.active_els_func)

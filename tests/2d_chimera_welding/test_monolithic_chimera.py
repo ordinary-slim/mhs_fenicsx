@@ -1,6 +1,7 @@
 from mhs_fenicsx import problem
 from mhs_fenicsx.drivers.monolithic_drivers import MonolithicRRDriver
 from mhs_fenicsx.chimera import build_moving_problem, interpolate_solution_to_inactive
+from mhs_fenicsx.problem.helpers import assert_pointwise_vals
 import numpy as np
 import yaml
 from mpi4py import MPI
@@ -10,8 +11,8 @@ from line_profiler import LineProfiler
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-def main():
-    with open("input.yaml", 'r') as f:
+def main(input_file, writepos=True):
+    with open(input_file, 'r') as f:
         params = yaml.safe_load(f)
     def get_el_size(resolution=4.0):
         return params["heat_source"]["radius"] / resolution
@@ -46,7 +47,8 @@ def main():
     for _ in range(max_temporal_iters):
         for p in [p_fixed, p_moving]:
             p.pre_iterate()
-        p_fixed.subtract_problem(p_moving)
+        physical_actival_els = p_fixed.local_active_els
+        p_fixed.subtract_problem(p_moving, finalize=True)
         p_moving.find_gamma(p_fixed)
 
         for p in [p_fixed, p_moving]:
@@ -69,7 +71,22 @@ def main():
         interpolate_solution_to_inactive(p_fixed,p_moving)
         for p in [p_fixed, p_moving]:
             p.post_iterate()
-            p.writepos(extra_funcs=extra_funs[p])
+            if writepos:
+                p.writepos(extra_funcs=extra_funs[p])
+        p_fixed.set_activation(physical_actival_els)
+    return p_fixed, p_moving
+
+def test_monolothic_chimera_2d_welding():
+    pf, pm = main("test_input.yaml", writepos=False)
+    points = np.array([
+        [-0.275, +0.000, +0.000],
+        [-0.600, +0.200, +0.000],
+        [-0.600, +0.000, +0.000],
+        [-0.300, -0.200, +0.000],
+        [-0.000, -0.000, +0.000],
+        ],dtype=np.float64)
+    target_vals = np.array([201.94069, 25.328485, 41.236447, 25.619813, 24.986556],dtype=np.float64)
+    assert_pointwise_vals(pf,points,target_vals)
 
 if __name__=="__main__":
     lp = LineProfiler()
@@ -78,6 +95,6 @@ if __name__=="__main__":
     lp.add_function(interpolate_solution_to_inactive)
     lp.add_module(MonolithicRRDriver)
     lp_wrapper = lp(main)
-    lp_wrapper()
+    lp_wrapper("input.yaml")
     with open(f"monolithic_profiling_{rank}.txt", 'w') as pf:
         lp.print_stats(stream=pf)

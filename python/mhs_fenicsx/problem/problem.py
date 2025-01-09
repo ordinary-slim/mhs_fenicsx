@@ -63,6 +63,7 @@ class Problem:
         self.dirichlet_bcs = []
 
         # BCs / Interface
+        self.ext_nodal_activation : dict['Problem', npt.NDArray[np.bool]] = {}
         self.gamma_nodes : dict['Problem', fem.Function] = {}
         self.gamma_facets : dict['Problem', mesh.MeshTags] = {}
         self.gamma_facets_index_map : dict['Problem', dolfinx.common.IndexMap] = {}
@@ -280,27 +281,25 @@ class Problem:
         self.update_boundary()
 
     # TODO: Overload this function
-    def set_activation(self, active_els=None):
-        '''
-        TODO: Refactor so that if arg None, do nothing.
-        bfacets should be somewhere else possibly
-        '''
+    def set_activation(self, active_els=typing.Optional[list], finalize=True):
         if active_els is None:
             active_els = np.arange(self.num_cells,dtype=np.int32)
         indices_to_function(self.dg0,active_els,self.dim,name="active_els",remote=False, f=self.active_els_func)
-        self.local_active_els = self.active_els_func.x.array.nonzero()[0][:np.searchsorted(self.active_els_func.x.array.nonzero()[0], self.cell_map.size_local)]
-        #self.active_els_func.x.scatter_forward()
 
-        old_active_dofs_array  = self.active_nodes_func.x.array.copy()
-        self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,remote=True)
-        self.active_nodes_func.x.array[:] = np.float64(0.0)
-        self.active_nodes_func.x.array[self.active_dofs] = np.float64(1.0)
-        #self.active_nodes_func.x.scatter_forward()
-        just_active_dofs_array = self.active_nodes_func.x.array - old_active_dofs_array
-        self.just_activated_nodes = np.flatnonzero(just_active_dofs_array)
+        if finalize:
+            self.local_active_els = self.active_els_func.x.array.nonzero()[0][:np.searchsorted(self.active_els_func.x.array.nonzero()[0], self.cell_map.size_local)]
+            self.active_els_func.x.scatter_forward()
 
-        self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
-        self.update_boundary()
+            old_active_dofs_array  = self.active_nodes_func.x.array.copy()
+            self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, active_els,remote=True)
+            self.active_nodes_func.x.array[:] = np.float64(0.0)
+            self.active_nodes_func.x.array[self.active_dofs] = np.float64(1.0)
+            #self.active_nodes_func.x.scatter_forward()
+            just_active_dofs_array = self.active_nodes_func.x.array - old_active_dofs_array
+            self.just_activated_nodes = np.flatnonzero(just_active_dofs_array)
+
+            self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
+            self.update_boundary()
 
     def update_boundary(self):
         bfacets_indices  = locate_active_boundary(self.domain, self.active_els_func)
@@ -331,14 +330,25 @@ class Problem:
                                                                 self.domain.geometry.x,
                                                                 p_ext.active_els_func.x.array.nonzero()[0],
                                                                 1e-7,)
-        return np.array(po.src_owner>=0,dtype=np.int32)
+        return np.array(po.src_owner>=0,dtype=np.bool)
 
-    def subtract_problem(self, p_ext : 'Problem'):
-        self.ext_nodal_activation = self.get_active_in_external(p_ext)
-        active_els_cpp = mhs_fenicsx_cpp.deactivate_from_nodes(self.domain._cpp_object,
-                                                              self.ext_nodal_activation)
-        self.set_activation(active_els_cpp)
-        self.find_gamma(p_ext, self.ext_nodal_activation)
+    def subtract_problem(self, p_ext : 'Problem', finalize=True):
+        self.ext_nodal_activation[p_ext] = self.get_active_in_external(p_ext)
+        new_active_els = mhs_fenicsx_cpp.deactivate_from_nodes(self.domain._cpp_object,
+                                                               self.active_els_func._cpp_object,
+                                                               self.ext_nodal_activation[p_ext])
+        self.set_activation(new_active_els, finalize=finalize)
+        if finalize:
+            self.find_gamma(p_ext, self.ext_nodal_activation[p_ext])
+
+    def intersect_problem(self, p_ext : 'Problem', finalize=True):
+        self.ext_nodal_activation[p_ext] = self.get_active_in_external(p_ext)
+        new_active_els = mhs_fenicsx_cpp.intersect_from_nodes(self.domain._cpp_object,
+                                                              self.active_els_func._cpp_object,
+                                                              self.ext_nodal_activation[p_ext])
+        self.set_activation(new_active_els, finalize=finalize)
+        if finalize:
+            self.find_gamma(p_ext, self.ext_nodal_activation[p_ext])
 
     def find_gamma(self, p_ext : 'Problem', ext_active_dofs_array = None):
         # TODO: Add p_ext as argument

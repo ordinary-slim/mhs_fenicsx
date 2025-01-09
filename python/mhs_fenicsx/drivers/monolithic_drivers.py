@@ -53,7 +53,7 @@ class MonolithicDomainDecompositionDriver:
         ksp.getPC().setFactorSolverType("mumps")
         ksp.getPC().setFactorSetUpSolverType()
         ksp.getPC().getFactorMatrix().setMumpsIcntl(icntl=7, ival=4)
-        ksp.setFromOptions()
+        #ksp.setFromOptions()
         ksp.solve(self.L, du1du2)
         for du1du2_sub in du1du2.getNestSubVecs():
             du1du2_sub.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)

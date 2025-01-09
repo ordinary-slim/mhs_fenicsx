@@ -50,48 +50,81 @@ std::vector<int> locate_active_boundary(const dolfinx::mesh::Mesh<T> &domain,
 }
 
 template <std::floating_point T>
-std::vector<int> deactivate_from_nodes(const dolfinx::mesh::Mesh<T> &domain,
-                                       const std::span<const T> nodes_to_subtract) {
-  // TODO: Check if type of nodes_to_subtract should really be T ? Probably not
+la::Vector<std::int8_t> node_mask_to_el_mask(const dolfinx::mesh::Mesh<T> &domain,
+                                      const std::span<const bool> node_mask) {
   // 1. Make vector
   auto topology = domain.topology();
   auto dofmap_x = domain.geometry().dofmap();
-  int cdim = topology->dim();
-  auto cell_map = topology->index_map(cdim);
-  const std::int32_t num_local_cells = cell_map->size_local(), num_ghost_cells = cell_map->num_ghosts();
-  la::Vector active_els_mask = la::Vector<std::int32_t>(cell_map, 1);
-  active_els_mask.set(1);// Start out as all active
-  auto active_els_mask_vals = active_els_mask.mutable_array();
+  auto cell_map = topology->index_map(topology->dim());
+  const std::int32_t num_local_cells = cell_map->size_local();
+  la::Vector els_mask = la::Vector<std::int8_t>(cell_map, 1);
+  els_mask.set(0);
+  auto els_mask_vals = els_mask.mutable_array();
   // 2. Loop over els
   for (int icell = 0; icell < num_local_cells; ++icell) {
-    bool all_active_in_ext = true;
     auto xdofs = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
         dofmap_x, icell, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
+    bool all_el_nodes_active = true;
     for (int i = 0; i < dofmap_x.extent(1); ++i) {
-      if (nodes_to_subtract[xdofs[i]]!=1) {
-        all_active_in_ext = false;
+      if (node_mask[xdofs[i]]!=1) {
+        all_el_nodes_active = false;
         break;
       }
     }
-    if (all_active_in_ext)
-      active_els_mask_vals[icell] = 0;
+    if (all_el_nodes_active)
+      els_mask_vals[icell] = 1;
   }
   // 3. Scatter
-  active_els_mask.scatter_fwd();
-  // 4. Extract indices
-  std::vector<int> active_els;
+  els_mask.scatter_fwd();
+  return els_mask;
+}
+
+template <std::floating_point T>
+std::vector<std::int32_t> deactivate_from_nodes(const dolfinx::mesh::Mesh<T> &domain,
+                                       const dolfinx::fem::Function<T> &active_els_func,
+                                       const std::span<const bool> nodes_to_subtract) {
+  auto topology = domain.topology();
+  auto cell_map = topology->index_map(topology->dim());
+  const std::int32_t num_local_cells = cell_map->size_local(), num_ghost_cells = cell_map->num_ghosts();
+  la::Vector<std::int8_t> ext_active_els_mask = node_mask_to_el_mask(domain, nodes_to_subtract);
+  std::span<const std::int8_t> ext_active_els_mask_vals = ext_active_els_mask.array();
+
+  auto curr_active_els_mask = active_els_func.x()->array();
+  std::vector<std::int32_t> new_active_els;
   for (int icell = 0; icell < (num_local_cells+num_ghost_cells); ++icell) {
-    if (active_els_mask_vals[icell]==1)
-      active_els.push_back(icell);
+    if ((curr_active_els_mask[icell]) and (not(ext_active_els_mask_vals[icell]))) {
+      new_active_els.push_back(icell);
+    }
   }
-  return active_els;
+  return new_active_els;
+}
+
+template <std::floating_point T>
+std::vector<std::int32_t> intersect_from_nodes(const dolfinx::mesh::Mesh<T> &domain,
+    const dolfinx::fem::Function<T> &active_els_func,
+    const std::span<const bool> nodes_to_intersect) {
+
+  auto topology = domain.topology();
+  auto cell_map = topology->index_map(topology->dim());
+  const std::int32_t num_local_cells = cell_map->size_local(), num_ghost_cells = cell_map->num_ghosts();
+  la::Vector<std::int8_t> ext_active_els_mask = node_mask_to_el_mask(domain, nodes_to_intersect);
+  std::span<const std::int8_t> ext_active_els_mask_vals = ext_active_els_mask.array();
+
+  auto curr_active_els_mask = active_els_func.x()->array();
+  std::vector<std::int32_t> new_active_els;
+  for (int icell = 0; icell < (num_local_cells+num_ghost_cells); ++icell) {
+    if ((curr_active_els_mask[icell]) and (ext_active_els_mask_vals[icell])) {
+      new_active_els.push_back(icell);
+    }
+  }
+  return new_active_els;
 }
 
 template <std::floating_point T>
 mesh::MeshTags<std::int32_t> find_interface(const dolfinx::mesh::Mesh<T> &domain,
                                             mesh::MeshTags<std::int32_t> &bfacet_tag,
                                             const dolfinx::common::IndexMap& dofs_index_map,
-                                            const std::span<const std::int32_t> &ext_active_dofs_flags) {
+                                            const std::span<const bool> &ext_active_dofs_flags) {
   // Initialize arrays
   auto topology = domain.topology();
   int cdim = topology->dim();
@@ -129,7 +162,6 @@ mesh::MeshTags<std::int32_t> find_interface(const dolfinx::mesh::Mesh<T> &domain
   return mesh::MeshTags<std::int32_t>(topology,cdim-1,std::move(ents),std::move(tags));
 }
 
-
 namespace nb = nanobind;
 template <std::floating_point T>
 void templated_declare_activation_utils(nb::module_ &m) {
@@ -137,17 +169,34 @@ void templated_declare_activation_utils(nb::module_ &m) {
   m.def(
       "deactivate_from_nodes",
       [](const dolfinx::mesh::Mesh<T> &domain,
-         nb::ndarray<const T, nb::ndim<1>, nb::c_contig> nodes_to_subtract)
+         const dolfinx::fem::Function<T> &active_els_func,
+         nb::ndarray<const bool, nb::ndim<1>, nb::c_contig> nodes_to_subtract)
       {
-        return deactivate_from_nodes<T>(domain,
-                                        std::span(nodes_to_subtract.data(),nodes_to_subtract.size()));
+      std::vector<std::int32_t> new_active_els = deactivate_from_nodes<T>(domain,
+          active_els_func,
+          std::span(nodes_to_subtract.data(),nodes_to_subtract.size()));
+      return nb::ndarray<const std::int32_t, nb::numpy>(new_active_els.data(),
+                                                {new_active_els.size()}).cast();
+      }
+      );
+  m.def(
+      "intersect_from_nodes",
+      [](const dolfinx::mesh::Mesh<T> &domain,
+         const dolfinx::fem::Function<T> &active_els_func,
+         nb::ndarray<const bool, nb::ndim<1>, nb::c_contig> nodes_to_subtract)
+      {
+      std::vector<std::int32_t> new_active_els = intersect_from_nodes<T>(domain,
+          active_els_func,
+          std::span(nodes_to_subtract.data(),nodes_to_subtract.size()));
+      return nb::ndarray<const std::int32_t, nb::numpy>(new_active_els.data(),
+                                                {new_active_els.size()}).cast();
       }
       );
   m.def("find_interface",
       [](const dolfinx::mesh::Mesh<T> &domain,
          mesh::MeshTags<std::int32_t> &bfacet_tag,
          const dolfinx::common::IndexMap& dofs_index_map,
-         nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> ext_active_dofs_flags)
+         nb::ndarray<const bool, nb::ndim<1>, nb::c_contig> ext_active_dofs_flags)
       {
         return find_interface(domain,
                               bfacet_tag,

@@ -5,7 +5,8 @@ from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.drivers import MHSSubstepper, MHSStaggeredSubstepper, NewtonRaphson, StaggeredRRDriver, MonolithicRRDriver
 from mhs_fenicsx.problem.helpers import propagate_dg0_at_facets_same_mesh
 from mhs_fenicsx.chimera import build_moving_problem, interpolate_solution_to_inactive
-from dolfinx import mesh, fem
+import shutil
+from dolfinx import mesh, fem, io
 import numpy as np
 from petsc4py import PETSc
 
@@ -16,9 +17,14 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
     def __init__(self, slow_problem: Problem, moving_problem : Problem,
                  writepos=True,
                  max_nr_iters=25,max_ls_iters=5,):
-        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters)
         self.pm = moving_problem
+        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters)
         self.quadrature_degree = 2 # Gamma Chimera
+
+    def define_subproblem(self, subproblem_els=None):
+        (ps,pf,pm) = plist = (self.ps,self.pf,self.pm)
+        super().define_subproblem(subproblem_els)
+        pm.set_dt(pf.dt.value)
 
     def check_assumptions(self):
         ''' No overlap between pm and ps '''
@@ -120,12 +126,50 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
             chimera_driver.setup_coupling()
             for p in [pm, pf]:
                 p.A.assemble()
-            import pdb
-            pdb.set_trace()
             chimera_driver.solve()
 
             self.micro_post_iterate()
             self.writepos(case="micro")
+
+    def initialize_post(self):
+        if not(self.do_writepos):
+            return
+        self.name = "staggered_chimera_substepper"
+        self.result_folder = f"post_{self.name}_tstep#{self.ps.iter}"
+        shutil.rmtree(self.result_folder,ignore_errors=True)
+        for p in [self.ps,self.pf, self.pm]:
+            self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{self.name}_{p.name}.pvd", "wb")
+
+    def writepos(self,case="macro",extra_funs=[]):
+        if not(self.do_writepos):
+            return
+        (ps,pf,pm) = (self.ps,self.pf,self.pm)
+        sd = self.staggered_driver
+        if not(self.writers):
+            self.initialize_post()
+
+        if case=="predictor":
+            p, p_ext = (ps, pf)
+            time = 0.0
+        elif case=="micro":
+            p, p_ext = (pf, ps)
+            time = (self.macro_iter-1) + self.fraction_macro_step
+        else:
+            p, p_ext = (ps, pf)
+            time = (self.macro_iter-1) + self.fraction_macro_step
+        get_funs = lambda p : [p.u,p.source.fem_function,p.active_els_func,p.grad_u, p.u_prev,self.u_prev[p]] + [gn for gn in p.gamma_nodes.values()]
+        p_funs = get_funs(p)
+        for fun_dic in [sd.ext_flux,sd.net_ext_flux,sd.ext_conductivity,sd.ext_sol,
+                        sd.prev_ext_flux,sd.prev_ext_sol]:
+            try:
+                p_funs.append(fun_dic[p])
+            except (AttributeError,KeyError):
+                continue
+        p_funs += extra_funs
+        p.compute_gradient()
+        self.writers[p].write_function(p_funs,t=time)
+        if case=="micro":
+            self.writers[pm].write_function(get_funs(pm),t=time)
 
 def run_staggered_RR(params, writepos=True):
     els_per_radius = params["els_per_radius"]

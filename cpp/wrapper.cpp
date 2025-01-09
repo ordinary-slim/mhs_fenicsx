@@ -6,7 +6,7 @@
 namespace nb = nanobind;
 using int_vector = std::vector<int>;
 
-void declare_interpolate_dg0_at_facets(nb::module_ &m);
+void declare_interpolate(nb::module_ &m);
 void declare_my_determine_point_ownership(nb::module_ &m);
 void declare_activation_utils(nb::module_ &m);
 void declare_mesh_collision(nb::module_ &m);
@@ -22,7 +22,7 @@ NB_MODULE(mhs_fenicsx_cpp, m) {
   declare_get_facet_integration_entities(m);
   declare_diffmesh_utils(m);
   declare_activation_utils(m);
-  declare_interpolate_dg0_at_facets(m);
+  declare_interpolate(m);
   declare_my_determine_point_ownership(m);
   declare_mesh_collision(m);
   declare_submesh_utils(m);

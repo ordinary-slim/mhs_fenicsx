@@ -3,7 +3,7 @@ from mpi4py import MPI
 from test_2d_substepping import get_initial_condition, get_dt, write_gcode, get_mesh
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.drivers import MHSSubstepper, MHSStaggeredSubstepper, NewtonRaphson, StaggeredRRDriver, MonolithicRRDriver
-from mhs_fenicsx.problem.helpers import propagate_dg0_at_facets_same_mesh
+from mhs_fenicsx.problem.helpers import propagate_dg0_at_facets_same_mesh, interpolate
 from mhs_fenicsx.chimera import build_moving_problem, interpolate_solution_to_inactive
 import shutil
 from dolfinx import mesh, fem, io
@@ -246,6 +246,9 @@ if __name__=="__main__":
     lp.add_module(MHSStaggeredChimeraSubstepper)
     lp.add_module(MHSStaggeredSubstepper)
     lp.add_module(MHSSubstepper)
+    lp.add_module(MonolithicRRDriver)
+    lp.add_function(interpolate_solution_to_inactive)
+    lp.add_function(interpolate)
     lp_wrapper = lp(run_staggered_RR)
     lp_wrapper(params,True)
     profiling_file = f"profiling_chimera_rss_{rank}.txt"

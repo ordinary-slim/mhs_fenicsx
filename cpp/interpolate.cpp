@@ -206,9 +206,17 @@ void propagate_dg0_at_facets_same_mesh(const dolfinx::fem::Function<T> &sending_
   receiving_f.x()->scatter_fwd();
 }
 
+template <std::floating_point T>
+void interpolate_cg1_affine(const dolfinx::fem::Function<T> &sending_f,
+                            dolfinx::fem::Function<T> &receiving_f,
+                            std::span<const std::int32_t> sending_cells,
+                            std::span<const std::int32_t> nodes_to_interpolate)
+{
+}
+
 namespace nb = nanobind;
 template <std::floating_point T>
-void templated_declare_interpolate_dg0_at_facets(nb::module_ &m) {
+void templated_declare_interpolate(nb::module_ &m) {
   m.def(
       "interpolate_dg0_at_facets",
       [](
@@ -243,8 +251,8 @@ void templated_declare_interpolate_dg0_at_facets(nb::module_ &m) {
         const dolfinx::fem::Function<T> &sending_active_els_f,
         const dolfinx::fem::Function<T> &receiving_active_els_f,
         const dolfinx::common::IndexMap &gamma_index_map,
-        nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> gamma_imap_to_global_imap)
-      {
+        nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> gamma_imap_to_global_imap
+      ) {
         return propagate_dg0_at_facets_same_mesh<T>(sending_f,
                                                     receiving_f,
                                                     sending_active_els_f,
@@ -253,9 +261,23 @@ void templated_declare_interpolate_dg0_at_facets(nb::module_ &m) {
                                                     std::span(gamma_imap_to_global_imap.data(), gamma_imap_to_global_imap.size()));
       }
       );
+  m.def(
+      "interpolate_cg1_affine",
+      [](
+        const dolfinx::fem::Function<T> &sending_f,
+        dolfinx::fem::Function<T> &receiving_f,
+        nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> sending_cells,
+        nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> nodes_to_interpolate
+      ) {
+        return interpolate_cg1_affine<T>(sending_f,
+                                         receiving_f,
+                                         std::span(sending_cells.data(), sending_cells.size()),
+                                         std::span(nodes_to_interpolate.data(), nodes_to_interpolate.size()));
+      }
+      );
 }
 
-void declare_interpolate_dg0_at_facets(nb::module_ &m) {
-  templated_declare_interpolate_dg0_at_facets<double>(m);
-  templated_declare_interpolate_dg0_at_facets<float>(m);
+void declare_interpolate(nb::module_ &m) {
+  templated_declare_interpolate<double>(m);
+  templated_declare_interpolate<float>(m);
 }

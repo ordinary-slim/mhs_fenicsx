@@ -150,7 +150,7 @@ def run_reference(params, els_per_radius):
 
     macro_params = params.copy()
     macro_params["dt"] = get_dt(params["micro_adim_dt"], radius, speed)
-    final_t = macro_params["dt"]*params["max_timesteps"]
+    final_t = get_dt(params["macro_adim_dt"], radius, speed)*params["max_timesteps"]
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     big_p = Problem(big_mesh, macro_params, name="big")
 

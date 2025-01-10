@@ -273,22 +273,20 @@ class Problem:
         self._destroy()
         self.has_preassembled = False
 
-    def initialize_activation(self):
-        self.local_active_els = np.arange(self.cell_map.size_local)
+    def initialize_activation(self, finalize=True):
+        self.active_els = np.arange(self.num_cells,dtype=np.int32)
         self.active_els_func= fem.Function(self.dg0,name="active_els")
-        self.active_els_func.x.array[:] = 1.0
         self.active_nodes_func = fem.Function(self.v,name="active_nodes")
-        self.active_nodes_func.x.array[:] = 1.0
-        self.active_dofs = np.arange(self.num_nodes,dtype=np.int32)
-        self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
-        self.update_boundary()
+        self.active_els_func.x.array[:] = 1.0
+        if finalize:
+            self.finalize_activation()
 
     # TODO: Overload this function
     def set_activation(self, active_els=typing.Optional[list], finalize=True):
         if active_els is None:
             active_els = np.arange(self.num_cells,dtype=np.int32)
         self.active_els = active_els
-        indices_to_function(self.dg0,active_els,self.dim,name="active_els",remote=False, f=self.active_els_func)
+        indices_to_function(self.dg0,active_els,self.dim,remote=False, f=self.active_els_func)
         if finalize:
             self.finalize_activation()
 
@@ -330,9 +328,6 @@ class Problem:
         self.gamma_integration_data.clear()
 
     def get_active_in_external(self, p_ext:Problem ):
-        '''
-        Return nodal function with nodes active in p_ext
-        '''
         po = mhs_fenicsx_cpp.cellwise_determine_point_ownership(p_ext.domain._cpp_object,
                                                                 self.domain.geometry.x,
                                                                 p_ext.active_els_func.x.array.nonzero()[0],
@@ -452,6 +447,7 @@ class Problem:
             cte = (2.0*self.smoothing_cte_phase_change/(self.liquidus_temperature - self.solidus_temperature))
             melting_temperature = (self.liquidus_temperature + self.solidus_temperature) / 2.0
             fp  = lambda tem : cte/2.0*(1 - ufl.tanh(cte*(tem - melting_temperature))**2)
+            # self.u use here doesn't look correct! should use u
             self.a_ufl += self.rho * self.latent_heat * fp(self.u) *(self.u - self.u_prev)/self.dt_func*v*dx(subdomain_idx)
 
 

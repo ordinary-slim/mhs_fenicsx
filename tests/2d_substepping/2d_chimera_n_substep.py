@@ -247,6 +247,7 @@ if __name__=="__main__":
     lp.add_module(MHSStaggeredSubstepper)
     lp.add_module(MHSSubstepper)
     lp.add_module(MonolithicRRDriver)
+    lp.add_module(Problem)
     lp.add_function(interpolate_solution_to_inactive)
     lp.add_function(interpolate)
     lp_wrapper = lp(run_staggered_RR)

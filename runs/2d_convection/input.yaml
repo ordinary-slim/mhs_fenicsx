@@ -1,6 +1,6 @@
 isSteady: False
 heat_source : {
-  type : 0,
+  type : 2,
   initial_position : [0, 0, 0],
   initial_speed : [0.0, 0.0, 0],
   radius : 1,

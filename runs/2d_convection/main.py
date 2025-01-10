@@ -31,15 +31,19 @@ def run(case_name="case"):
               )
 
     p = Problem(domain, params, name=case_name)
-    active_els = fem.locate_dofs_geometrical(p.dg0_bg, lambda x : x[0] <= 0.0 )
+    active_els = fem.locate_dofs_geometrical(p.dg0, lambda x : x[0] <= 0.0 )
     p.set_activation( active_els )
 
-    driver = SingleProblemDriver(p,params)
     p.set_initial_condition(10.0)
+    p.set_forms_domain()
+    p.set_forms_boundary()
+    p.compile_forms()
     for _ in range(10):
-        driver.pre_iterate()
-        driver.iterate()
-        driver.post_iterate()
+        p.pre_iterate()
+        p.pre_assemble()
+        p.assemble()
+        p.solve()
+        p.post_iterate()
         p.writepos()
 
 if __name__=="__main__":

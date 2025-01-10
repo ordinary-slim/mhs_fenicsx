@@ -83,7 +83,6 @@ nanobind_add_module(mhs_fenicsx_cpp
                     NOMINSIZE
                     wrapper.cpp
                     wrapper_get_facet_integration_entities.cpp
-                    my_determine_point_ownership.cpp
                     interpolate.cpp
                     activation_utils.cpp
                     geometry_utils.cpp
@@ -91,6 +90,7 @@ nanobind_add_module(mhs_fenicsx_cpp
                     diffmesh_utils.cpp
                     wrapper_create_robin_robin_monolithic.cpp
                     custom_create_matrix.cpp
+                    my_determine_point_ownership.cpp
                     )
 
 # Check for mpi4py

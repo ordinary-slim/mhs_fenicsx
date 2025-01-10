@@ -33,6 +33,7 @@ class Problem:
         self.name = name
         # Function spaces
         self.v       = fem.functionspace(domain, ("Lagrange", 1),)
+        self.dof_coords = self.v.tabulate_dof_coordinates()
         self.dg0  = fem.functionspace(domain, ("Discontinuous Lagrange", 0),)
         self.dg0_vec = fem.functionspace(self.domain,
                                          basix.ufl.element("DG",
@@ -255,7 +256,9 @@ class Problem:
         self.source.pre_iterate(self.time,self.dt.value,verbose=verbose)
         # Mesh motion
         if self.domain_speed is not None and not(self.is_mesh_shared):
-            self.domain.geometry.x[:] += np.round(self.domain_speed*self.dt.value,7)
+            dx = np.round(self.domain_speed*self.dt.value,7)
+            self.domain.geometry.x[:] += dx
+            self.dof_coords += dx
             self.clear_gamma_data()
             # This can be done more efficiently C++ level
             self.set_bb_trees()
@@ -290,7 +293,8 @@ class Problem:
             self.finalize_activation()
 
     def finalize_activation(self):
-        self.local_active_els = self.active_els_func.x.array.nonzero()[0][:np.searchsorted(self.active_els_func.x.array.nonzero()[0], self.cell_map.size_local)]
+        self.local_active_els = self.active_els_func.x.array.nonzero()[0]
+        self.local_active_els = self.local_active_els[:np.searchsorted(self.local_active_els, self.cell_map.size_local)]
         self.active_els_func.x.scatter_forward()
 
         old_active_dofs_array  = self.active_nodes_func.x.array.copy()

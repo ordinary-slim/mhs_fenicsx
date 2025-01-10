@@ -2,6 +2,7 @@ from __future__ import annotations
 from dolfinx import fem, mesh, geometry
 import ufl
 import numpy as np
+import numpy.typing as npt
 from mpi4py import MPI
 import dolfinx.fem.petsc
 import petsc4py.PETSc
@@ -10,25 +11,17 @@ import mhs_fenicsx_cpp
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-def interpolate(sending_func,
-                receiving_func,
-                cells=None):
-    '''
-    Interpolate sending_func to receiving_func,
-    each comming from separate meshes
-    '''
-    topology = receiving_func.function_space.mesh.topology
-    cmap = topology.index_map(topology.dim)
-    if cells is None:
-        num_cells = cmap.size_local + cmap.num_ghosts
-        cells = np.arange(num_cells,dtype=np.int32)
-    nmmid = fem.create_interpolation_data(
-                                 receiving_func.function_space,
-                                 sending_func.function_space,
-                                 cells,
-                                 padding=1e-6,)
-    receiving_func.interpolate_nonmatching(sending_func, cells, interpolation_data=nmmid)
-    return receiving_func,
+def interpolate(sf : dolfinx.fem.Function,
+                rf : dolfinx.fem.Function,
+                scells : npt.NDArray[np.int32],
+                rdofs : npt.NDArray[np.int32],
+                coords_rdofs : npt.NDArray[np.float64]):
+    mhs_fenicsx_cpp.interpolate_cg1_affine(sf._cpp_object,
+                                           rf._cpp_object,
+                                           scells,
+                                           rdofs,
+                                           coords_rdofs,
+                                           1e-6)
 
 def l2_squared(f : dolfinx.fem.Function,active_els_tag):
     dx = ufl.Measure("dx")(subdomain_data=active_els_tag)

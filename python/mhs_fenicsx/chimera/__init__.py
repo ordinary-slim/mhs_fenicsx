@@ -2,18 +2,17 @@ import dolfinx.mesh
 import numpy as np
 from mpi4py import MPI
 from mhs_fenicsx.problem import Problem, HeatSource
-from mhs_fenicsx.problem.helpers import interpolate
-from mhs_fenicsx.geometry import mesh_containment
-from dolfinx import fem
+import mhs_fenicsx_cpp
 
 def interpolate_solution_to_inactive(p:Problem, p_ext:Problem):
-    ''' TODO: Optimize this '''
-    u_ext = fem.Function(p.v)
-    inactive_cells = (1-p.active_els_func.x.array).nonzero()[0]
-    interpolate(p_ext.u,u_ext,cells=inactive_cells)
-    inactive_nodes = np.where(p.active_nodes_func.x.array==0)[0]
-    p.u.x.array[inactive_nodes] = u_ext.x.array[inactive_nodes]
-    p.u.x.scatter_forward()
+    local_inactive_dofs = (p.active_nodes_func.x.array == 0).nonzero()[0]
+    local_inactive_dofs = local_inactive_dofs[:np.searchsorted(local_inactive_dofs, p.domain.topology.index_map(0).size_local)]
+    mhs_fenicsx_cpp.interpolate_cg1_affine(p_ext.u._cpp_object,
+                                           p.u._cpp_object,
+                                           np.arange(p_ext.cell_map.size_local),
+                                           local_inactive_dofs,
+                                           p.dof_coords[local_inactive_dofs],
+                                           1e-6)
 
 def build_moving_problem(p_fixed:Problem,els_per_radius=2):
     moving_domain = mesh_around_hs(p_fixed.source,p_fixed.domain.topology.dim,els_per_radius)

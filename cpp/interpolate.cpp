@@ -12,6 +12,8 @@
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/vector.h>
+#include "diffmesh_utils.h"
+#include "my_eval_affine.h"
 
 template <std::floating_point T>
 void interpolate_dg0_at_facets(std::vector<std::reference_wrapper<const dolfinx::fem::Function<T>>> &sending_fs,
@@ -210,8 +212,62 @@ template <std::floating_point T>
 void interpolate_cg1_affine(const dolfinx::fem::Function<T> &sending_f,
                             dolfinx::fem::Function<T> &receiving_f,
                             std::span<const std::int32_t> sending_cells,
-                            std::span<const std::int32_t> nodes_to_interpolate)
+                            std::span<const std::int32_t> dofs_to_interpolate,
+                            std::span<const T> _coords_dofs_to_interpolate,
+                            T padding = 1e-7)
 {
+  std::shared_ptr smesh = sending_f.function_space()->mesh();//sending mesh
+  std::shared_ptr rmesh = receiving_f.function_space()->mesh();//receiving mesh
+  MPI_Comm comm = smesh->comm();
+  {
+    int result;
+    MPI_Comm_compare(comm, rmesh->comm(), &result);
+    if (result == MPI_UNEQUAL)
+    {
+      throw std::runtime_error("Interpolation on different meshes is only "
+                               "supported on the same communicator.");
+    }
+  }
+  assert(_coords_dofs_to_interpolate.size() % 3 == 0);
+  size_t num_dofs_processor = _coords_dofs_to_interpolate.size() / 3;
+  assert(num_dofs_processor == dofs_to_interpolate.size());
+
+  dolfinx::geometry::PointOwnershipData<T> interpolation_data =
+    geometry::determine_point_ownership<T>(*smesh, _coords_dofs_to_interpolate, padding);
+
+  const std::vector<int>& dest_ranks = interpolation_data.src_owner;
+  const std::vector<int>& src_ranks = interpolation_data.dest_owners;
+  const std::vector<T>& recv_points = interpolation_data.dest_points;
+  const std::vector<std::int32_t>& evaluation_cells
+      = interpolation_data.dest_cells;
+
+  const std::size_t sbsize = sending_f.function_space()->element()->value_size();
+  assert(sbsize == receiving_f.function_space().get()->element()->value_size());
+  // Evaluate the interpolating function where possible
+  std::vector<T> send_values(recv_points.size() / 3 * sbsize);
+  eval_affine<T,T>(sending_f, recv_points, {recv_points.size() / 3, (std::size_t)3},
+      evaluation_cells, send_values, {recv_points.size() / 3, sbsize});
+
+  using dextents2 = MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>;
+
+  // Send values back to owning process
+  std::vector<T> values_b(dest_ranks.size() * sbsize);
+  MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<const T, dextents2> _send_values(
+      send_values.data(), src_ranks.size(), sbsize);
+  scatter_values(comm, src_ranks, dest_ranks, _send_values,
+      std::span(values_b));
+
+  MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<const T, dextents2> values(
+      values_b.data(), dest_ranks.size(), sbsize);
+
+  // Insert vals into receiving_f
+  auto rvals = receiving_f.x()->mutable_array();
+  for (int i = 0; i < num_dofs_processor; ++i) {
+    std::int32_t dof = dofs_to_interpolate[i];
+    for (int j = 0; j < sbsize; ++j)
+      rvals[dof*sbsize + j] = values(i,j);
+  }
+  receiving_f.x()->scatter_fwd();
 }
 
 namespace nb = nanobind;
@@ -267,12 +323,16 @@ void templated_declare_interpolate(nb::module_ &m) {
         const dolfinx::fem::Function<T> &sending_f,
         dolfinx::fem::Function<T> &receiving_f,
         nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> sending_cells,
-        nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> nodes_to_interpolate
+        nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> dofs_to_interpolate,
+        nb::ndarray<const T, nb::ndim<2>, nb::c_contig> coords_dofs_to_interpolate,
+        T padding
       ) {
         return interpolate_cg1_affine<T>(sending_f,
                                          receiving_f,
                                          std::span(sending_cells.data(), sending_cells.size()),
-                                         std::span(nodes_to_interpolate.data(), nodes_to_interpolate.size()));
+                                         std::span(dofs_to_interpolate.data(), dofs_to_interpolate.size()),
+                                         std::span(coords_dofs_to_interpolate.data(), coords_dofs_to_interpolate.size()),
+                                         padding);
       }
       );
 }

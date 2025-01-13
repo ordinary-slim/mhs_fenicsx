@@ -108,6 +108,7 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
         ps.u.interpolate(pf.u,
                          cells0=pf.active_els_func.x.array.nonzero()[0],
                          cells1=pf.active_els_func.x.array.nonzero()[0])
+        ps.is_grad_computed = False
         if writepos:
             ps.writepos()
     return big_p

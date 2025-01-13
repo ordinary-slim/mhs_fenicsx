@@ -1,4 +1,4 @@
-from mhs_fenicsx.problem.helpers import propagate_dg0_at_facets_same_mesh, set_same_mesh_interface
+from mhs_fenicsx.problem.helpers import propagate_dg0_at_facets_same_mesh, set_same_mesh_interface, get_identity_maps
 from mpi4py import MPI
 from dolfinx import fem, io
 import ufl
@@ -212,6 +212,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         ps.u_prev.x.array[self.gamma_dofs_fast] = pf.u_prev.x.array[self.gamma_dofs_fast]
 
         subdomain_data = [(idx+1, active_els) for (idx, active_els) in enumerate([p.local_active_els for p in [ps, pf]])]
+        form_subdomain_data = {fem.IntegralType.cell:subdomain_data}
         ps.set_forms_domain((1,subdomain_data))
         pf.set_forms_domain((2,subdomain_data))
 
@@ -219,8 +220,25 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         l_ufl = ps.l_ufl + pf.l_ufl
         r_ufl = a_ufl - l_ufl#residual
         j_ufl = ufl.derivative(r_ufl, ps.u) + ufl.derivative(r_ufl, pf.u)
-        mr_instance = fem.form(-r_ufl)
-        j_instance = fem.form(j_ufl)
+        mr_ufl = -r_ufl
+        j_compiled = fem.compile_form(ps.domain.comm, j_ufl,
+                                      form_compiler_options={"scalar_type": np.float64})
+        rcoeffmap, rconstmap = get_identity_maps(j_ufl)
+        j_instance = fem.create_form(j_compiled,
+                                     [ps.v, ps.v],
+                                     msh=ps.domain,
+                                     subdomains=form_subdomain_data,
+                                     coefficient_map=rcoeffmap,
+                                     constant_map=rconstmap)
+        mr_compiled = fem.compile_form(ps.domain.comm, mr_ufl,
+                                      form_compiler_options={"scalar_type": np.float64})
+        rcoeffmap, rconstmap = get_identity_maps(mr_ufl)
+        mr_instance = fem.create_form(mr_compiled,
+                                     [ps.v],
+                                     msh=ps.domain,
+                                     subdomains=form_subdomain_data,
+                                     coefficient_map=rcoeffmap,
+                                     constant_map=rconstmap)
 
         ps_restriction = ps.restriction
         ps.restriction = self.initial_restriction

@@ -161,3 +161,12 @@ def assert_pointwise_vals(p:Problem, points, ref_vals, rtol=1.e-5):
 
     vals = p.u.eval(po.dest_points[rindices_points_found], po.dest_cells[rindices_points_found]).reshape(-1)
     assert np.isclose(ref_vals[indices_points_found], vals, rtol=rtol).all()
+
+def get_identity_maps(form):
+    coefficient_map = {}
+    constant_map = {}
+    for coeff in form.coefficients():
+        coefficient_map[coeff] = coeff
+    for const in form.constants():
+        constant_map[const] = const
+    return coefficient_map, constant_map

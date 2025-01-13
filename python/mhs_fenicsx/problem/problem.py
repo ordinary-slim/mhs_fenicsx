@@ -415,9 +415,7 @@ class Problem:
             subdomain_data = [(subdomain_idx, self.local_active_els)]
         else:
             (subdomain_idx, subdomain_data) = subdomain_data
-        dx = ufl.Measure("dx", subdomain_data=subdomain_data,
-                         metadata=self.quadrature_metadata,
-                         )
+        dx = ufl.Measure("dx", metadata=self.quadrature_metadata)
         u = argument if argument is not None else self.u
         v = ufl.TestFunction(self.v)
         self.a_ufl = self.k*ufl.dot(ufl.grad(u), ufl.grad(v))*dx(subdomain_idx)
@@ -461,10 +459,7 @@ class Problem:
         since a_ufl and l_ufl not initialized before
         '''
         #TODO: Exclude Gamma facets from this!
-        boun_integral_entities = self.get_facet_integrations_entities(self.bfacets_tag.find(1))
-        ds = ufl.Measure('ds', domain=self.domain, subdomain_data=[
-                         (1,np.asarray(boun_integral_entities, dtype=np.int32))],
-                         metadata=self.quadrature_metadata)
+        ds = ufl.Measure('ds', metadata=self.quadrature_metadata)
         u = argument if argument is not None else self.u
         v = ufl.TestFunction(self.v)
         # CONVECTION
@@ -485,14 +480,6 @@ class Problem:
                                             form_compiler_options={"scalar_type": np.float64})
         self.j_compiled = fem.compile_form(self.domain.comm, self.j_ufl,
                                             form_compiler_options={"scalar_type": np.float64})
-        def get_identity_maps(form):
-            coefficient_map = {}
-            constant_map = {}
-            for coeff in form.coefficients():
-                coefficient_map[coeff] = coeff
-            for const in form.constants():
-                constant_map[const] = const
-            return coefficient_map, constant_map
         rcoeffmap, rconstmap = get_identity_maps(self.mr_ufl)
         self.mr_instance = fem.create_form(self.mr_compiled,
                                            [self.v],

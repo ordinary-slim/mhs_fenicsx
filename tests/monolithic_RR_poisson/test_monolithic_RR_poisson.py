@@ -164,13 +164,12 @@ def run(dim, els_side, el_type, writepos=False):
     neumann_facets = {}
     for p, marker in zip([p_left, p_right], [left_marker_neumann, right_marker_neumann]):
         p.set_forms_domain()
-        # Set-up remaining terms
+        # Set-up Neumann condition
         neumann_tag = 66
         neumann_facets[p] = marker(p)
-        neumann_int_ents = p.get_facet_integrations_entities(neumann_facets[p])
-        subdomain_data = [(neumann_tag, np.asarray(neumann_int_ents, dtype=np.int32))]
+        p.form_subdomain_data[fem.IntegralType.exterior_facet].append((neumann_tag, p.get_facet_integrations_entities(neumann_facets[p])))
         # Neumann condition
-        ds = ufl.Measure('ds', domain=p.domain, subdomain_data=subdomain_data)
+        ds = ufl.Measure('ds')
         n = ufl.FacetNormal(p.domain)
         v = ufl.TestFunction(p.v)
         p.l_ufl += +p.k * ufl.inner(n, grad_exact_sol(p.domain)) * v * ds(neumann_tag)

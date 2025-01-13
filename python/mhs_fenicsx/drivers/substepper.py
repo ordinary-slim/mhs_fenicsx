@@ -126,6 +126,7 @@ class MHSSubstepper(ABC):
             pf.set_dt(dt2track_end)
 
     def post_loop(self):
+        #TODO: Change this!
         self.ps.initialize_activation()
 
 class MHSSemiMonolithicSubstepper(MHSSubstepper):
@@ -404,7 +405,6 @@ class MHSStaggeredSubstepper(MHSSubstepper):
                 continue
 
         funs += extra_funs
-        p.compute_gradient()
         self.writers[p].write_function(funs,t=time)
 
     def micro_steps(self):

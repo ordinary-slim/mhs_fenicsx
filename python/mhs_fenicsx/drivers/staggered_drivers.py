@@ -112,7 +112,6 @@ class StaggeredDomainDecompositionDriver:
             p_index_ghost = np.searchsorted(self.active_gamma_cells[p],p.cell_map.size_local-1,side='right')
             self.active_gamma_cells[p] = self.active_gamma_cells[p][:p_index_ghost]
 
-
     def pre_loop(self,set_bc=None):
         (p1, p2) = (self.p1, self.p2)
         self.ext_conductivity = dict()
@@ -133,6 +132,7 @@ class StaggeredDomainDecompositionDriver:
         self.gamma_dofs = dict()
         for p, p_ext in [(p1,p2),(p2,p1)]:
             self.gamma_dofs[p] = fem.locate_dofs_topological(p.v,0,p.gamma_nodes[p_ext].x.array.nonzero()[0],True)
+            p.form_subdomain_data[fem.IntegralType.exterior_facet].append((8,p.gamma_integration_data[p_ext]))
         # Ext bc
         if set_bc is not None:
             #TODO: Fix this, bug prone!
@@ -287,8 +287,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         (p, p_ext) = (self.p_neumann, self.p_dirichlet)
         self.update_neumann_interface()
         # Custom measure
-        dS = ufl.Measure('ds', domain=p.domain, subdomain_data=[
-            (8,p.gamma_integration_data[p_ext])])
+        dS = ufl.Measure('ds')
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
         neumann_con = +ufl.inner(n,self.net_ext_flux[p])
@@ -428,8 +427,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
             p_ext=self.p1
         self.update_robin(p)
         # Custom measure
-        dS = ufl.Measure('ds', domain=p.domain, subdomain_data=[
-            (8,p.gamma_integration_data[p_ext])])
+        dS = ufl.Measure('ds')
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
         (u, v) = (p.u,ufl.TestFunction(p.v))

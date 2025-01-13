@@ -41,7 +41,7 @@ class MonolithicDomainDecompositionDriver:
         self.A = PETSc.Mat().createNest([[p1.A, self.A12], [self.A21, p2.A]])
         self.L = PETSc.Vec().createNest([p1.L, p2.L])
         # SOLVE
-        l_cpp = [p1.mr_compiled, p2.mr_compiled]
+        l_cpp = [p1.mr_instance, p2.mr_instance]
         restriction = [p1.restriction, p2.restriction]
         du1du2 = multiphenicsx.fem.petsc.create_vector_nest(l_cpp, restriction=restriction)
         ksp = PETSc.KSP()

@@ -219,8 +219,8 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         l_ufl = ps.l_ufl + pf.l_ufl
         r_ufl = a_ufl - l_ufl#residual
         j_ufl = ufl.derivative(r_ufl, ps.u) + ufl.derivative(r_ufl, pf.u)
-        mr_compiled = fem.form(-r_ufl)
-        j_compiled = fem.form(j_ufl)
+        mr_instance = fem.form(-r_ufl)
+        j_instance = fem.form(j_ufl)
 
         ps_restriction = ps.restriction
         ps.restriction = self.initial_restriction
@@ -228,18 +228,18 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         # SOLVE
         nr_iter = 0
         nr_converged = False
-        A = multiphenicsx.fem.petsc.create_matrix(j_compiled,)
-        L = multiphenicsx.fem.petsc.create_vector(mr_compiled,)
-        x = multiphenicsx.fem.petsc.create_vector(mr_compiled)
+        A = multiphenicsx.fem.petsc.create_matrix(j_instance,)
+        L = multiphenicsx.fem.petsc.create_vector(mr_instance,)
+        x = multiphenicsx.fem.petsc.create_vector(mr_instance)
         def assemble_residual():
             with L.localForm() as l_local:
                 l_local.set(0.0)
-            multiphenicsx.fem.petsc.assemble_vector(L, mr_compiled,)
+            multiphenicsx.fem.petsc.assemble_vector(L, mr_instance,)
             # Dirichlet
             L.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
         def assemble_jacobian():
             A.zeroEntries()
-            multiphenicsx.fem.petsc.assemble_matrix(A, j_compiled)
+            multiphenicsx.fem.petsc.assemble_matrix(A, j_instance)
             A.assemble()
         def solve_ls():
             with x.localForm() as x_local:

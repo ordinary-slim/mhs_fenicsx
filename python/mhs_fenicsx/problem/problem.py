@@ -305,6 +305,10 @@ class Problem:
 
         self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
         self.update_boundary()
+        self.form_subdomain_data = {
+                fem.IntegralType.cell : [(1, self.local_active_els)],
+                fem.IntegralType.exterior_facet : [(1, self.get_facet_integrations_entities(self.bfacets_tag.find(1)))],
+                }
 
     def update_boundary(self):
         bfacets_indices  = locate_active_boundary(self.domain, self.active_els_func)
@@ -476,24 +480,47 @@ class Problem:
     def compile_forms(self):
         self.r_ufl = self.a_ufl - self.l_ufl#residual
         self.j_ufl = ufl.derivative(self.r_ufl, self.u)#jacobian
-        self.mr_compiled = fem.form(-self.r_ufl)
-        self.j_compiled = fem.form(self.j_ufl)
-        #self.a_compiled = fem.form(self.a_ufl)
-        #self.l_compiled = fem.form(self.l_ufl)
+        self.mr_ufl = -self.r_ufl#minus residual
+        self.mr_compiled = fem.compile_form(self.domain.comm, self.mr_ufl,
+                                            form_compiler_options={"scalar_type": np.float64})
+        self.j_compiled = fem.compile_form(self.domain.comm, self.j_ufl,
+                                            form_compiler_options={"scalar_type": np.float64})
+        def get_identity_maps(form):
+            coefficient_map = {}
+            constant_map = {}
+            for coeff in form.coefficients():
+                coefficient_map[coeff] = coeff
+            for const in form.constants():
+                constant_map[const] = const
+            return coefficient_map, constant_map
+        rcoeffmap, rconstmap = get_identity_maps(self.mr_ufl)
+        self.mr_instance = fem.create_form(self.mr_compiled,
+                                           [self.v],
+                                           msh=self.domain,
+                                           subdomains=self.form_subdomain_data,
+                                           coefficient_map=rcoeffmap,
+                                           constant_map=rconstmap)
+        lcoeffmap, lconstmap = get_identity_maps(self.j_ufl)
+        self.j_instance = fem.create_form(self.j_compiled,
+                                          [self.v, self.v],
+                                          msh=self.domain,
+                                          subdomains=self.form_subdomain_data,
+                                          coefficient_map=lcoeffmap,
+                                          constant_map=lconstmap)
 
     def pre_assemble(self):
-        self.A = multiphenicsx.fem.petsc.create_matrix(self.j_compiled,
+        self.A = multiphenicsx.fem.petsc.create_matrix(self.j_instance,
                                                   (self.restriction, self.restriction),
                                                   )
-        self.L = multiphenicsx.fem.petsc.create_vector(self.mr_compiled,
+        self.L = multiphenicsx.fem.petsc.create_vector(self.mr_instance,
                                                   self.restriction)
-        self.x = multiphenicsx.fem.petsc.create_vector(self.mr_compiled, restriction=self.restriction)
+        self.x = multiphenicsx.fem.petsc.create_vector(self.mr_instance, restriction=self.restriction)
         self.has_preassembled = True
 
     def assemble_jacobian(self, finalize=True):
         self.A.zeroEntries()
         multiphenicsx.fem.petsc.assemble_matrix(self.A,
-                                                self.j_compiled,
+                                                self.j_instance,
                                                 bcs=self.dirichlet_bcs,
                                                 restriction=(self.restriction, self.restriction))
         if finalize:
@@ -503,10 +530,10 @@ class Problem:
         with self.L.localForm() as l_local:
             l_local.set(0.0)
         multiphenicsx.fem.petsc.assemble_vector(self.L,
-                                                self.mr_compiled,
+                                                self.mr_instance,
                                                 restriction=self.restriction,)
         # Dirichlet
-        multiphenicsx.fem.petsc.apply_lifting(self.L, [self.j_compiled], [self.dirichlet_bcs], [self.u.x.petsc_vec], restriction=self.restriction)
+        multiphenicsx.fem.petsc.apply_lifting(self.L, [self.j_instance], [self.dirichlet_bcs], [self.u.x.petsc_vec], restriction=self.restriction)
         self.L.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
         multiphenicsx.fem.petsc.set_bc(self.L,self.dirichlet_bcs, self.u.x.petsc_vec, restriction=self.restriction)
         self.L.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)

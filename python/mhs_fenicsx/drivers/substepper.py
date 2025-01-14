@@ -95,7 +95,7 @@ class MHSSubstepper(ABC):
         ''' Always linear '''
         ps = self.ps
         # Save current activation data
-        slow_els = ps.active_els_func.x.array.nonzero()[0]
+        slow_subdomain_data = ps.form_subdomain_data
         ps.set_activation(self.initial_active_els)
         # MACRO-STEP
         ps.pre_iterate()
@@ -112,7 +112,8 @@ class MHSSubstepper(ABC):
         ps.iter -= 1
         if writepos:
             self.writepos("predictor")
-        ps.set_activation(slow_els)
+        ps.set_activation(slow_subdomain_data[fem.IntegralType.cell][0][1])
+        ps.form_subdomain_data = slow_subdomain_data
 
     def micro_post_iterate(self):
         '''

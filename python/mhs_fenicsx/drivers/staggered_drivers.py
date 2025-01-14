@@ -26,6 +26,7 @@ class StaggeredDomainDecompositionDriver:
         self.iter = -1
         self.is_chimera = not(p1.domain == p2.domain) # Different meshes
         self.active_gamma_cells = dict()
+        self.gamma_integration_tag = 4
         if self.is_chimera:
             self.midpoints_facets = dict()
             self.iid_border = dict()
@@ -132,11 +133,19 @@ class StaggeredDomainDecompositionDriver:
         self.gamma_dofs = dict()
         for p, p_ext in [(p1,p2),(p2,p1)]:
             self.gamma_dofs[p] = fem.locate_dofs_topological(p.v,0,p.gamma_nodes[p_ext].x.array.nonzero()[0],True)
-            p.form_subdomain_data[fem.IntegralType.exterior_facet].append((8,p.gamma_integration_data[p_ext]))
+            p.form_subdomain_data[fem.IntegralType.exterior_facet].append((self.gamma_integration_tag,p.gamma_integration_data[p_ext]))
         # Ext bc
         if set_bc is not None:
             #TODO: Fix this, bug prone!
             set_bc(p1,p2)
+
+    def assert_tag(self, p):
+        tag_found = False
+        for tag, _ in p.form_subdomain_data[fem.IntegralType.exterior_facet]:
+            tag_found = (self.gamma_integration_tag == tag)
+            if tag_found:
+                break
+        assert(tag_found)
 
 class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
     def __init__(self,
@@ -285,16 +294,16 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
     
     def set_neumann_interface(self):
         (p, p_ext) = (self.p_neumann, self.p_dirichlet)
-        self.update_neumann_interface()
         # Custom measure
         dS = ufl.Measure('ds')
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
         neumann_con = +ufl.inner(n,self.net_ext_flux[p])
-        p.l_ufl += neumann_con * v * dS(8)
+        p.l_ufl += neumann_con * v * dS(self.gamma_integration_tag)
 
     def update_neumann_interface(self):
         (p, p_ext) = (self.p_neumann,self.p_dirichlet)
+        self.assert_tag(p)
         p_ext.compute_gradient()
         # Update functions
         if self.is_chimera:
@@ -425,15 +434,15 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
             p_ext=self.p2
         else:
             p_ext=self.p1
-        self.update_robin(p)
+        self.assert_tag(p)
         # Custom measure
         dS = ufl.Measure('ds')
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
         (u, v) = (p.u,ufl.TestFunction(p.v))
-        p.a_ufl += + self.dirichlet_coeff[p] * u * v * dS(8)
+        p.a_ufl += + self.dirichlet_coeff[p] * u * v * dS(self.gamma_integration_tag)
         robin_con = self.dirichlet_coeff[p]*self.net_ext_sol[p] + ufl.inner(n,self.net_ext_flux[p])
-        p.l_ufl += robin_con * v * dS(8)
+        p.l_ufl += robin_con * v * dS(self.gamma_integration_tag)
 
     def update_robin(self,p):
         if p==self.p1:

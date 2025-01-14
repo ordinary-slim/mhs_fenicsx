@@ -13,6 +13,9 @@
 *.info
 *.json
 *.egg*
+*.png
+*build-dir*
+callgrind.out.[0-9]*
 build
 __pycache__
 nohup.out

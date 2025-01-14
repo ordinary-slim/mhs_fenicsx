@@ -37,15 +37,13 @@ def run():
 
     problem.set_forms_domain()
     problem.set_forms_boundary()
+    problem.compile_forms()
 
-    # TODO: Figure out why assembled RHS is zero?
     for _ in range(5):
         problem.pre_iterate()
         problem.set_activation(np.hstack((problem.active_els_func.x.array.nonzero()[0], problem.source.heated_els)))
         problem.u_prev.x.array[problem.just_activated_nodes] = problem.T_dep
-        problem.set_forms_domain()
-        problem.set_forms_boundary()
-        problem.compile_forms()
+        problem.instantiate_forms()
         problem.pre_assemble()
         problem.assemble()
         problem.solve()

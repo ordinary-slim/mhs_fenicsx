@@ -39,7 +39,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
         ps.set_forms_domain()
         ps.set_forms_boundary()
         sd.set_robin(ps)
-        ps.compile_forms()
+        ps.compile_create_forms()
         ps.pre_assemble()
 
     def pre_loop(self):
@@ -98,6 +98,13 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
         sd = self.staggered_driver
         chimera_driver = MonolithicRRDriver(pf, pm,
                                             quadrature_degree=self.quadrature_degree)
+        for p in [pm, pf]:
+            p.set_forms_domain()
+            p.set_forms_boundary()
+            if p == pf:
+                sd.set_robin(pf)
+            p.compile_forms()
+
         self.micro_iter = 0
         while (self.t1_macro_step - pf.time) > 1e-7:
             forced_time_derivative = (self.micro_iter==0)
@@ -107,10 +114,13 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
 
             fast_subproblem_els = pf.active_els_func.x.array.nonzero()[0]
             pm.intersect_problem(pf, finalize=False)
+            ps_pf_integration_data = pf.form_subdomain_data[fem.IntegralType.exterior_facet][-1]
+            assert(ps_pf_integration_data[0] == sd.gamma_integration_tag)
             pf.subtract_problem(pm, finalize=False)
             for p, p_ext in [(pm, pf), (pf, pm)]:
                 p.finalize_activation()
                 p.find_gamma(p_ext)#TODO: Re-use previous data here
+            pf.form_subdomain_data[fem.IntegralType.exterior_facet].append(ps_pf_integration_data)
             assert(self.check_assumptions())
 
             self.micro_iter += 1
@@ -121,11 +131,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
             sd.net_ext_flux[pf].x.array[:] = (1-f)*self.ext_flux_tn[pf].x.array[:] + \
                     f*self.ext_flux_array_tnp1[:]
             for p in [pm, pf]:
-                p.set_forms_domain()
-                p.set_forms_boundary()
-            sd.set_robin(pf)
-            for p in [pm, pf]:
-                p.compile_forms()
+                p.instantiate_forms()
                 p.pre_assemble()
                 p.assemble_residual()
                 p.assemble_jacobian(finalize=False)

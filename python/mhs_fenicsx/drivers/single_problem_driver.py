@@ -38,7 +38,7 @@ class SingleProblemDriver:
             self.deactivate_below_surface(set_inactive_to_powder=True)
         self.p.set_forms_domain()
         self.p.set_forms_boundary()
-        p.compile_forms()
+        p.compile_create_forms()
 
     def set_dt(self):
         if self.p.source.path is not None:
@@ -111,4 +111,4 @@ class SingleProblemDriver:
         # TODO: Move this
         self.p.set_forms_domain()
         self.p.set_forms_boundary()
-        self.p.compile_forms()
+        self.p.compile_create_forms()

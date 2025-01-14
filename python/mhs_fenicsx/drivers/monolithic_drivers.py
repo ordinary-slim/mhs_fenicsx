@@ -3,6 +3,7 @@ from dolfinx import fem, mesh, la
 import basix.ufl
 from mhs_fenicsx_cpp import cellwise_determine_point_ownership, scatter_cell_integration_data_po, \
                             create_robin_robin_monolithic, interpolate_dg0_at_facets
+from mhs_fenicsx.problem.helpers import get_identity_maps
 from ffcx.element_interface import map_facet_points
 import numpy as np
 from petsc4py import PETSc
@@ -77,6 +78,48 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
     def __init__(self, sub_problem_1:Problem,sub_problem_2:Problem, quadrature_degree):
         (p1,p2) = (sub_problem_1,sub_problem_2)
         super().__init__(p1, p2, quadrature_degree)
+        self.compile_forms()
+
+    def compile_forms(self):
+        '''TODO: Make this domain independent'''
+        (p1,p2) = (self.p1,self.p2)
+        self.gamma_integration_tag = 44
+        self.r_ufl, self.j_ufl = {}, {}
+        self.r_compiled, self.j_compiled = {}, {}
+        for p in [p1, p2]:
+            # LHS term Robin
+            ds = ufl.Measure('ds')
+            (u, v) = (p.u, ufl.TestFunction(p.v))
+            a_ufl  = + u * v * ds(self.gamma_integration_tag)
+            self.j_ufl[p] = ufl.derivative(a_ufl, p.u)
+            # LOC CONTRIBUTION
+            self.r_ufl[p] = a_ufl
+            self.r_compiled[p] = fem.compile_form(p.domain.comm, self.r_ufl[p],
+                                               form_compiler_options={"scalar_type": np.float64})
+            self.j_compiled[p] = fem.compile_form(p.domain.comm, self.j_ufl[p],
+                                               form_compiler_options={"scalar_type": np.float64})
+
+    def instantiate_forms(self):
+        (p1,p2) = (self.p1,self.p2)
+        self.r_instance, self.j_instance = {}, {}
+        for p, p_ext in [(p1, p2), (p2, p1)]:
+            rcoeffmap, rconstmap = get_identity_maps(self.r_ufl[p])
+            form_subdomain_data = {fem.IntegralType.exterior_facet :
+                                   [(self.gamma_integration_tag, p.gamma_integration_data[p_ext])]
+                                     }
+            self.r_instance[p] = fem.create_form(self.r_compiled[p],
+                                                 [p.v],
+                                                 msh=p.domain,
+                                                 subdomains=form_subdomain_data,
+                                                 coefficient_map=rcoeffmap,
+                                                 constant_map=rconstmap)
+            lcoeffmap, lconstmap = get_identity_maps(self.j_ufl[p])
+            self.j_instance[p] = fem.create_form(self.j_compiled[p],
+                                                 [p.v, p.v],
+                                                 msh=p.domain,
+                                                 subdomains=form_subdomain_data,
+                                                 coefficient_map=lcoeffmap,
+                                                 constant_map=lconstmap)
 
     def setup_coupling(self):
         # WARNING: Incompatibility with strongly enforced Dirichlet BC!
@@ -85,19 +128,12 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.A12 = self.assemble_robin_matrix(p1, p2, self.quadrature_degree)
         self.A21 = self.assemble_robin_matrix(p2, p1, self.quadrature_degree)
         # Add LHS term
-        gamma_tag = 44
         for p, p_ext in zip([p1, p2], [p2, p1]):
-            subdomain_data = [(gamma_tag, np.asarray(p.gamma_integration_data[p_ext], dtype=np.int32))]
-            # LHS term Robin
-            ds = ufl.Measure('ds', domain=p.domain, subdomain_data=subdomain_data)
-            (u, v) = (p.u, ufl.TestFunction(p.v))
-            a_ufl  = + u * v * ds(gamma_tag)
-            j_ufl = ufl.derivative(a_ufl, p.u)
-            j_com = fem.form(j_ufl)
+            self.instantiate_forms()
             p.A.assemble(PETSc.Mat.AssemblyType.FLUSH)
             multiphenicsx.fem.petsc.assemble_matrix(
                     p.A,
-                    j_com,
+                    self.j_instance[p],
                     bcs=p.dirichlet_bcs,
                     restriction=(p.restriction, p.restriction))
             # RHS term Robin for residual formulation
@@ -118,12 +154,9 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
             ext_flux.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
             p_ext.u.x.petsc_vec.restoreSubVector(iset, ext_res_sol)
 
-            # LOC CONTRIBUTION
-            r_ufl = a_ufl
-            r_com = fem.form(r_ufl)
             multiphenicsx.fem.petsc.assemble_vector(
                     in_flux,
-                    r_com,
+                    self.r_instance[p],
                     restriction=p.restriction)
             in_flux.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
 

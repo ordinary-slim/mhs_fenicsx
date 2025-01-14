@@ -164,9 +164,14 @@ def assert_pointwise_vals(p:Problem, points, ref_vals, rtol=1.e-5):
 
 def get_identity_maps(form):
     coefficient_map = {}
-    constant_map = {}
-    for coeff in form.coefficients():
-        coefficient_map[coeff] = coeff
-    for const in form.constants():
-        constant_map[const] = const
+    coefficient_map = {coeff:coeff for coeff in form.coefficients()}
+    constant_map = {const:const for const in form.constants()}
     return coefficient_map, constant_map
+
+def assert_gamma_tag(gamma_tag:int, p:'Problem'):
+    tag_found = False
+    for tag, _ in p.form_subdomain_data[fem.IntegralType.exterior_facet]:
+        tag_found = (gamma_tag == tag)
+        if tag_found:
+            break
+    assert(tag_found)

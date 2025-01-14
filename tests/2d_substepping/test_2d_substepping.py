@@ -72,26 +72,28 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
     big_p.set_initial_condition(  initial_condition_fun )
 
     max_timesteps = params["max_timesteps"]
+
+    substeppin_driver = MHSStaggeredSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos))
+    (ps,pf) = (substeppin_driver.ps,substeppin_driver.pf)
+    staggered_driver = driver_constructor(pf,ps,
+                                   max_staggered_iters=params["max_staggered_iters"],
+                                   initial_relaxation_factors=initial_relaxation_factors,)
+
+    if (type(staggered_driver)==StaggeredRRDriver):
+        el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)
+        h = 1.0 / el_density
+        k = float(params["material_metal"]["conductivity"])
+        staggered_driver.set_dirichlet_coefficients(h, k)
+
     for _ in range(max_timesteps):
-        substeppin_driver = MHSStaggeredSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos))
-        (ps,pf) = (substeppin_driver.ps,substeppin_driver.pf)
-        staggered_driver = driver_constructor(pf,ps,
-                                       max_staggered_iters=params["max_staggered_iters"],
-                                       initial_relaxation_factors=initial_relaxation_factors,)
+        substeppin_driver.update_fast_problem()
         substeppin_driver.set_staggered_driver(staggered_driver)
-        if (type(staggered_driver)==StaggeredRRDriver):
-            el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)
-            h = 1.0 / el_density
-            k = float(params["material_metal"]["conductivity"])
-            staggered_driver.dirichlet_coeff[staggered_driver.p1] = 1.0/4.0
-            staggered_driver.dirichlet_coeff[staggered_driver.p2] =  k / (2 * h)
-            staggered_driver.relaxation_coeff[staggered_driver.p1].value = 3.0 / 3.0
         staggered_driver.pre_loop(prepare_subproblems=False)
         substeppin_driver.pre_loop()
         if params["predictor_step"]:
             substeppin_driver.predictor_step(writepos=substeppin_driver.do_writepos and writepos)
                 
-        staggered_driver.prepare_subproblems()
+        staggered_driver.prepare_subproblems()# Goal: switch this with an instantiation
         for _ in range(staggered_driver.max_staggered_iters):
             substeppin_driver.pre_iterate()
             staggered_driver.pre_iterate()
@@ -109,6 +111,8 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
                          cells0=pf.active_els_func.x.array.nonzero()[0],
                          cells1=pf.active_els_func.x.array.nonzero()[0])
         ps.is_grad_computed = False
+        pf.u.x.array[:] = ps.u.x.array[:]
+        pf.is_grad_computed = False
         if writepos:
             ps.writepos()
     return big_p
@@ -126,9 +130,10 @@ def run_semi_monolithic(params, els_per_radius, writepos=True):
     big_p.set_initial_condition(  initial_condition_fun )
 
     max_timesteps = params["max_timesteps"]
+    substeppin_driver = MHSSemiMonolithicSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos))
 
     for _ in range(max_timesteps):
-        substeppin_driver = MHSSemiMonolithicSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos))
+        substeppin_driver.update_fast_problem()
         (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
         substeppin_driver.pre_loop()
         if params["predictor_step"]:
@@ -160,7 +165,7 @@ def run_reference(params, els_per_radius):
 
     big_p.set_forms_domain()
     big_p.set_forms_boundary()
-    big_p.compile_forms()
+    big_p.compile_create_forms()
     while (final_t - big_p.time) > 1e-7:
         big_p.pre_iterate()
         big_p.pre_assemble()

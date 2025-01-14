@@ -19,24 +19,25 @@ class MHSSubstepper(ABC):
                  max_nr_iters=25,max_ls_iters=5,):
         ps = slow_problem
         self.ps = ps
-        ps.clear_gamma_data()
         self.pf = self.ps.copy(name=f"{self.ps.name}_micro_iters")
-        self.fraction_macro_step = 0
         self.do_writepos = writepos
         self.writers = dict()
         self.max_nr_iters = max_nr_iters
         self.max_ls_iters = max_ls_iters
-        # TODO: Complete. Data to set activation in predictor_step
-        self.initial_active_els = self.ps.active_els_func.x.array.nonzero()[0]
-        self.initial_restriction = self.ps.restriction
-        self.define_subproblem()
     
     def __del__(self):
         for w in self.writers.values():
             w.close()
 
-    def define_subproblem(self, subproblem_els=None):
-        (ps, pf) = (self.ps, self.pf)
+    def update_fast_problem(self, subproblem_els=None):
+        self.result_folder = f"post_{self.name}_tstep#{self.ps.iter}"
+        # TODO: Complete. Data to set activation in predictor_step
+        self.initial_active_els = self.ps.active_els_func.x.array.nonzero()[0]
+        self.initial_restriction = self.ps.restriction
+        self.fraction_macro_step = 0
+        (ps, pf) = plist = (self.ps, self.pf)
+        for p in plist:
+            p.clear_gamma_data()
         # Store this and use it for deactivation?
         if not(subproblem_els):
             subproblem_els = self.find_subproblem_els()
@@ -102,7 +103,7 @@ class MHSSubstepper(ABC):
         ps.set_forms_domain()
         if ps.convection_coeff:
             ps.set_forms_boundary()
-        ps.compile_forms()
+        ps.compile_create_forms()
         ps.pre_assemble()
         ps.assemble()
         ps.solve()
@@ -134,6 +135,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
     def __init__(self,slow_problem: Problem ,writepos=True,
                  max_nr_iters=25,max_ls_iters=5,):
         super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters)
+        self.name = "semi_monolithic_substepper"
 
     def pre_loop(self):
         (ps,pf) = (self.ps,self.pf)
@@ -145,7 +147,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         self.set_dirichlet_fast()
         pf.set_forms_domain()
         pf.set_forms_boundary()
-        pf.compile_forms()
+        pf.compile_create_forms()
         pf.pre_assemble()
         # Prepare slow problem
         self.u_prev = {ps:ps.u.copy(),pf:pf.u.copy()}
@@ -336,7 +338,8 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
     def initialize_post(self):
         if not(self.do_writepos):
             return
-        self.name = "semi_monolithic_substepper"
+        for w in self.writers.values():
+            w.close()
         self.result_folder = f"post_{self.name}_tstep#{self.ps.iter}"
         shutil.rmtree(self.result_folder,ignore_errors=True)
         p = self.pf
@@ -370,12 +373,13 @@ class MHSStaggeredSubstepper(MHSSubstepper):
     def __init__(self,slow_problem:Problem,writepos=True,
                  max_nr_iters=25,max_ls_iters=5,):
         super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters)
+        self.name = "staggered_substepper"
 
     def initialize_post(self):
         if not(self.do_writepos):
             return
-        self.name = "staggered_substepper"
-        self.result_folder = f"post_{self.name}_tstep#{self.ps.iter}"
+        for w in self.writers.values():
+            w.close()
         shutil.rmtree(self.result_folder,ignore_errors=True)
         for p in [self.ps,self.pf]:
             self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{self.name}_{p.name}.pvd", "wb")

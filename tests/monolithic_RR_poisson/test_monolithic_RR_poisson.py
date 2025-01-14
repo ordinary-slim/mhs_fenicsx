@@ -174,7 +174,7 @@ def run(dim, els_side, el_type, writepos=False):
         v = ufl.TestFunction(p.v)
         p.l_ufl += +p.k * ufl.inner(n, grad_exact_sol(p.domain)) * v * ds(neumann_tag)
 
-        p.compile_forms()
+        p.compile_create_forms()
         # Pre-assemble
         p.pre_assemble()
         p.assemble_jacobian(finalize=False)

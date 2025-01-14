@@ -44,6 +44,11 @@ def main(input_file, writepos=True):
 
     driver = MonolithicRRDriver(p_fixed, p_moving, quadrature_degree=2)
 
+    for p in [p_fixed, p_moving]:
+        p.set_forms_domain()
+        p.set_forms_boundary()
+        p.compile_forms()
+
     for _ in range(max_temporal_iters):
         for p in [p_fixed, p_moving]:
             p.pre_iterate()
@@ -52,9 +57,7 @@ def main(input_file, writepos=True):
         p_moving.find_gamma(p_fixed)
 
         for p in [p_fixed, p_moving]:
-            p.set_forms_domain()
-            p.set_forms_boundary()
-            p.compile_forms()
+            p.instantiate_forms()
             p.pre_assemble()
             p.assemble_residual()
             p.assemble_jacobian(finalize=False)

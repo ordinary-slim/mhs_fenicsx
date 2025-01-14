@@ -64,7 +64,7 @@ def main(case_name="demo_phase_change"):
     bc = fem.dirichletbc(f_exact, fem.locate_dofs_topological(p.v, p.dim-1, bfacets))
     p.dirichlet_bcs.append(bc)
 
-    p.compile_forms()
+    p.compile_create_forms()
     p.pre_assemble()
 
     lamma_exact_sol = lambda x : exact_sol(x,p.time)

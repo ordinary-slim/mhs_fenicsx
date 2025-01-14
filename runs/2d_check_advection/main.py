@@ -24,7 +24,7 @@ def run(case_name="case"):
 
     p.set_initial_condition(params["environment_temperature"])
     p.set_forms_domain()
-    p.compile_forms()
+    p.compile_create_forms()
     for _ in range(20):
         p.pre_iterate()
         p.assemble()

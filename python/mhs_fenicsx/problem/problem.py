@@ -260,6 +260,8 @@ class Problem:
             self.domain.geometry.x[:] += dx
             self.dof_coords += dx
             self.clear_gamma_data()
+            if self.is_supg:
+                self.compute_supg_coeff()
             # This can be done more efficiently C++ level
             self.set_bb_trees()
 
@@ -319,9 +321,10 @@ class Problem:
                                          )
         # If needed, we are creating bnodes_tag in find_interface with child problem
 
-    def compute_gradient(self):
+    def compute_gradient(self, cells: typing.Optional[npt.NDArray[np.int32]] = None):
         if not(self.is_grad_computed):
-            self.grad_u.interpolate( fem.Expression(ufl.grad(self.u),self.grad_u.function_space.element.interpolation_points) )
+            gradient_expression = fem.Expression(ufl.grad(self.u),self.grad_u.function_space.element.interpolation_points) #TODO: compile this only one
+            self.grad_u.interpolate(gradient_expression, cells0=cells)
             self.is_grad_computed = True
 
     def clear_gamma_data(self):
@@ -428,7 +431,6 @@ class Problem:
         if np.linalg.norm(self.advection_speed.value):
             self.a_ufl += self.rho*self.cp*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
             if self.is_supg:
-                self.compute_supg_coeff()
                 if not(self.is_steady):
                     self.a_ufl += (self.rho * self.cp / self.dt_func) * u * self.supg_elwise_coeff * \
                                     self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
@@ -480,6 +482,8 @@ class Problem:
                                             form_compiler_options={"scalar_type": np.float64})
         self.j_compiled = fem.compile_form(self.domain.comm, self.j_ufl,
                                             form_compiler_options={"scalar_type": np.float64})
+
+    def instantiate_forms(self):
         rcoeffmap, rconstmap = get_identity_maps(self.mr_ufl)
         self.mr_instance = fem.create_form(self.mr_compiled,
                                            [self.v],
@@ -494,6 +498,10 @@ class Problem:
                                           subdomains=self.form_subdomain_data,
                                           coefficient_map=lcoeffmap,
                                           constant_map=lconstmap)
+
+    def compile_create_forms(self):
+        self.compile_forms()
+        self.instantiate_forms()
 
     def pre_assemble(self):
         self.A = multiphenicsx.fem.petsc.create_matrix(self.j_instance,
@@ -614,21 +622,28 @@ class Problem:
             ofile.write_mesh(bmesh)
 
 class GammaL2Dotter:
-    def __init__(self, p:Problem, p_ext:Problem):
-        gamma_ents = p.gamma_integration_data[p_ext]
-        ds_neumann = ufl.Measure('ds', domain=p.domain, subdomain_data=[
-            (8,np.asarray(gamma_ents, dtype=np.int32))])
-        self.f, self.g = (fem.Function(p.v),fem.Function(p.v))
-        l_ufl = self.f*self.g*ds_neumann(8)
-        self.l_compiled = fem.form(l_ufl)
+    def __init__(self, p:Problem):
+        self.f, self.g = (ufl.Coefficient(p.v), ufl.Coefficient(p.v))
+        self.l_ufl = self.f * self.g * ufl.ds(1)
+        self.l_com = fem.compile_form(comm, self.l_ufl,
+                                      form_compiler_options={"scalar_type": np.float64})
+        self.p = p
+
+    def set_gamma(self, p_ext : Problem):
+        self.integration_ents = self.p.gamma_integration_data[p_ext]
 
     def __call__(self,f:fem.Function,g:typing.Optional[fem.Function] = None):
-        #TODO: Assert f,self.f and g,self.g share same functionspace
-        #TODO: Copy only gamma nodes
-        self.f.x.array[:] = f.x.array
+        form_subdomain_data = {fem.IntegralType.exterior_facet : [(1, self.integration_ents)]}
         if g is None:
             g = f
-        self.g.x.array[:] = g.x.array
-        l2_norm = dolfinx.fem.assemble_scalar(self.l_compiled)
+        assert(f.function_space == g.function_space)
+        coefficient_map = {self.f : f, self.g : g}
+        self.l_instance = fem.create_form(self.l_com,
+                                          [],
+                                          msh=f.function_space.mesh,
+                                          subdomains=form_subdomain_data,
+                                          coefficient_map=coefficient_map,
+                                          constant_map={})
+        l2_norm = dolfinx.fem.assemble_scalar(self.l_instance)
         l2_norm = comm.allreduce(l2_norm, op=MPI.SUM)
         return l2_norm

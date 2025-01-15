@@ -93,7 +93,7 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
         if params["predictor_step"]:
             substeppin_driver.predictor_step(writepos=substeppin_driver.do_writepos and writepos)
                 
-        staggered_driver.prepare_subproblems()# Goal: switch this with an instantiation
+        staggered_driver.prepare_subproblems()
         for _ in range(staggered_driver.max_staggered_iters):
             substeppin_driver.pre_iterate()
             staggered_driver.pre_iterate()

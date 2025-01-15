@@ -38,11 +38,8 @@ class HeatSource(ABC):
     def __call__(self,x):
         pass
 
-    def set_fem_function(self):
-        '''
-        Has to be done after domain motion.
-        '''
-        self.fem_function.interpolate(self)
+    def set_fem_function(self, x):
+        self.fem_function.x.array[:] = self(x.transpose())
 
     def initialize_fem_function(self,p:'Problem'):
         self.fem_function = fem.Function(p.v,name="source")
@@ -104,7 +101,7 @@ class LumpedHeatSource(HeatSource):
 
     def initialize_fem_function(self,p:'Problem'):
         self.fem_function = fem.Function(p.dg0,name="source")
-    def set_fem_function(self):
+    def set_fem_function(self, x):
         # Mark heated elements
         # Collision
         obb = OBB(self.x_prev,self.x,self.mdwidth,self.mdheight, 0.0, self.domain.topology.dim)

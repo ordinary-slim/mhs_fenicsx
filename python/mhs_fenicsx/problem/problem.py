@@ -265,7 +265,7 @@ class Problem:
             # This can be done more efficiently C++ level
             self.set_bb_trees()
 
-        self.source.set_fem_function()
+        self.source.set_fem_function(self.dof_coords)
         self.iter += 1
         self.time += self.dt.value
         if not(forced_time_derivative):

@@ -73,7 +73,7 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos))
+    substeppin_driver = MHSStaggeredSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos), do_predictor=params["predictor_step"])
     (ps,pf) = (substeppin_driver.ps,substeppin_driver.pf)
     staggered_driver = driver_constructor(pf,ps,
                                    max_staggered_iters=params["max_staggered_iters"],
@@ -90,9 +90,8 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
         substeppin_driver.set_staggered_driver(staggered_driver)
         staggered_driver.pre_loop(prepare_subproblems=False)
         substeppin_driver.pre_loop()
-        if params["predictor_step"]:
+        if substeppin_driver.do_predictor:
             substeppin_driver.predictor_step(writepos=substeppin_driver.do_writepos and writepos)
-                
         staggered_driver.prepare_subproblems()
         for _ in range(staggered_driver.max_staggered_iters):
             substeppin_driver.pre_iterate()
@@ -130,13 +129,13 @@ def run_semi_monolithic(params, els_per_radius, writepos=True):
     big_p.set_initial_condition(  initial_condition_fun )
 
     max_timesteps = params["max_timesteps"]
-    substeppin_driver = MHSSemiMonolithicSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos))
+    substeppin_driver = MHSSemiMonolithicSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos), do_predictor=params["predictor_step"])
 
     for _ in range(max_timesteps):
         substeppin_driver.update_fast_problem()
         (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
         substeppin_driver.pre_loop()
-        if params["predictor_step"]:
+        if substeppin_driver.do_predictor:
             substeppin_driver.predictor_step(writepos=substeppin_driver.do_writepos and writepos)
         for _ in range(params["max_staggered_iters"]):
             substeppin_driver.pre_iterate()

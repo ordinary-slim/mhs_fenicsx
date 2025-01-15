@@ -16,15 +16,31 @@ import multiphenicsx.fem.petsc
 
 class MHSSubstepper(ABC):
     def __init__(self,slow_problem:Problem,writepos=True,
-                 max_nr_iters=25,max_ls_iters=5,):
-        ps = slow_problem
-        self.ps = ps
+                 max_nr_iters=25,max_ls_iters=5,
+                 do_predictor=False):
+        self.ps = slow_problem
         self.pf = self.ps.copy(name=f"{self.ps.name}_micro_iters")
+        ps, pf = self.ps, self.pf
         self.do_writepos = writepos
         self.writers = dict()
         self.max_nr_iters = max_nr_iters
         self.max_ls_iters = max_ls_iters
+        self.do_predictor = do_predictor
+        self.mr_ufl, self.j_ufl, self.mr_compiled, self.j_compiled = {}, {}, {}, {}
+        self.integration_tag = {ps:1, pf:2}
+        self.compile_forms()
     
+    @abstractmethod
+    def compile_forms(self):
+        pass
+
+    def instantiate_forms(self, p):
+        p.j_ufl, p.mr_ufl = (self.j_ufl[p], self.mr_ufl[p])
+        p.j_compiled, p.mr_compiled = (self.j_compiled[p], self.mr_compiled[p])
+        p.form_subdomain_data = {fem.IntegralType.cell:[(self.integration_tag[p], p.local_active_els)],
+                                  fem.IntegralType.exterior_facet:[(self.integration_tag[p], p.get_facet_integrations_entities(p.bfacets_tag.find(1)))]}
+        p.instantiate_forms()
+
     def __del__(self):
         for w in self.writers.values():
             w.close()
@@ -48,7 +64,10 @@ class MHSSubstepper(ABC):
         pf.set_activation(subproblem_els)
         pf.set_linear_solver(pf.input_parameters["petsc_opts_micro"])
         # Subtract fast
-        ps.set_activation(np.logical_not(pf.active_els_func.x.array).nonzero()[0])
+        ps.set_activation(np.logical_not(pf.active_els_func.x.array).nonzero()[0], finalize=not(self.do_predictor))
+        if self.do_predictor:
+            ps.update_boundary()
+            ps.set_form_subdomain_data()
         set_same_mesh_interface(ps, pf)
         self.dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim, subproblem_els)
 
@@ -100,10 +119,7 @@ class MHSSubstepper(ABC):
         ps.set_activation(self.initial_active_els)
         # MACRO-STEP
         ps.pre_iterate()
-        ps.set_forms_domain()
-        if ps.convection_coeff:
-            ps.set_forms_boundary()
-        ps.compile_create_forms()
+        self.instantiate_forms(ps)
         ps.pre_assemble()
         ps.assemble()
         ps.solve()
@@ -129,29 +145,27 @@ class MHSSubstepper(ABC):
 
     def post_loop(self):
         #TODO: Change this!
-        self.ps.initialize_activation()
+        self.ps.set_activation(self.initial_active_els)
 
 class MHSSemiMonolithicSubstepper(MHSSubstepper):
     def __init__(self,slow_problem: Problem ,writepos=True,
-                 max_nr_iters=25,max_ls_iters=5,):
-        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters)
+                 max_nr_iters=25,max_ls_iters=5,
+                 do_predictor=False):
+        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters,do_predictor)
         self.name = "semi_monolithic_substepper"
-        self.compile_forms()
 
     def compile_forms(self):
         (ps,pf) = plist = (self.ps,self.pf)
-        self.integration_tag = {ps:1, pf:2}
         for p in plist:
             p.set_forms_domain(subdomain_idx=self.integration_tag[p])
             p.set_forms_boundary(subdomain_idx=self.integration_tag[p])
-        # Fast subproblem
-        r_fast_ufl = pf.a_ufl - pf.l_ufl
-        self.mr_fast_ufl = -r_fast_ufl
-        self.j_fast_ufl  = ufl.derivative(r_fast_ufl, ps.u) + ufl.derivative(r_fast_ufl, pf.u)
-        self.j_fast_compiled  = fem.compile_form(ps.domain.comm, self.j_fast_ufl,
-                                      form_compiler_options={"scalar_type": np.float64})
-        self.mr_fast_compiled = fem.compile_form(ps.domain.comm, self.mr_fast_ufl,
-                                      form_compiler_options={"scalar_type": np.float64})
+            r_ufl = p.a_ufl - p.l_ufl
+            self.mr_ufl[p] = -r_ufl
+            self.j_ufl[p]  = ufl.derivative(r_ufl, p.u)
+            self.j_compiled[p]  = fem.compile_form(ps.domain.comm, self.j_ufl[p],
+                                          form_compiler_options={"scalar_type": np.float64})
+            self.mr_compiled[p] = fem.compile_form(ps.domain.comm, self.mr_ufl[p],
+                                          form_compiler_options={"scalar_type": np.float64})
         # Monolithic problem
         r_mono_ufl = (ps.a_ufl + pf.a_ufl) - (ps.l_ufl + pf.l_ufl)
         self.mr_mono_ufl = -r_mono_ufl
@@ -167,11 +181,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         self.macro_iter = 0
         self.prev_iter = {ps:ps.iter,pf:pf.iter}
         # Prepare fast problem
-        pf.j_ufl, pf.mr_ufl = (self.j_fast_ufl, self.mr_fast_ufl)
-        pf.j_compiled, pf.mr_compiled = (self.j_fast_compiled, self.mr_fast_compiled)
-        pf.form_subdomain_data = {fem.IntegralType.cell:[(self.integration_tag[pf], pf.local_active_els)],
-                                  fem.IntegralType.exterior_facet:[(self.integration_tag[pf], pf.get_facet_integrations_entities(pf.bfacets_tag.find(1)))]}
-        pf.instantiate_forms()
+        self.instantiate_forms(pf)
         self.set_dirichlet_fast()
         pf.pre_assemble()
         # Prepare slow problem
@@ -382,9 +392,22 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 
 class MHSStaggeredSubstepper(MHSSubstepper):
     def __init__(self,slow_problem:Problem,writepos=True,
-                 max_nr_iters=25,max_ls_iters=5,):
-        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters)
+                 max_nr_iters=25,max_ls_iters=5,
+                 do_predictor=False):
+        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, do_predictor)
         self.name = "staggered_substepper"
+
+    def compile_forms(self):
+        ps = self.ps
+        ps.set_forms_domain(subdomain_idx=self.integration_tag[ps])
+        ps.set_forms_boundary(subdomain_idx=self.integration_tag[ps])
+        r_ufl = ps.a_ufl - ps.l_ufl
+        self.mr_ufl[ps] = -r_ufl
+        self.j_ufl[ps]  = ufl.derivative(r_ufl, ps.u)
+        self.j_compiled[ps]  = fem.compile_form(ps.domain.comm, self.j_ufl[ps],
+                                      form_compiler_options={"scalar_type": np.float64})
+        self.mr_compiled[ps] = fem.compile_form(ps.domain.comm, self.mr_ufl[ps],
+                                      form_compiler_options={"scalar_type": np.float64})
 
     def initialize_post(self):
         if not(self.do_writepos):

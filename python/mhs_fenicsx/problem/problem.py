@@ -280,6 +280,7 @@ class Problem:
         self.active_els_func= fem.Function(self.dg0,name="active_els")
         self.active_nodes_func = fem.Function(self.v,name="active_nodes")
         self.active_els_func.x.array[:] = 1.0
+        self.local_active_els = np.arange(self.cell_map.size_local,dtype=np.int32)
         if finalize:
             self.finalize_activation()
 
@@ -288,15 +289,15 @@ class Problem:
         if active_els is None:
             active_els = np.arange(self.num_cells,dtype=np.int32)
         self.active_els = active_els
-        indices_to_function(self.dg0,active_els,self.dim,remote=False, f=self.active_els_func)
+        self.active_els_func.x.array.fill(0.0)
+        self.active_els_func.x.array[active_els] = 1.0
+        self.active_els_func.x.scatter_forward()
+        self.local_active_els = self.active_els_func.x.array.nonzero()[0]
+        self.local_active_els = self.local_active_els[:np.searchsorted(self.local_active_els, self.cell_map.size_local)]
         if finalize:
             self.finalize_activation()
 
     def finalize_activation(self):
-        self.local_active_els = self.active_els_func.x.array.nonzero()[0]
-        self.local_active_els = self.local_active_els[:np.searchsorted(self.local_active_els, self.cell_map.size_local)]
-        self.active_els_func.x.scatter_forward()
-
         old_active_dofs_array  = self.active_nodes_func.x.array.copy()
         self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, self.active_els, remote=True)
         self.active_nodes_func.x.array[:] = np.float64(0.0)
@@ -307,6 +308,9 @@ class Problem:
 
         self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
         self.update_boundary()
+        self.set_form_subdomain_data()
+
+    def set_form_subdomain_data(self):
         self.form_subdomain_data = {
                 fem.IntegralType.cell : [(1, self.local_active_els)],
                 fem.IntegralType.exterior_facet : [(1, self.get_facet_integrations_entities(self.bfacets_tag.find(1)))],

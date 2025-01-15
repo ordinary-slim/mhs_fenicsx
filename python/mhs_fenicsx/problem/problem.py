@@ -325,6 +325,7 @@ class Problem:
         if not(self.is_grad_computed):
             gradient_expression = fem.Expression(ufl.grad(self.u),self.grad_u.function_space.element.interpolation_points) #TODO: compile this only one
             self.grad_u.interpolate(gradient_expression, cells0=cells)
+            self.grad_u.x.scatter_forward()
             self.is_grad_computed = True
 
     def clear_gamma_data(self):
@@ -412,12 +413,7 @@ class Problem:
     def get_facet_integrations_entities(self, facet_indices):
         return get_facet_integration_entities(self.domain,facet_indices,self.active_els_func)
 
-    def set_forms_domain(self, subdomain_data=None, argument=None):
-        if not(subdomain_data):
-            subdomain_idx  = 1
-            subdomain_data = [(subdomain_idx, self.local_active_els)]
-        else:
-            (subdomain_idx, subdomain_data) = subdomain_data
+    def set_forms_domain(self, subdomain_idx=1, argument=None):
         dx = ufl.Measure("dx", metadata=self.quadrature_metadata)
         u = argument if argument is not None else self.u
         v = ufl.TestFunction(self.v)
@@ -455,7 +451,7 @@ class Problem:
             self.a_ufl += self.rho * self.latent_heat * fp(self.u) *(self.u - self.u_prev)/self.dt_func*v*dx(subdomain_idx)
 
 
-    def set_forms_boundary(self,argument=None):
+    def set_forms_boundary(self, subdomain_idx=1, argument=None):
         '''
         rn must be called after set_forms_domain
         since a_ufl and l_ufl not initialized before
@@ -468,11 +464,11 @@ class Problem:
         if self.convection_coeff is not None:
             self.a_ufl += self.convection_coeff * \
                           u*v* \
-                          ds(1)
+                          ds(subdomain_idx)
             T_env   = fem.Constant(self.domain, PETSc.ScalarType(self.T_env))
             self.l_ufl += self.convection_coeff * \
                           T_env*v* \
-                          ds(1)
+                          ds(subdomain_idx)
 
     def compile_forms(self):
         self.r_ufl = self.a_ufl - self.l_ufl#residual

@@ -136,6 +136,30 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
                  max_nr_iters=25,max_ls_iters=5,):
         super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters)
         self.name = "semi_monolithic_substepper"
+        self.compile_forms()
+
+    def compile_forms(self):
+        (ps,pf) = plist = (self.ps,self.pf)
+        self.integration_tag = {ps:1, pf:2}
+        for p in plist:
+            p.set_forms_domain(subdomain_idx=self.integration_tag[p])
+            p.set_forms_boundary(subdomain_idx=self.integration_tag[p])
+        # Fast subproblem
+        r_fast_ufl = pf.a_ufl - pf.l_ufl
+        self.mr_fast_ufl = -r_fast_ufl
+        self.j_fast_ufl  = ufl.derivative(r_fast_ufl, ps.u) + ufl.derivative(r_fast_ufl, pf.u)
+        self.j_fast_compiled  = fem.compile_form(ps.domain.comm, self.j_fast_ufl,
+                                      form_compiler_options={"scalar_type": np.float64})
+        self.mr_fast_compiled = fem.compile_form(ps.domain.comm, self.mr_fast_ufl,
+                                      form_compiler_options={"scalar_type": np.float64})
+        # Monolithic problem
+        r_mono_ufl = (ps.a_ufl + pf.a_ufl) - (ps.l_ufl + pf.l_ufl)
+        self.mr_mono_ufl = -r_mono_ufl
+        self.j_mono_ufl  = ufl.derivative(r_mono_ufl, ps.u) + ufl.derivative(r_mono_ufl, pf.u)
+        self.j_mono_compiled  = fem.compile_form(ps.domain.comm, self.j_mono_ufl,
+                                      form_compiler_options={"scalar_type": np.float64})
+        self.mr_mono_compiled = fem.compile_form(ps.domain.comm, self.mr_mono_ufl,
+                                      form_compiler_options={"scalar_type": np.float64})
 
     def pre_loop(self):
         (ps,pf) = (self.ps,self.pf)
@@ -143,11 +167,12 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         self.macro_iter = 0
         self.prev_iter = {ps:ps.iter,pf:pf.iter}
         # Prepare fast problem
-        # TODO: Set Dirichlet BC
+        pf.j_ufl, pf.mr_ufl = (self.j_fast_ufl, self.mr_fast_ufl)
+        pf.j_compiled, pf.mr_compiled = (self.j_fast_compiled, self.mr_fast_compiled)
+        pf.form_subdomain_data = {fem.IntegralType.cell:[(self.integration_tag[pf], pf.local_active_els)],
+                                  fem.IntegralType.exterior_facet:[(self.integration_tag[pf], pf.get_facet_integrations_entities(pf.bfacets_tag.find(1)))]}
+        pf.instantiate_forms()
         self.set_dirichlet_fast()
-        pf.set_forms_domain()
-        pf.set_forms_boundary()
-        pf.compile_create_forms()
         pf.pre_assemble()
         # Prepare slow problem
         self.u_prev = {ps:ps.u.copy(),pf:pf.u.copy()}
@@ -215,53 +240,40 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         ps.dt_func.x.array[self.gamma_dofs_fast] = pf.dt.value
         ps.u_prev.x.array[self.gamma_dofs_fast] = pf.u_prev.x.array[self.gamma_dofs_fast]
 
-        subdomain_data = [(idx+1, active_els) for (idx, active_els) in enumerate([p.local_active_els for p in [ps, pf]])]
-        form_subdomain_data = {fem.IntegralType.cell:subdomain_data}
-        ps.set_forms_domain((1,subdomain_data))
-        pf.set_forms_domain((2,subdomain_data))
-
-        a_ufl = ps.a_ufl + pf.a_ufl
-        l_ufl = ps.l_ufl + pf.l_ufl
-        r_ufl = a_ufl - l_ufl#residual
-        j_ufl = ufl.derivative(r_ufl, ps.u) + ufl.derivative(r_ufl, pf.u)
-        mr_ufl = -r_ufl
-        j_compiled = fem.compile_form(ps.domain.comm, j_ufl,
-                                      form_compiler_options={"scalar_type": np.float64})
-        rcoeffmap, rconstmap = get_identity_maps(j_ufl)
-        j_instance = fem.create_form(j_compiled,
-                                     [ps.v, ps.v],
-                                     msh=ps.domain,
-                                     subdomains=form_subdomain_data,
-                                     coefficient_map=rcoeffmap,
-                                     constant_map=rconstmap)
-        mr_compiled = fem.compile_form(ps.domain.comm, mr_ufl,
-                                      form_compiler_options={"scalar_type": np.float64})
-        rcoeffmap, rconstmap = get_identity_maps(mr_ufl)
-        mr_instance = fem.create_form(mr_compiled,
+        cell_subdomain_data = [(self.integration_tag[p], p.local_active_els) for p in  [ps, pf]]
+        facet_subdomain_data = [(self.integration_tag[p], p.get_facet_integrations_entities(p.bfacets_tag.find(1))) for p in  [ps, pf]]
+        form_subdomain_data = {fem.IntegralType.cell:cell_subdomain_data,
+                               fem.IntegralType.exterior_facet:facet_subdomain_data}
+        rcoeffmap, rconstmap = get_identity_maps(self.mr_mono_ufl)
+        mr_instance = fem.create_form(self.mr_mono_compiled,
                                      [ps.v],
                                      msh=ps.domain,
                                      subdomains=form_subdomain_data,
                                      coefficient_map=rcoeffmap,
                                      constant_map=rconstmap)
-
-        ps_restriction = ps.restriction
-        ps.restriction = self.initial_restriction
+        lcoeffmap, lconstmap = get_identity_maps(self.j_mono_ufl)
+        j_instance = fem.create_form(self.j_mono_compiled,
+                                     [ps.v, ps.v],
+                                     msh=ps.domain,
+                                     subdomains=form_subdomain_data,
+                                     coefficient_map=lcoeffmap,
+                                     constant_map=lconstmap)
 
         # SOLVE
         nr_iter = 0
         nr_converged = False
-        A = multiphenicsx.fem.petsc.create_matrix(j_instance,)
-        L = multiphenicsx.fem.petsc.create_vector(mr_instance,)
-        x = multiphenicsx.fem.petsc.create_vector(mr_instance)
+        A = multiphenicsx.fem.petsc.create_matrix(j_instance, restriction=(self.initial_restriction, self.initial_restriction))
+        L = multiphenicsx.fem.petsc.create_vector(mr_instance, restriction=self.initial_restriction)
+        x = multiphenicsx.fem.petsc.create_vector(mr_instance, restriction=self.initial_restriction)
         def assemble_residual():
             with L.localForm() as l_local:
                 l_local.set(0.0)
-            multiphenicsx.fem.petsc.assemble_vector(L, mr_instance,)
+            multiphenicsx.fem.petsc.assemble_vector(L, mr_instance, restriction=self.initial_restriction)
             # Dirichlet
             L.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
         def assemble_jacobian():
             A.zeroEntries()
-            multiphenicsx.fem.petsc.assemble_matrix(A, j_instance)
+            multiphenicsx.fem.petsc.assemble_matrix(A, j_instance, restriction=(self.initial_restriction, self.initial_restriction))
             A.assemble()
         def solve_ls():
             with x.localForm() as x_local:
@@ -279,7 +291,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         def set_step():
             with pf.du.x.petsc_vec.localForm() as duf_sub_vector_local, \
                  ps.du.x.petsc_vec.localForm() as dus_sub_vector_local, \
-                    multiphenicsx.fem.petsc.VecSubVectorWrapper(x, ps.v.dofmap, None) as x_wrapper:
+                    multiphenicsx.fem.petsc.VecSubVectorWrapper(x, ps.v.dofmap, self.initial_restriction) as x_wrapper:
                         dus_sub_vector_local[:] = x_wrapper
                         duf_sub_vector_local[:] = x_wrapper
             ps.du.x.scatter_forward()
@@ -326,7 +338,6 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         # POST-ITERATE
         ps.post_iterate()
         pf.post_iterate()
-        ps.restriction = ps_restriction
         ps.set_dt(ps.dt.value)
         pf.dirichlet_bcs = [self.fast_dirichlet_tcon]
 

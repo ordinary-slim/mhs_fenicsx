@@ -77,7 +77,6 @@ class StaggeredDomainDecompositionDriver(ABC):
             p.mr_compiled = self.mr_compiled[p]
             p.j_ufl = self.j_ufl[p]
             p.j_compiled = self.j_compiled[p]
-            p.instantiate_forms()
             if finalize:
                 p.instantiate_forms()
                 p.pre_assemble()

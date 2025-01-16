@@ -1,29 +1,37 @@
-import yaml
-from mpi4py import MPI
-from test_2d_substepping import get_initial_condition, get_dt, write_gcode, get_mesh
 from mhs_fenicsx.problem import Problem
-from mhs_fenicsx.drivers import MHSSubstepper, MHSStaggeredSubstepper, NewtonRaphson, StaggeredRRDriver, MonolithicRRDriver
-from mhs_fenicsx.problem.helpers import propagate_dg0_at_facets_same_mesh, interpolate
-from mhs_fenicsx.chimera import build_moving_problem, interpolate_solution_to_inactive
-import shutil
-from dolfinx import mesh, fem, io
+from mhs_fenicsx.drivers.substepper import MHSStaggeredSubstepper
+from mhs_fenicsx.drivers.monolithic_drivers import MonolithicRRDriver
+import ufl
 import numpy as np
-from petsc4py import PETSc
-from line_profiler import LineProfiler
-
-comm = MPI.COMM_WORLD
-rank = comm.Get_rank()
+from dolfinx import fem
+from mhs_fenicsx.chimera import interpolate_solution_to_inactive
 
 class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
     def __init__(self,slow_problem:Problem, moving_problem : Problem,
                  writepos=True,
                  max_nr_iters=25,max_ls_iters=5,
                  do_predictor=False):
-        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, do_predictor)
         self.pm = moving_problem
+        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, do_predictor)
         self.plist.append(self.pm)
         self.quadrature_degree = 2 # Gamma Chimera
         self.name = "staggered_chimera_substepper"
+        self.chimera_driver = MonolithicRRDriver(self.pf, self.pm,
+                                                 quadrature_degree=self.quadrature_degree)
+
+    def compile_forms(self):
+        ps, pm = (self.ps, self.pm)
+        self.integration_tag[pm] = 3
+        for p in [ps, pm]:
+            p.set_forms_domain(subdomain_idx=self.integration_tag[p])
+            p.set_forms_boundary(subdomain_idx=self.integration_tag[p])
+            r_ufl = p.a_ufl - p.l_ufl
+            self.mr_ufl[p] = -r_ufl
+            self.j_ufl[p]  = ufl.derivative(r_ufl, p.u)
+            self.j_compiled[p]  = fem.compile_form(p.domain.comm, self.j_ufl[p],
+                                          form_compiler_options={"scalar_type": np.float64})
+            self.mr_compiled[p] = fem.compile_form(p.domain.comm, self.mr_ufl[p],
+                                          form_compiler_options={"scalar_type": np.float64})
 
     def pre_loop(self):
         super().pre_loop()
@@ -57,22 +65,14 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
     def micro_steps(self):
         (ps,pf,pm) = plist = (self.ps,self.pf,self.pm)
         sd = self.staggered_driver
-        chimera_driver = MonolithicRRDriver(pf, pm,
-                                            quadrature_degree=self.quadrature_degree)
-        for p in [pm, pf]:
-            p.set_forms_domain()
-            p.set_forms_boundary()
-            if p == pf:
-                sd.set_robin(pf)
-            p.compile_forms()
+        cd = self.chimera_driver
 
         self.micro_iter = 0
         while (self.t1_macro_step - pf.time) > 1e-7:
             forced_time_derivative = (self.micro_iter==0)
-
+            pm.intersect_problem(pf, finalize=False)
             for p in [pm, pf]:
                 p.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
-
             fast_subproblem_els = pf.active_els_func.x.array.nonzero()[0]
             pm.intersect_problem(pf, finalize=False)
             ps_pf_integration_data = pf.form_subdomain_data[fem.IntegralType.exterior_facet][-1]
@@ -91,15 +91,17 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
                     f*self.ext_sol_array_tnp1[:]
             sd.net_ext_flux[pf].x.array[:] = (1-f)*self.ext_flux_tn[pf].x.array[:] + \
                     f*self.ext_flux_array_tnp1[:]
+
+            pf.instantiate_forms()
+            self.instantiate_forms(pm)
             for p in [pm, pf]:
-                p.instantiate_forms()
                 p.pre_assemble()
                 p.assemble_residual()
                 p.assemble_jacobian(finalize=False)
-            chimera_driver.setup_coupling()
+            cd.setup_coupling()
             for p in [pm, pf]:
                 p.A.assemble()
-            chimera_driver.solve()
+            cd.solve()
 
             self.micro_post_iterate()
             interpolate_solution_to_inactive(pf,pm)
@@ -136,82 +138,3 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
         self.writers[p].write_function(p_funs,t=time)
         if case=="micro":
             self.writers[pm].write_function(get_funs(pm),t=time)
-
-def run_staggered_RR(params, writepos=True):
-    els_per_radius = params["els_per_radius"]
-    radius = params["heat_source"]["radius"]
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
-    initial_relaxation_factors=[1.0,1.0]
-    big_mesh = get_mesh(params, els_per_radius, radius)
-
-    macro_params = params.copy()
-    macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
-    macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(big_mesh, macro_params, name=f"big_chimera_ss_RR")
-    pm = build_moving_problem(ps, els_per_radius)
-    initial_condition_fun = get_initial_condition(params)
-    ps.set_initial_condition(  initial_condition_fun )
-
-    max_timesteps = params["max_timesteps"]
-
-    substeppin_driver = MHSStaggeredChimeraSubstepper(ps, pm,
-                                                      writepos=(params["substepper_writepos"] and writepos),
-                                                      do_predictor=params["predictor_step"])
-    pf = substeppin_driver.pf
-    staggered_driver = StaggeredRRDriver(pf,ps,
-                                         max_staggered_iters=params["max_staggered_iters"],
-                                         initial_relaxation_factors=initial_relaxation_factors,)
-
-    el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)
-    h = 1.0 / el_density
-    k = float(params["material_metal"]["conductivity"])
-    staggered_driver.set_dirichlet_coefficients(h, k)
-
-    for _ in range(max_timesteps):
-        substeppin_driver.update_fast_problem()
-        substeppin_driver.set_staggered_driver(staggered_driver)
-        staggered_driver.pre_loop(prepare_subproblems=False)
-        substeppin_driver.pre_loop()
-        if substeppin_driver.do_predictor:
-            substeppin_driver.predictor_step(writepos=substeppin_driver.do_writepos and writepos)
-        staggered_driver.prepare_subproblems()
-        for _ in range(staggered_driver.max_staggered_iters):
-            substeppin_driver.pre_iterate()
-            staggered_driver.pre_iterate()
-            substeppin_driver.iterate()
-            substeppin_driver.post_iterate()
-            staggered_driver.post_iterate(verbose=True)
-            if writepos:
-                substeppin_driver.writepos(case="macro")
-
-            if staggered_driver.convergence_crit < staggered_driver.convergence_threshold:
-                break
-        substeppin_driver.post_loop()
-        # Interpolate solution to inactive ps
-        ps.u.interpolate(pf.u,
-                         cells0=pf.active_els_func.x.array.nonzero()[0],
-                         cells1=pf.active_els_func.x.array.nonzero()[0])
-        ps.is_grad_computed = False
-        pf.u.x.array[:] = ps.u.x.array[:]
-        pf.is_grad_computed = False
-        if writepos:
-            ps.writepos()
-    return ps
-
-if __name__=="__main__":
-    with open("input.yaml", 'r') as f:
-        params = yaml.safe_load(f)
-    write_gcode(params)
-    lp = LineProfiler()
-    lp.add_module(MHSStaggeredChimeraSubstepper)
-    lp.add_module(MHSStaggeredSubstepper)
-    lp.add_module(MHSSubstepper)
-    lp.add_module(MonolithicRRDriver)
-    lp.add_module(Problem)
-    lp.add_function(interpolate_solution_to_inactive)
-    lp.add_function(interpolate)
-    lp_wrapper = lp(run_staggered_RR)
-    lp_wrapper(params,True)
-    profiling_file = f"profiling_chimera_rss_{rank}.txt"
-    with open(profiling_file, 'w') as pf:
-        lp.print_stats(stream=pf)

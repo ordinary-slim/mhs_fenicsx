@@ -20,6 +20,7 @@ class MHSSubstepper(ABC):
                  do_predictor=False):
         self.ps = slow_problem
         self.pf = self.ps.copy(name=f"{self.ps.name}_micro_iters")
+        self.plist = [self.ps, self.pf]
         ps, pf = self.ps, self.pf
         self.do_writepos = writepos
         self.writers = dict()
@@ -73,15 +74,21 @@ class MHSSubstepper(ABC):
 
     @abstractmethod
     def pre_loop(self):
-        pass
-
-    @abstractmethod
-    def pre_iterate(self):
-        pass
+        self.macro_iter = 0
+        self.prev_iter = {p:p.iter for p in self.plist}
+        self.u_prev = {p:p.u.copy() for p in self.plist}
+        self.initialize_post()
 
     @abstractmethod
     def writepos(self,case="macro",extra_funs=[]):
         pass
+
+    def pre_iterate(self):
+        self.macro_iter += 1
+        for p in self.plist:
+            p.time = self.t0_macro_step
+            p.iter = self.prev_iter[p]
+            p.u_prev.x.array[:] = self.u_prev[p].x.array[:]
 
     def find_subproblem_els(self):
         ps = self.ps
@@ -176,10 +183,9 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
                                       form_compiler_options={"scalar_type": np.float64})
 
     def pre_loop(self):
+        super().pre_loop()
         (ps,pf) = (self.ps,self.pf)
         self.num_micro_steps = np.round(ps.dt.value / pf.dt.value, 9).astype(np.int32)
-        self.macro_iter = 0
-        self.prev_iter = {ps:ps.iter,pf:pf.iter}
         # Prepare fast problem
         self.instantiate_forms(pf)
         self.set_dirichlet_fast()
@@ -189,14 +195,6 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         for f in self.u_prev.values():
             f.name = "u_prev_driver"
         self.initialize_post()
-
-    def pre_iterate(self):
-        (ps,pf) = (self.ps,self.pf)
-        self.macro_iter += 1
-        for p in [ps,pf]:
-            p.time = self.t0_macro_step
-            p.iter = self.prev_iter[p]
-            p.u_prev.x.array[:] = self.u_prev[p].x.array[:]
 
     def post_iterate(self):
         (ps,pf) = (self.ps,self.pf)
@@ -415,7 +413,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         for w in self.writers.values():
             w.close()
         shutil.rmtree(self.result_folder,ignore_errors=True)
-        for p in [self.ps,self.pf]:
+        for p in self.plist:
             self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{self.name}_{p.name}.pvd", "wb")
 
     def writepos(self,case="macro",extra_funs=[]):
@@ -518,13 +516,8 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         dn_driver.update_dirichlet_interface()
 
     def pre_iterate(self):
-        (ps,pf) = (self.ps,self.pf)
-        self.macro_iter += 1
-        for p in [ps,pf]:
-            p.time = self.t0_macro_step
-            p.iter = self.prev_iter[p]
-            p.u_prev.x.array[:] = self.u_prev[p].x.array[:]
-        self.relaxation_coeff_pf = self.staggered_driver.relaxation_coeff[pf].value
+        super().pre_iterate()
+        self.relaxation_coeff_pf = self.staggered_driver.relaxation_coeff[self.pf].value
         # TODO: Undo pre-iterate of source
         # TODO: Undo pre-iterate of domain
         # TODO: Undo post-iterate of problem
@@ -550,8 +543,8 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         self.staggered_driver = sd
 
     def pre_loop(self):
-        (ps,pf) = (self.ps,self.pf)
         super().pre_loop()
+        (ps,pf) = (self.ps,self.pf)
         sd = self.staggered_driver
         if type(sd)==StaggeredRRDriver:
             self.iterate = self.iterate_substepped_rr
@@ -559,9 +552,6 @@ class MHSStaggeredSubstepper(MHSSubstepper):
             self.iterate = self.iterate_substepped_dn
         else:
             raise ValueError("Unknown staggered driver type.")
-        self.macro_iter = 0
-        self.prev_iter = {ps:ps.iter,pf:pf.iter}
-        self.u_prev = {ps:ps.u.copy(),pf:pf.u.copy()}
         for u in self.u_prev.values():
             u.name = "u_prev_driver"
         # Add a compute gradient around here!

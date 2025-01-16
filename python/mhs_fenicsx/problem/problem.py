@@ -53,7 +53,8 @@ class Problem:
         self.num_cells = self.cell_map.size_local + self.cell_map.num_ghosts
         self.num_facets = self.facet_map.size_local + self.facet_map.num_ghosts
         self.num_nodes = self.node_map.size_local + self.node_map.num_ghosts
-        self.set_bb_trees()
+        self.bb_tree = geometry.bb_tree(self.domain,self.dim,np.arange(self.num_cells,dtype=np.int32),padding=1e-7)
+        self.bb_tree_nodes = geometry.bb_tree(self.domain,0,np.arange(self.num_nodes,dtype=np.int32),padding=1e-7)
         self.initialize_activation()
 
         self.u   = fem.Function(self.v, name="uh")   # Solution
@@ -185,10 +186,6 @@ class Problem:
     def set_rhs( self, rhs ):
         self.rhs = rhs
 
-    def set_bb_trees(self):
-        self.bb_tree = geometry.bb_tree(self.domain,self.dim,np.arange(self.num_cells,dtype=np.int32),padding=1e-7)
-        self.bb_tree_nodes = geometry.bb_tree(self.domain,0,np.arange(self.num_nodes,dtype=np.int32),padding=1e-7)
-    
     def define_materials(self,parameters):
         self.T_env = parameters["environment_temperature"]
         if "deposition_temperature" in parameters:
@@ -258,12 +255,12 @@ class Problem:
         if self.domain_speed is not None and not(self.is_mesh_shared):
             dx = np.round(self.domain_speed*self.dt.value,7)
             self.domain.geometry.x[:] += dx
+            self.bb_tree.bbox_coordinates[:] += dx
+            self.bb_tree_nodes.bbox_coordinates[:] += dx
             self.dof_coords += dx
             self.clear_gamma_data()
             if self.is_supg:
                 self.compute_supg_coeff()
-            # This can be done more efficiently C++ level
-            self.set_bb_trees()
 
         self.source.set_fem_function(self.dof_coords)
         self.iter += 1

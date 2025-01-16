@@ -337,11 +337,11 @@ class Problem:
         self.gamma_integration_data.clear()
 
     def get_active_in_external(self, p_ext:Problem ):
-        po = mhs_fenicsx_cpp.cellwise_determine_point_ownership(p_ext.domain._cpp_object,
-                                                                self.domain.geometry.x,
-                                                                p_ext.active_els_func.x.array.nonzero()[0],
-                                                                1e-7,)
-        return np.array(po.src_owner>=0,dtype=np.bool)
+        # Consider only asking for currently active nodes!
+        owners = mhs_fenicsx_cpp.find_owner_rank(self.domain.geometry.x,
+                                                 p_ext.bb_tree._cpp_object,
+                                                 p_ext.active_els_func._cpp_object)
+        return np.array(owners>=0,dtype=np.bool)
 
     def subtract_problem(self, p_ext : 'Problem', finalize=True):
         self.ext_nodal_activation[p_ext] = self.get_active_in_external(p_ext)

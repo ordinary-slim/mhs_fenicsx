@@ -23,7 +23,6 @@ NB_MODULE(mhs_fenicsx_cpp, m) {
   declare_diffmesh_utils(m);
   declare_activation_utils(m);
   declare_interpolate(m);
-  declare_my_determine_point_ownership(m);
   declare_mesh_collision(m);
   declare_submesh_utils(m);
   declare_create_robin_robin_monolithic(m);

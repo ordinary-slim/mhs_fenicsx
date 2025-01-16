@@ -79,7 +79,7 @@ def test_staggered_robin_chimera_substepper():
     with open("test_input.yaml", 'r') as f:
         params = yaml.safe_load(f)
     params["material_metal"].pop("phase_change")
-    p = run_staggered_RR(params, writepos=True)
+    p = run_staggered_RR(params, writepos=False)
     points = np.array([
         [-0.250, -0.250, 0.0],
         [-0.250, -0.375, 0.0],

@@ -90,7 +90,6 @@ nanobind_add_module(mhs_fenicsx_cpp
                     diffmesh_utils.cpp
                     wrapper_create_robin_robin_monolithic.cpp
                     custom_create_matrix.cpp
-                    my_determine_point_ownership.cpp
                     )
 
 # Check for mpi4py

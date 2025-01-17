@@ -2,7 +2,8 @@ from mhs_fenicsx.problem import Problem
 from dolfinx import fem, mesh, la
 import basix.ufl
 from mhs_fenicsx_cpp import cellwise_determine_point_ownership, scatter_cell_integration_data_po, \
-                            create_robin_robin_monolithic, interpolate_dg0_at_facets
+                            create_robin_robin_monolithic, interpolate_dg0_at_facets, \
+                            tabulate_gamma_quadrature
 from mhs_fenicsx.problem.helpers import get_identity_maps
 from ffcx.element_interface import map_facet_points
 import numpy as np
@@ -79,6 +80,18 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         (p1,p2) = (sub_problem_1,sub_problem_2)
         super().__init__(p1, p2, quadrature_degree)
         self.compile_forms()
+        self.Qe = dict()
+        self.quadrature_points_cell = dict()
+        for p in (p1, p2):
+            cdim = p.domain.topology.dim
+            cell_type =  p.domain.topology.entity_types[-1][0].name
+            facet_type = p.domain.topology.entity_types[-2][0].name
+            self.Qe[p] = basix.ufl.quadrature_element(facet_type, degree=quadrature_degree)
+            num_gps_facet = self.Qe[p].num_entity_dofs[-1][0]
+            num_facets_cell = p.domain.ufl_cell().num_facets()
+            self.quadrature_points_cell[p]  = np.zeros((num_gps_facet * num_facets_cell, cdim), dtype=self.Qe[p]._points.dtype)
+            for ifacet in range(num_facets_cell):
+                self.quadrature_points_cell[p][ifacet*num_gps_facet : ifacet*num_gps_facet + num_gps_facet, :cdim] = map_facet_points(self.Qe[p]._points, ifacet, cell_type)
 
     def compile_forms(self):
         '''TODO: Make this domain independent'''
@@ -125,17 +138,18 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         # WARNING: Incompatibility with strongly enforced Dirichlet BC!
         super().setup_coupling()
         (p1,p2) = (self.p1,self.p2)
-        self.A12 = self.assemble_robin_matrix(p1, p2, self.quadrature_degree)
-        self.A21 = self.assemble_robin_matrix(p2, p1, self.quadrature_degree)
+        self.A12 = self.assemble_robin_matrix(p1, p2)
+        self.A21 = self.assemble_robin_matrix(p2, p1)
         # Add LHS term
         for p, p_ext in zip([p1, p2], [p2, p1]):
             self.instantiate_forms()
-            p.A.assemble(PETSc.Mat.AssemblyType.FLUSH)
+            #p.A.assemble(PETSc.Mat.AssemblyType.FLUSH)
             multiphenicsx.fem.petsc.assemble_matrix(
                     p.A,
                     self.j_instance[p],
                     bcs=p.dirichlet_bcs,
                     restriction=(p.restriction, p.restriction))
+            p.A.assemble()
             # RHS term Robin for residual formulation
             res = p.restriction
             ext_res = p_ext.restriction
@@ -166,34 +180,16 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                 f.destroy()
             p.L.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
 
-    def assemble_robin_matrix(self, p:Problem, p_ext:Problem, quadrature_degree=2):
-        cdim = p.domain.topology.dim
+    def assemble_robin_matrix(self, p:Problem, p_ext:Problem):
         # GENERATE QUADRATURE
-        cell_type =  p.domain.topology.entity_types[-1][0].name
-        facet_type = p.domain.topology.entity_types[-2][0].name
-        Qe = basix.ufl.quadrature_element(facet_type,
-                                          degree=quadrature_degree)
-
-        num_gps_facet = Qe.num_entity_dofs[-1][0]
-        num_facets_cell = p.domain.ufl_cell().num_facets()
-        quadrature_points_cell  = np.zeros((num_gps_facet * num_facets_cell, cdim), dtype=Qe._points.dtype)
-        for ifacet in range(num_facets_cell):
-            quadrature_points_cell[ifacet*num_gps_facet : ifacet*num_gps_facet + num_gps_facet, :cdim] = map_facet_points(Qe._points, ifacet, cell_type)
-
         # Manually tabulate
-        num_local_gamma_cells = p.gamma_integration_data[p_ext].size // 2
-        gamma_qpoints = np.zeros((num_local_gamma_cells * \
-                num_gps_facet, 3), dtype=np.float64)
-        pgeo = p.domain.geometry
-        for idx in range(num_local_gamma_cells):
-            icell   = p.gamma_integration_data[p_ext][2*idx]
-            lifacet = p.gamma_integration_data[p_ext][2*idx+1]
-            ref_points = quadrature_points_cell[lifacet*num_gps_facet:lifacet*num_gps_facet+num_gps_facet, :]
-            # Push forward
-            gamma_qpoints[idx*num_gps_facet:\
-                idx*num_gps_facet + num_gps_facet, :] =  \
-                pgeo.cmap.push_forward(
-                        ref_points, pgeo.x[pgeo.dofmap[icell]])
+        num_gps_facet = self.Qe[p].num_entity_dofs[-1][0]
+        gamma_qpoints = tabulate_gamma_quadrature(
+                p.domain._cpp_object,
+                p.gamma_integration_data[p_ext],
+                num_gps_facet,
+                self.quadrature_points_cell[p]
+                )
 
         self.gamma_qpoints_po[p][p_ext] = \
                 cellwise_determine_point_ownership(p_ext.domain._cpp_object,
@@ -222,11 +218,10 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                   p.gamma_facets_index_map[p_ext],
                                   p.gamma_imap_to_global_imap[p_ext])
 
-        p.domain.topology.create_entity_permutations()
         A = create_robin_robin_monolithic(self.ext_conductivity[p]._cpp_object,
                                           gamma_qpoints,
-                                          quadrature_points_cell,
-                                          Qe._weights,
+                                          self.quadrature_points_cell[p],
+                                          self.Qe[p]._weights,
                                           p.v._cpp_object,
                                           p.restriction,
                                           p_ext.v._cpp_object,

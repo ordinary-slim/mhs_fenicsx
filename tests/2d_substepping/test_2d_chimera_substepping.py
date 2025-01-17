@@ -99,12 +99,13 @@ if __name__=="__main__":
         params = yaml.safe_load(f)
     write_gcode(params)
     lp = LineProfiler()
-    from mhs_fenicsx.drivers import MHSStaggeredSubstepper, MHSSubstepper, MonolithicRRDriver
+    from mhs_fenicsx.drivers import MHSStaggeredSubstepper, MHSSubstepper, MonolithicRRDriver, MonolithicDomainDecompositionDriver
     from mhs_fenicsx.chimera import interpolate_solution_to_inactive
     from mhs_fenicsx.problem.helpers import interpolate
     lp.add_module(MHSStaggeredChimeraSubstepper)
     lp.add_module(MHSStaggeredSubstepper)
     lp.add_module(MHSSubstepper)
+    lp.add_module(MonolithicDomainDecompositionDriver)
     lp.add_module(MonolithicRRDriver)
     lp.add_module(Problem)
     lp.add_function(interpolate_solution_to_inactive)

@@ -14,6 +14,7 @@ void declare_submesh_utils(nb::module_ &m);
 void declare_create_robin_robin_monolithic(nb::module_ &m);
 void declare_diffmesh_utils(nb::module_ &m);
 void declare_get_facet_integration_entities(nb::module_ &m);
+void declare_tabulate_gamma_quadrature(nb::module_ &m);
 
 NB_MODULE(mhs_fenicsx_cpp, m) {
   nb::bind_vector<int_vector>(m, "int_vector");
@@ -26,4 +27,5 @@ NB_MODULE(mhs_fenicsx_cpp, m) {
   declare_mesh_collision(m);
   declare_submesh_utils(m);
   declare_create_robin_robin_monolithic(m);
+  declare_tabulate_gamma_quadrature(m);
 }

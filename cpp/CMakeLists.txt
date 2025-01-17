@@ -90,6 +90,7 @@ nanobind_add_module(mhs_fenicsx_cpp
                     diffmesh_utils.cpp
                     wrapper_create_robin_robin_monolithic.cpp
                     custom_create_matrix.cpp
+                    wrapper_tabulate_gamma_qpoints.cpp
                     )
 
 # Check for mpi4py

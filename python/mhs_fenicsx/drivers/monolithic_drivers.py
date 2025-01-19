@@ -143,13 +143,12 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         # Add LHS term
         for p, p_ext in zip([p1, p2], [p2, p1]):
             self.instantiate_forms()
-            #p.A.assemble(PETSc.Mat.AssemblyType.FLUSH)
+            p.A.assemble(PETSc.Mat.AssemblyType.FLUSH)
             multiphenicsx.fem.petsc.assemble_matrix(
                     p.A,
                     self.j_instance[p],
                     bcs=p.dirichlet_bcs,
                     restriction=(p.restriction, p.restriction))
-            p.A.assemble()
             # RHS term Robin for residual formulation
             res = p.restriction
             ext_res = p_ext.restriction

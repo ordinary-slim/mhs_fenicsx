@@ -509,8 +509,9 @@ class Problem:
         self.x = multiphenicsx.fem.petsc.create_vector(self.mr_instance, restriction=self.restriction)
         self.has_preassembled = True
 
-    def assemble_jacobian(self, finalize=True):
-        self.A.zeroEntries()
+    def assemble_jacobian(self, zero=True, finalize=True):
+        if zero:
+            self.A.zeroEntries()
         multiphenicsx.fem.petsc.assemble_matrix(self.A,
                                                 self.j_instance,
                                                 bcs=self.dirichlet_bcs,

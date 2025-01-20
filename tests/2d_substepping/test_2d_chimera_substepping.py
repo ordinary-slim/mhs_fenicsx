@@ -4,7 +4,7 @@ from test_2d_substepping import get_initial_condition, get_dt, write_gcode, get_
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.drivers import MHSStaggeredChimeraSubstepper, StaggeredRRDriver
 from mhs_fenicsx.chimera import build_moving_problem
-from mhs_fenicsx.problem.helpers import assert_pointwise_vals
+from mhs_fenicsx.problem.helpers import assert_pointwise_vals, print_vals
 import shutil
 from dolfinx import mesh, fem, io
 import numpy as np
@@ -65,9 +65,8 @@ def run_staggered_RR(params, writepos=True):
                 break
         substeppin_driver.post_loop()
         # Interpolate solution to inactive ps
-        ps.u.interpolate(pf.u,
-                         cells0=pf.active_els_func.x.array.nonzero()[0],
-                         cells1=pf.active_els_func.x.array.nonzero()[0])
+        ps.u.x.array[substeppin_driver.dofs_fast] = pf.u.x.array[substeppin_driver.dofs_fast]
+        ps.u.x.scatter_forward()
         ps.is_grad_computed = False
         pf.u.x.array[:] = ps.u.x.array[:]
         pf.is_grad_computed = False

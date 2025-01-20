@@ -6,7 +6,7 @@ from mhs_fenicsx.drivers import MHSSubstepper, MHSStaggeredSubstepper, MHSSemiMo
 import yaml
 import numpy as np
 import argparse
-from mhs_fenicsx.problem.helpers import assert_pointwise_vals
+from mhs_fenicsx.problem.helpers import assert_pointwise_vals, print_vals
 from mhs_fenicsx.drivers import StaggeredRRDriver, StaggeredDNDriver
 
 comm = MPI.COMM_WORLD
@@ -106,9 +106,8 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
                 break
         substeppin_driver.post_loop()
         # Interpolate solution to inactive ps
-        ps.u.interpolate(pf.u,
-                         cells0=pf.active_els_func.x.array.nonzero()[0],
-                         cells1=pf.active_els_func.x.array.nonzero()[0])
+        ps.u.x.array[substeppin_driver.dofs_fast] = pf.u.x.array[substeppin_driver.dofs_fast]
+        ps.u.x.scatter_forward()
         ps.is_grad_computed = False
         pf.u.x.array[:] = ps.u.x.array[:]
         pf.is_grad_computed = False

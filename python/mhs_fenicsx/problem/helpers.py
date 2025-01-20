@@ -162,6 +162,23 @@ def assert_pointwise_vals(p:Problem, points, ref_vals, rtol=1.e-5):
     vals = p.u.eval(po.dest_points[rindices_points_found], po.dest_cells[rindices_points_found]).reshape(-1)
     assert np.isclose(ref_vals[indices_points_found], vals, rtol=rtol).all()
 
+def print_vals(p:Problem, points, only_print=False):
+    '''Test util'''
+    po = mhs_fenicsx_cpp.cellwise_determine_point_ownership(
+            p.domain._cpp_object,
+            points,
+            p.active_els_func.x.array.nonzero()[0],
+            np.float64(1e-7),)
+
+    rindices_points_found = (po.dest_owners == rank).nonzero()[0]
+    vals = p.u.eval(po.dest_points[rindices_points_found], po.dest_cells[rindices_points_found])
+    vals = vals.reshape(-1, 1)
+    csv = np.hstack((po.dest_points[rindices_points_found], vals))
+    if not(only_print):
+        np.savetxt(f"{comm.size}_procs_run_proc#{rank}.csv", csv, delimiter=",")
+    else:
+        print(f"{rank}: {csv}", flush=True)
+
 def get_identity_maps(form):
     coefficient_map = {}
     coefficient_map = {coeff:coeff for coeff in form.coefficients()}

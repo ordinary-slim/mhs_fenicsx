@@ -98,16 +98,6 @@ void eval_affine(const fem::Function<T, U> &f, std::span<const U> x, std::array<
       phi0, std::pair(1, tdim + 1), 0,
       MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent, 0);
 
-  // Data structure for evaluating geometry basis at specific points.
-  // Used in non-affine case.
-  std::array<std::size_t, 4> phi_shape = cmap.tabulate_shape(1, 1);
-  std::vector<U> phi_b(
-      std::reduce(phi_shape.begin(), phi_shape.end(), 1, std::multiplies{}));
-  dolfinx::fem::impl::mdspan_t<const U, 4> phi(phi_b.data(), phi_shape);
-  auto dphi = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
-      phi, std::pair(1, tdim + 1), 0,
-      MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent, 0);
-
   // Reference coordinates for each point
   std::vector<U> Xb(xshape[0] * tdim);
   dolfinx::fem::impl::mdspan_t<U, 2> X(Xb.data(), xshape[0], tdim);

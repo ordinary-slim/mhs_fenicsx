@@ -156,7 +156,9 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
             ext_flux = la.create_petsc_vector(res.index_map, p.v.value_size)
 
             # EXT CONTRIBUTION
-            indices = np.array(tuple(ext_res.restricted_to_unrestricted.values())[:ext_res.index_map.size_local],dtype=np.int32)
+            indices = np.array(tuple(ext_res.restricted_to_unrestricted.values()) ,dtype=np.int32)
+            indices.sort()
+            indices = indices[:ext_res.index_map.size_local]
             indices = ext_res.dofmap.index_map.local_to_global(indices).astype(np.int32)
             iset = PETSc.IS().createGeneral(indices, p_ext.domain.comm)
             ext_res_sol = p_ext.u.x.petsc_vec.getSubVector(iset)

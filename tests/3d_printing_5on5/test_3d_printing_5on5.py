@@ -45,8 +45,7 @@ def run():
         problem.u_prev.x.array[problem.just_activated_nodes] = problem.T_dep
         problem.instantiate_forms()
         problem.pre_assemble()
-        problem.assemble()
-        problem.solve()
+        problem.non_linear_solve()
         problem.post_iterate()
 
     return problem

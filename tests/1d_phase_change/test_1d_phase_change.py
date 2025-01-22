@@ -68,19 +68,12 @@ def main(params, case_name="demo_phase_change", writepos=True):
     p.compile_create_forms()
     p.pre_assemble()
 
-    lamma_exact_sol = lambda x : exact_sol(x,p.time)
+    exact_sol_at_t = lambda x : exact_sol(x,p.time)
     for _ in range(max_num_timesteps):
         p.pre_iterate()
-        f_exact.interpolate(lamma_exact_sol)
+        f_exact.interpolate(exact_sol_at_t)
 
-        if p.phase_change:
-            nr_driver = NewtonRaphson(p,
-                                      max_ls_iters=max_ls_iters,
-                                      max_nr_iters=max_nr_iters)
-            nr_driver.solve()
-        else:
-            p.assemble()
-            p.solve()
+        p.non_linear_solve()
         if writepos:
             p.writepos(extra_funcs=[f_exact])
     return p

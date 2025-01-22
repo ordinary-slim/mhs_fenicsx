@@ -359,13 +359,11 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
     def iterate(self):
         (pn, pd) = (self.p_neumann,self.p_dirichlet)
         # Solve right with Dirichlet from left
-        pd.assemble()
-        pd.solve()
+        pd.non_linear_solve()
 
         self.update_neumann_interface()
         # Solve left with Neumann from right
-        pn.assemble()
-        pn.solve()
+        pn.non_linear_solve()
         self.update_relaxation_factor()
         self.update_dirichlet_interface()
 
@@ -524,9 +522,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         (p1, p2) = (self.p1,self.p2)
 
         self.update_robin(p1)
-        p1.assemble()
-        p1.solve()
+        p1.non_linear_solve()
 
         self.update_robin(p2)
-        p2.assemble()
-        p2.solve()
+        p2.non_linear_solve()

@@ -99,7 +99,8 @@ class Problem:
         self.is_steady = parameters["isSteady"]
         self.iter     = 0
         self.time     = 0.0
-        self.dt       = fem.Constant(self.domain, parameters["dt"]) if not(self.is_steady) else fem.Constant(self.domain, -1.0)
+        dt = parameters["dt"] if not(self.is_steady) else -1.0
+        self.dt       = fem.Constant(self.domain, dt)
         self.dt_func  = fem.Function(self.v, name="dt")
         self.dt_func.x.array[:] = self.dt.value
         # Motion
@@ -128,6 +129,7 @@ class Problem:
     def __del__(self):
         for writer in self.writers.values():
             writer.close()
+        self._destroy()
 
     def copy(self,name=None):
         self.is_mesh_shared = True
@@ -271,6 +273,7 @@ class Problem:
     def post_iterate(self):
         self._destroy()
         self.has_preassembled = False
+        self.is_grad_computed = False
 
     def initialize_activation(self, finalize=True):
         self.active_els = np.arange(self.num_cells,dtype=np.int32)
@@ -501,35 +504,45 @@ class Problem:
         self.instantiate_forms()
 
     def pre_assemble(self):
+        self._destroy()
         self.A = multiphenicsx.fem.petsc.create_matrix(self.j_instance,
                                                   (self.restriction, self.restriction),
                                                   )
         self.L = multiphenicsx.fem.petsc.create_vector(self.mr_instance,
-                                                  self.restriction)
+                                                       self.restriction)
         self.x = multiphenicsx.fem.petsc.create_vector(self.mr_instance, restriction=self.restriction)
+        self._obj_vec = multiphenicsx.fem.petsc.create_vector(self.mr_instance, self.restriction)
         self.has_preassembled = True
 
-    def assemble_jacobian(self, zero=True, finalize=True):
+    def assemble_jacobian(self,
+                          J_mat: typing.Optional[PETSc.Mat] = None,
+                          zero=True,
+                          finalize=True):
+        if J_mat is None:
+            J_mat = self.A
         if zero:
-            self.A.zeroEntries()
-        multiphenicsx.fem.petsc.assemble_matrix(self.A,
+            J_mat.zeroEntries()
+        multiphenicsx.fem.petsc.assemble_matrix(J_mat,
                                                 self.j_instance,
                                                 bcs=self.dirichlet_bcs,
                                                 restriction=(self.restriction, self.restriction))
         if finalize:
-            self.A.assemble()
+            J_mat.assemble()
 
-    def assemble_residual(self):
-        with self.L.localForm() as l_local:
+    def assemble_residual(self,
+                          F_vec: typing.Optional[PETSc.Vec] = None):
+        if F_vec is None:
+            F_vec = self.L
+        with F_vec.localForm() as l_local:
             l_local.set(0.0)
-        multiphenicsx.fem.petsc.assemble_vector(self.L,
+        multiphenicsx.fem.petsc.assemble_vector(F_vec,
                                                 self.mr_instance,
                                                 restriction=self.restriction,)
         # Dirichlet
-        multiphenicsx.fem.petsc.apply_lifting(self.L, [self.j_instance], [self.dirichlet_bcs], [self.u.x.petsc_vec], restriction=self.restriction)
-        self.L.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
-        multiphenicsx.fem.petsc.set_bc(self.L,self.dirichlet_bcs, self.u.x.petsc_vec, restriction=self.restriction)
-        self.L.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
+        multiphenicsx.fem.petsc.apply_lifting(F_vec, [self.j_instance], [self.dirichlet_bcs], [self.u.x.petsc_vec], restriction=self.restriction)
+        F_vec.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
+        multiphenicsx.fem.petsc.set_bc(F_vec,self.dirichlet_bcs, self.u.x.petsc_vec, restriction=self.restriction)
+        F_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
 
     def assemble(self):
         if not(self.has_preassembled):
@@ -542,6 +555,7 @@ class Problem:
             opts = {"pc_type" : "lu", "pc_factor_mat_solver_type" : "mumps",}
         self.linear_solver_opts = dict(opts)
 
+    '''
     def _solve_linear_system(self):
         with self.x.localForm() as x_local:
             x_local.set(0.0)
@@ -556,11 +570,21 @@ class Problem:
         self.x.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
         ksp.destroy()
 
-    def _restrict_solution(self):
-        with self.du.x.petsc_vec.localForm() as dusub_vector_local, \
-                multiphenicsx.fem.petsc.VecSubVectorWrapper(self.x, self.v.dofmap, self.restriction) as x_wrapper:
-                    dusub_vector_local[:] = x_wrapper
-        self.du.x.scatter_forward()
+    def solve(self):
+        self._solve_linear_system()
+        self._update_solution()
+        self.u.x.array[:] += self.du.x.array[:]
+        self.is_grad_computed = False#dubious line
+    '''
+
+    def _update_solution(self, x = None):
+        sol = self.u
+        if x is None:
+            x = self.x
+        x.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+        with sol.x.petsc_vec.localForm() as sol_sub_vector_local, \
+                multiphenicsx.fem.petsc.VecSubVectorWrapper(x, self.v.dofmap, self.restriction) as x_wrapper:
+                    sol_sub_vector_local[:] = x_wrapper
 
     def _destroy(self):
         for attr in ["x", "A", "L"]:
@@ -568,12 +592,6 @@ class Problem:
                 self.__dict__[attr].destroy()
             except KeyError:
                 pass
-
-    def solve(self):
-        self._solve_linear_system()
-        self._restrict_solution()
-        self.u.x.array[:] += self.du.x.array[:]
-        self.is_grad_computed = False#dubious line
     
     def initialize_post(self):
         self.result_folder = f"post_{self.name}"
@@ -618,6 +636,57 @@ class Problem:
         bmesh = dolfinx.mesh.create_submesh(self.domain,self.dim-1,self.bfacets_tag.find(1))[0]
         with io.VTKFile(bmesh.comm, f"out/bmesh_{self.name}.pvd", "w") as ofile:
             ofile.write_mesh(bmesh)
+
+    def set_snes_sol_vector(self) -> PETSc.Vec:  # type: ignore[no-any-unimported]
+        """ Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess """
+        
+        #x = multiphenicsx.fem.petsc.create_vector(self.mr_instance, self.restriction)
+        sol = self.u
+        with multiphenicsx.fem.petsc.VecSubVectorWrapper(self.x, self.v.dofmap, self.restriction) as x_wrapper:
+            with sol.x.petsc_vec.localForm() as solution_local:
+                x_wrapper[:] = solution_local
+
+    def obj(  # type: ignore[no-any-unimported]
+        self, snes: PETSc.SNES, x: PETSc.Vec
+    ) -> np.float64:
+        """Compute the norm of the residual."""
+        self.R(snes, x, self._obj_vec)
+        return self._obj_vec.norm()  # type: ignore[no-any-return]
+
+    def R(  # type: ignore[no-any-unimported]
+        self, snes: PETSc.SNES, x: PETSc.Vec, F_vec: PETSc.Vec
+    ) -> None:
+        """Assemble the residual."""
+        self._update_solution(x)
+        self.assemble_residual(F_vec)
+        F_vec.scale(-1)
+
+    def J(  # type: ignore[no-any-unimported]
+        self, snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat,
+        P_mat: PETSc.Mat
+    ) -> None:
+        """Assemble the jacobian."""
+        self.assemble_jacobian(J_mat)
+
+    def non_linear_solve(self, max_iter=20):
+        if not(self.has_preassembled):
+            self.pre_assemble()
+        # Solve
+        snes = PETSc.SNES().create(self.domain.comm)
+        snes.setTolerances(max_it=max_iter)
+        ksp_opts = PETSc.Options()
+        for k,v in self.linear_solver_opts.items():
+            ksp_opts[k] = v
+        snes.getKSP().setFromOptions()
+        snes.setObjective(self.obj)
+        snes.setFunction(self.R, self.L)
+        snes.setJacobian(self.J, J=self.A, P=None)
+        snes.setMonitor(lambda _, it, residual: print(it, residual))
+        self.set_snes_sol_vector()
+        snes.solve(None, self.x)
+        self._update_solution(self.x)  # TODO can this be safely removed?
+        snes.destroy()
+        self.is_grad_computed = False#dubious line
 
 class GammaL2Dotter:
     def __init__(self, p:Problem):

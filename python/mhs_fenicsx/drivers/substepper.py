@@ -128,8 +128,7 @@ class MHSSubstepper(ABC):
         ps.pre_iterate()
         self.instantiate_forms(ps)
         ps.pre_assemble()
-        ps.assemble()
-        ps.solve()
+        ps.non_linear_solve(max_iter=1)# LINEAR SOLVE
         ps.post_iterate()
         # Reset iter to prev.
         # Useful for writepos
@@ -226,12 +225,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
             self.fast_dirichlet_tcon.g.x.array[self.gamma_dofs_fast] = \
                     (1-f)*ps.u_prev.x.array[self.gamma_dofs_fast] + \
                     f*ps.u.x.array[self.gamma_dofs_fast]
-            if pf.phase_change:
-                nr_driver = NewtonRaphson(pf)
-                nr_driver.solve()
-            else:
-                pf.assemble()
-                pf.solve()
+            pf.non_linear_solve()
             #pf.post_iterate()
             self.micro_post_iterate()
             if self.do_writepos:
@@ -267,80 +261,75 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
                                      coefficient_map=lcoeffmap,
                                      constant_map=lconstmap)
 
-        # SOLVE
-        nr_iter = 0
-        nr_converged = False
         A = multiphenicsx.fem.petsc.create_matrix(j_instance, restriction=(self.initial_restriction, self.initial_restriction))
-        L = multiphenicsx.fem.petsc.create_vector(mr_instance, restriction=self.initial_restriction)
+        R = multiphenicsx.fem.petsc.create_vector(mr_instance, restriction=self.initial_restriction)
         x = multiphenicsx.fem.petsc.create_vector(mr_instance, restriction=self.initial_restriction)
-        def assemble_residual():
-            with L.localForm() as l_local:
-                l_local.set(0.0)
-            multiphenicsx.fem.petsc.assemble_vector(L, mr_instance, restriction=self.initial_restriction)
-            # Dirichlet
-            L.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
-        def assemble_jacobian():
-            A.zeroEntries()
-            multiphenicsx.fem.petsc.assemble_matrix(A, j_instance, restriction=(self.initial_restriction, self.initial_restriction))
-            A.assemble()
-        def solve_ls():
-            with x.localForm() as x_local:
-                x_local.set(0.0)
-            ksp = PETSc.KSP()
-            ksp.create(ps.domain.comm)
-            ksp.setOperators(A)
-            ksp_opts = PETSc.Options()
-            for k,v in ps.linear_solver_opts.items():
-                ksp_opts[k] = v
-            ksp.setFromOptions()
-            ksp.solve(L, x)
-            x.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
-            ksp.destroy()
-        def set_step():
-            with pf.du.x.petsc_vec.localForm() as duf_sub_vector_local, \
-                 ps.du.x.petsc_vec.localForm() as dus_sub_vector_local, \
-                    multiphenicsx.fem.petsc.VecSubVectorWrapper(x, ps.v.dofmap, self.initial_restriction) as x_wrapper:
-                        dus_sub_vector_local[:] = x_wrapper
-                        duf_sub_vector_local[:] = x_wrapper
-            ps.du.x.scatter_forward()
-            pf.du.x.scatter_forward()
+        obj_vec = multiphenicsx.fem.petsc.create_vector(mr_instance, restriction=self.initial_restriction)
+        lin_algebra_objects = [A, R, x, obj_vec]
 
-        assemble_residual()
-        while (nr_iter < self.max_nr_iters) and (not(nr_converged)):
-            nr_iter += 1
-            un_s = ps.u.copy()
-            un_f = pf.u.copy()
-            assemble_jacobian()
-            solve_ls()
-            set_step()
-            for (p, un) in zip([ps, pf], [un_s, un_f]):
-                p.u.x.array[:] += p.du.x.array[:]
+        # SOLVE
+        def set_snes_sol_vector() -> PETSc.Vec:  # type: ignore[no-any-unimported]
+            """
+            Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess
+            """
+            
+            with multiphenicsx.fem.petsc.VecSubVectorWrapper(
+                    x, ps.v.dofmap, self.initial_restriction) as x_wrapper:
+                with pf.u.x.petsc_vec.localForm() as uf_sub_vector_local, \
+                  ps.u.x.petsc_vec.localForm() as us_sub_vector_local:
+                      x_wrapper[:] = us_sub_vector_local
+                      x_wrapper[self.dofs_fast] = uf_sub_vector_local[self.dofs_fast]
 
-            residual_work_n   = x.dot(L)
-            assemble_residual()
-            residual_work_np1 = x.dot(L)
-            # LINE-SEARCH
-            ls_iter = 0
-            relaxation_coeff = 1.0
-            while (abs(residual_work_np1) >= 0.8*abs(residual_work_n)) \
-                and (ls_iter < self.max_ls_iters):
-                    ls_iter += 1
-                    relaxation_coeff *= 0.5
-                    for (p, un) in zip([ps, pf], [un_s, un_f]):
-                        p.u.x.array[:] = un.x.array[:] + relaxation_coeff*p.du.x.array[:]
-                    assemble_residual()
-                    residual_work_np1 = x.dot(L)
-            correction_norm = relaxation_coeff*x.norm(0)
-            solution_norm = ps.u.x.petsc_vec.norm(0)
-            relative_change = correction_norm/solution_norm
-            print(f"NR iter #{nr_iter}, residual_work = {residual_work_np1}, did {ls_iter} line search iterations, step norm = {correction_norm}.")
-            if  relative_change < 1e-7:
-                nr_converged = True
-        if not(nr_converged):
-            exit("NR iters did not converge!")
-        pf.u.x.array[:] = ps.u.x.array[:]
+        def update_solution(sol_vector):
+            with pf.u.x.petsc_vec.localForm() as uf_sub_vector_local, \
+                 ps.u.x.petsc_vec.localForm() as us_sub_vector_local, \
+                    multiphenicsx.fem.petsc.VecSubVectorWrapper(sol_vector, ps.v.dofmap, self.initial_restriction) as sol_vector_wrapper:
+                        us_sub_vector_local[:] = sol_vector_wrapper
+                        uf_sub_vector_local[:] = sol_vector_wrapper
+            ps.u.x.scatter_forward()
+            pf.u.x.scatter_forward()
 
-        for ds in [A, x, L]:
+        def assemble_residual(snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
+            update_solution(x)
+            with R_vec.localForm() as R_local:
+                R_local.set(0.0)
+            multiphenicsx.fem.petsc.assemble_vector(R_vec,
+                                                    mr_instance,
+                                                    restriction=self.initial_restriction)
+            # TODO: Dirichlet here?
+            R_vec.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
+            R_vec.scale(-1)
+
+        def assemble_jacobian(
+                snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat, P_mat: PETSc.Mat):
+            J_mat.zeroEntries()
+            multiphenicsx.fem.petsc.assemble_matrix(J_mat, j_instance, restriction=(self.initial_restriction, self.initial_restriction))
+            J_mat.assemble()
+
+
+        def obj(  # type: ignore[no-any-unimported]
+            snes: PETSc.SNES, x: PETSc.Vec
+        ) -> np.float64:
+            """Compute the norm of the residual."""
+            assemble_residual(snes, x, obj_vec)
+            return obj_vec.norm()  # type: ignore[no-any-return]
+
+        # Solve
+        snes = PETSc.SNES().create(ps.domain.comm)
+        snes.setTolerances(max_it=self.max_nr_iters)
+        ksp_opts = PETSc.Options()
+        for k,v in ps.linear_solver_opts.items():
+            ksp_opts[k] = v
+        snes.getKSP().setFromOptions()
+        snes.setObjective(obj)
+        snes.setFunction(assemble_residual, R)
+        snes.setJacobian(assemble_jacobian, J=A, P=None)
+        snes.setMonitor(lambda _, it, residual: print(it, residual))
+        set_snes_sol_vector()
+        snes.solve(None, x)
+        update_solution(x)
+        snes.destroy()
+        for ds in lin_algebra_objects:
             ds.destroy()
 
         # POST-ITERATE
@@ -466,12 +455,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
                                                  sd.ext_sol[pf].x.array[:])
             elif type(sd)==StaggeredDNDriver and sd.p_neumann==pf:
                 sd.relaxation_coeff[pf].value = self.fraction_macro_step
-            if not(pf.phase_change):
-                pf.assemble()
-                pf.solve()
-            else:
-                nr_driver = NewtonRaphson(pf)
-                nr_driver.solve()
+            pf.non_linear_solve()
             #pf.post_iterate()
             self.micro_post_iterate()
             self.writepos(case="micro")
@@ -488,12 +472,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
 
         rr_driver.update_robin(ps)
         ps.pre_iterate(forced_time_derivative=True)
-        if ps.phase_change:
-            nr_driver = NewtonRaphson(ps)
-            nr_driver.solve()
-        else:
-            ps.assemble()
-            ps.solve()
+        ps.non_linear_solve()
 
     def iterate_substepped_dn(self):
         dn_driver = self.staggered_driver
@@ -506,12 +485,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         dn_driver.update_neumann_interface()
         # Solve slow/Neumann problem
         pn.pre_iterate(forced_time_derivative=True)
-        if pn.phase_change:
-            nr_driver = NewtonRaphson(pn)
-            nr_driver.solve()
-        else:
-            pn.assemble()
-            pn.solve()
+        pn.non_linear_solve()
         dn_driver.update_relaxation_factor()
         dn_driver.update_dirichlet_interface()
 

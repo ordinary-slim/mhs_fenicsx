@@ -1,11 +1,10 @@
 #include "CustomSparsityPattern.h"
 
 // Copy of original create_matrix to pass my own SparsityPattern
-Mat custom_create_matrix(MPI_Comm comm, const CustomSparsityPattern& sp,
-                         std::string type)
+void custom_create_matrix(Mat& A, MPI_Comm comm,
+    const CustomSparsityPattern& sp, std::string type)
 {
   PetscErrorCode ierr;
-  Mat A;
   ierr = MatCreate(comm, &A);
   if (ierr != 0)
     dolfinx::la::petsc::error(ierr, __FILE__, "MatCreate");
@@ -124,6 +123,4 @@ Mat custom_create_matrix(MPI_Comm comm, const CustomSparsityPattern& sp,
   ierr = MatSetOption(A, MAT_KEEP_NONZERO_PATTERN, PETSC_TRUE);
   if (ierr != 0)
     dolfinx::la::petsc::error(ierr, __FILE__, "MatSetOption");
-
-  return A;
 }

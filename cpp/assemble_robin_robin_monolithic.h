@@ -79,8 +79,30 @@ std::tuple<std::vector<U>, std::vector<U>, std::vector<U>>
   return {J_b, K_b, detJ};
 }
 
+inline auto set_fn(Mat A, InsertMode mode)
+{
+  return [A, mode, cache = std::vector<PetscInt>()](
+             std::int64_t row,
+             std::int64_t col,
+             double val) mutable -> int
+  {
+    PetscErrorCode ierr;
+    ierr = MatSetValue(A, row, col, val, mode);
+
+#ifndef NDEBUG
+    if (ierr != 0)
+      dolfinx::la::petsc::error(ierr, __FILE__, "MatSetValue");
+#endif
+    return ierr;
+  };
+}
+
 template <dolfinx::scalar T>
-Mat create_robin_robin_monolithic(
+void assemble_robin_robin_monolithic(
+    Mat& A,
+    const std::function<int(const std::int64_t,
+                            const std::int64_t,
+                            const double)>& mat_add,
     std::reference_wrapper<const dolfinx::fem::Function<T>> ext_conductivity,
     std::span<const T> _tabulated_gauss_points_gamma,
     std::span<const T> _gauss_points_cell,
@@ -345,13 +367,20 @@ Mat create_robin_robin_monolithic(
   // Pre-allocate matrix
   sp.finalize();
 
-  // Create and pre-allocate matrix
-  Mat A = custom_create_matrix(sp.comm(), sp);
+  std::function<int(const std::int64_t,
+      const std::int64_t,
+      const double)> _mat_add;
+
+  if (A == NULL) {
+    // Create and pre-allocate matrix
+    custom_create_matrix(A, sp.comm(), sp);
+    _mat_add = set_fn(A, ADD_VALUES);
+  } else {
+    _mat_add = mat_add;
+  }
 
   // Assemble triplets
   for (Triplet& t: contribs) {
-    MatSetValue(A, t.row, t.col, t.value, ADD_VALUES);
+    _mat_add(t.row, t.col, t.value);
   }
-
-  return A;
 }

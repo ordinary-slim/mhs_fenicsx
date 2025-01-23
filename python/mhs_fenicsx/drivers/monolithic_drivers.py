@@ -2,7 +2,7 @@ from mhs_fenicsx.problem import Problem
 from dolfinx import fem, mesh, la
 import basix.ufl
 from mhs_fenicsx_cpp import cellwise_determine_point_ownership, scatter_cell_integration_data_po, \
-                            create_robin_robin_monolithic, interpolate_dg0_at_facets, \
+                            create_robin_robin_monolithic, assemble_robin_robin_monolithic, interpolate_dg0_at_facets, \
                             tabulate_gamma_quadrature
 from mhs_fenicsx.problem.helpers import get_identity_maps
 from ffcx.element_interface import map_facet_points

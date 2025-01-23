@@ -254,5 +254,5 @@ private:
 };
 
 // Copy of original create_matrix to pass my own SparsityPattern
-Mat custom_create_matrix(MPI_Comm comm, const CustomSparsityPattern& sp,
+void custom_create_matrix(Mat& A, MPI_Comm comm, const CustomSparsityPattern& sp,
                          std::string type = std::string());

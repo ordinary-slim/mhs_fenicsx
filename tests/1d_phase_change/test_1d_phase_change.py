@@ -6,7 +6,6 @@ import numpy as np
 from scipy.optimize import fsolve
 from scipy.special import erf, erfc
 from line_profiler import LineProfiler
-from mhs_fenicsx.drivers import NewtonRaphson
 import argparse
 from mhs_fenicsx.problem.helpers import assert_pointwise_vals, print_vals
 

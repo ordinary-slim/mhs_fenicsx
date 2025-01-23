@@ -5,7 +5,6 @@ import ufl
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx_cpp import mesh_collision
 from mhs_fenicsx.drivers.staggered_drivers import StaggeredRRDriver, StaggeredDNDriver
-from mhs_fenicsx.drivers.newton_raphson import NewtonRaphson
 from mhs_fenicsx.geometry import OBB
 import numpy as np
 import shutil

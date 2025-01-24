@@ -264,7 +264,10 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
 
         snes.getKSP().setType("preonly")
         PETSc.Options().setValue('-ksp_error_if_not_converged', 'true')
-        PETSc.Options().setValue('-snes_linesearch_monitor', 'true')
+        PETSc.Options().setValue('-snes_type', 'newtonls')
+        #PETSc.Options().setValue('-snes_line_search_type', 'l2')
+        snes.setFromOptions()
+        #snes.getKSP().setFromOptions()
         snes.getKSP().getPC().setType("lu")
         snes.getKSP().getPC().setFactorSolverType("mumps")
         #snes.getKSP().getPC().setType("fieldsplit")
@@ -278,7 +281,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         set_snes_sol_vector(self)
         snes.solve(None, self.x)
         update_solution(self.x)
-        assert snes.getConvergedReason() > 0
+        assert (snes.getConvergedReason() > 0)
         snes.destroy()
 
         for p in [p1, p2]:

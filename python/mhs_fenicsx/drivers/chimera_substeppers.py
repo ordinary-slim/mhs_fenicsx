@@ -77,7 +77,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
             pm.intersect_problem(pf, finalize=False)
             ps_pf_integration_data = pf.form_subdomain_data[fem.IntegralType.exterior_facet][-1]
             assert(ps_pf_integration_data[0] == sd.gamma_integration_tag)
-            pf.subtract_problem(pm, finalize=False)
+            pf.subtract_problem(pm, finalize=False)# Can I finalize here?
             for p, p_ext in [(pm, pf), (pf, pm)]:
                 p.finalize_activation()
                 p.find_gamma(p_ext)#TODO: Re-use previous data here

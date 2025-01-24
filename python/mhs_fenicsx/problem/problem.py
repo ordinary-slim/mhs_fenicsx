@@ -114,7 +114,7 @@ class Problem:
         self.rotation_center = fem.Constant(self.domain,rotation_center)
         # Stabilization
         self.is_supg = (("supg" in parameters) and bool(parameters["supg"]))
-        self.supg_elwise_coeff = fem.Function(self.dg0,name="supg_tau") if self.is_supg else None
+        self.advected_el_size : typing.Optional[fem.Function] = fem.Function(self.dg0,name="supg_tau") if self.is_supg else None
         # Material parameters
         self.define_materials(parameters)
         # Integration
@@ -238,14 +238,10 @@ class Problem:
             cells = np.flatnonzero(abs(self.material_id.x.array-mat_id)<1e-7)
             self._update_mat_at_cells(mat_id,cells)
 
-    def compute_supg_coeff(self):
-        if self.supg_elwise_coeff is None:
-            self.supg_elwise_coeff = fem.Function(self.dg0,name="supg_tau")
-        mhs_fenicsx_cpp.compute_el_size_along_vector(self.supg_elwise_coeff._cpp_object,self.advection_speed._cpp_object)
-        advection_norm = np.linalg.norm(self.advection_speed.value)
-        self.supg_elwise_coeff.x.array[:] = self.supg_elwise_coeff.x.array[:]**2 / (
-                2 * self.supg_elwise_coeff.x.array[:] * self.rho.x.array[:] * self.cp.x.array[:]*advection_norm + \
-                 4 * self.k.x.array[:])
+    def compute_advected_el_size(self):
+        if self.advected_el_size is None:
+            self.advected_el_size = fem.Function(self.dg0,name="supg_tau")
+        mhs_fenicsx_cpp.compute_el_size_along_vector(self.advected_el_size._cpp_object,self.advection_speed._cpp_object)
 
     def pre_iterate(self,forced_time_derivative=False,verbose=True):
         # Pre-iterate source first, current track is tn's
@@ -261,7 +257,7 @@ class Problem:
             self.dof_coords += dx
             self.clear_gamma_data()
             if self.is_supg:
-                self.compute_supg_coeff()
+                self.compute_advected_el_size()
 
         self.source.set_fem_function(self.dof_coords)
         self.iter += 1
@@ -420,39 +416,61 @@ class Problem:
         dx = ufl.Measure("dx", metadata=self.quadrature_metadata)
         u = argument if argument is not None else self.u
         v = ufl.TestFunction(self.v)
+
+        # Conduction
         self.a_ufl = self.k*ufl.dot(ufl.grad(u), ufl.grad(v))*dx(subdomain_idx)
+
+        # Source term
         if self.rhs is not None:
             self.source.fem_function.interpolate(self.rhs)
         self.l_ufl = self.source.fem_function*v*dx(subdomain_idx)
+
+        # Time derivative
+        time_derivative_coefficient = self.rho * self.cp
+        ## Phase change
+        if self.phase_change:
+            cte = (2.0*self.smoothing_cte_phase_change/(self.liquidus_temperature - self.solidus_temperature))
+            melting_temperature = (self.liquidus_temperature + self.solidus_temperature) / 2.0
+            fp  = lambda tem : cte/2.0*(1 - ufl.tanh(cte*(tem - melting_temperature))**2)
+            time_derivative_coefficient += self.rho * self.latent_heat * fp(u)
+
         if not(self.is_steady):
-            self.a_ufl += (self.rho*self.cp/self.dt_func)*u*v*dx(subdomain_idx)
-            self.l_ufl += (self.rho*self.cp/self.dt_func)*self.u_prev*v*dx(subdomain_idx)
-        if np.linalg.norm(self.advection_speed.value):
-            self.a_ufl += self.rho*self.cp*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
+            self.a_ufl += time_derivative_coefficient * \
+                    (u - self.u_prev)/self.dt_func * \
+                    v * dx(subdomain_idx)
+
+        # Translational advection
+        has_advection = np.linalg.norm(self.advection_speed.value)
+        if has_advection:
+            advection_norm = fem.Constant(self.domain, np.linalg.norm(self.advection_speed.value))
+            self.a_ufl += time_derivative_coefficient*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
+            # Translational advection stabilization
             if self.is_supg:
+                assert(self.advected_el_size is not None)
+                supg_coeff = self.advected_el_size**2 / (2 * self.advected_el_size * \
+                        time_derivative_coefficient * advection_norm + \
+                         4 * self.k)
                 if not(self.is_steady):
-                    self.a_ufl += (self.rho * self.cp / self.dt_func) * u * self.supg_elwise_coeff * \
-                                    self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
-                    self.l_ufl += (self.rho * self.cp / self.dt_func) * self.u_prev * self.supg_elwise_coeff * \
-                                    self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
-                self.a_ufl += (self.rho * self.cp) * ufl.dot(self.advection_speed,ufl.grad(u)) * \
-                                self.supg_elwise_coeff * self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
-                self.l_ufl += self.source.fem_function * \
-                        self.supg_elwise_coeff * self.rho * self.cp * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
-        if np.linalg.norm(self.angular_advection_speed.value):
+                    self.a_ufl += supg_coeff * time_derivative_coefficient * \
+                            time_derivative_coefficient * (u - self.u_prev)/self.dt_func * \
+                            ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
+                self.a_ufl += supg_coeff * time_derivative_coefficient * \
+                        time_derivative_coefficient * ufl.dot(self.advection_speed,ufl.grad(u)) * \
+                        ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
+                self.l_ufl += supg_coeff * time_derivative_coefficient * \
+                        self.source.fem_function * \
+                        ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
+
+        # Rotational advection
+        # WARNING: Stabilziation not implemented
+        has_rotational_advection = np.linalg.norm(self.angular_advection_speed.value)
+        if has_rotational_advection:
             x = ufl.SpatialCoordinate(self.domain)
             if self.dim < 3:
                 pointwise_advection_speed = (self.angular_advection_speed)*ufl.perp(x-self.rotation_center)
             else:
                 pointwise_advection_speed = ufl.cross(self.angular_advection_speed,x-self.rotation_center)
-            self.a_ufl += self.rho*self.cp*ufl.dot(pointwise_advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
-        if self.phase_change:
-            cte = (2.0*self.smoothing_cte_phase_change/(self.liquidus_temperature - self.solidus_temperature))
-            melting_temperature = (self.liquidus_temperature + self.solidus_temperature) / 2.0
-            fp  = lambda tem : cte/2.0*(1 - ufl.tanh(cte*(tem - melting_temperature))**2)
-            # self.u use here doesn't look correct! should use u
-            self.a_ufl += self.rho * self.latent_heat * fp(self.u) *(self.u - self.u_prev)/self.dt_func*v*dx(subdomain_idx)
-
+            self.a_ufl += time_derivative_coefficient*ufl.dot(pointwise_advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
 
     def set_forms_boundary(self, subdomain_idx=1, argument=None):
         '''

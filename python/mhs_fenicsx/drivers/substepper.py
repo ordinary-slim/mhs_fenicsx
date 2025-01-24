@@ -271,7 +271,6 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
             """
             Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess
             """
-            
             with multiphenicsx.fem.petsc.VecSubVectorWrapper(
                     x, ps.v.dofmap, self.initial_restriction) as x_wrapper:
                 with pf.u.x.petsc_vec.localForm() as uf_sub_vector_local, \

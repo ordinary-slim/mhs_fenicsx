@@ -58,7 +58,6 @@ class Problem:
         self.initialize_activation()
 
         self.u   = fem.Function(self.v, name="uh")   # Solution
-        self.du  = fem.Function(self.v, name="delta_uh")   # Solution
         self.u_prev = fem.Function(self.v, name="uh_n") # Previous solution
         self.grad_u = fem.Function(self.dg0_vec,name="grad")
         self.is_grad_computed = False
@@ -550,33 +549,6 @@ class Problem:
         self.assemble_jacobian()
         self.assemble_residual()
 
-    def set_linear_solver(self, opts:typing.Optional[dict] = None):
-        if opts is None:
-            opts = {"pc_type" : "lu", "pc_factor_mat_solver_type" : "mumps",}
-        self.linear_solver_opts = dict(opts)
-
-    '''
-    def _solve_linear_system(self):
-        with self.x.localForm() as x_local:
-            x_local.set(0.0)
-        ksp = petsc4py.PETSc.KSP()
-        ksp.create(self.domain.comm)
-        ksp.setOperators(self.A)
-        ksp_opts = PETSc.Options()
-        for k,v in self.linear_solver_opts.items():
-            ksp_opts[k] = v
-        ksp.setFromOptions()
-        ksp.solve(self.L, self.x)
-        self.x.ghostUpdate(addv=petsc4py.PETSc.InsertMode.INSERT, mode=petsc4py.PETSc.ScatterMode.FORWARD)
-        ksp.destroy()
-
-    def solve(self):
-        self._solve_linear_system()
-        self._update_solution()
-        self.u.x.array[:] += self.du.x.array[:]
-        self.is_grad_computed = False#dubious line
-    '''
-
     def _update_solution(self, x = None):
         sol = self.u
         if x is None:
@@ -636,6 +608,11 @@ class Problem:
         bmesh = dolfinx.mesh.create_submesh(self.domain,self.dim-1,self.bfacets_tag.find(1))[0]
         with io.VTKFile(bmesh.comm, f"out/bmesh_{self.name}.pvd", "w") as ofile:
             ofile.write_mesh(bmesh)
+
+    def set_linear_solver(self, opts:typing.Optional[dict] = None):
+        if opts is None:
+            opts = {"pc_type" : "lu", "pc_factor_mat_solver_type" : "mumps",}
+        self.linear_solver_opts = dict(opts)
 
     def set_snes_sol_vector(self) -> PETSc.Vec:  # type: ignore[no-any-unimported]
         """ Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess """

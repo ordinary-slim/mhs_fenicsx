@@ -96,12 +96,8 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
             self.instantiate_forms(pm)
             for p in [pm, pf]:
                 p.pre_assemble()
-                p.assemble_residual()
-                p.assemble_jacobian(finalize=False)
-            cd.setup_coupling()
-            for p in [pm, pf]:
-                p.A.assemble()
-            cd.solve()
+
+            cd.non_linear_solve()
 
             self.micro_post_iterate()
             interpolate_solution_to_inactive(pf,pm)

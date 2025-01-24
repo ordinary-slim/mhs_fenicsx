@@ -177,14 +177,8 @@ def run(dim, els_side, el_type, writepos=False):
         p.compile_create_forms()
         # Pre-assemble
         p.pre_assemble()
-        p.assemble_jacobian(finalize=False)
-        p.assemble_residual()
 
-    # Create nest system
-    driver.setup_coupling()
-    for p in [p_left, p_right]:
-        p.A.assemble()
-    driver.solve()
+    driver.non_linear_solve()
 
     middle_row_func_rl = get_matrix_row_as_func(p_right, p_left, driver.A21)
     middle_row_func_lr = get_matrix_row_as_func(p_left, p_right, driver.A12)

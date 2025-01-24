@@ -59,12 +59,8 @@ def main(input_file, writepos=True):
         for p in [p_fixed, p_moving]:
             p.instantiate_forms()
             p.pre_assemble()
-            p.assemble_residual()
-            p.assemble_jacobian(finalize=False)
-        driver.setup_coupling()
-        for p in [p_fixed, p_moving]:
-            p.A.assemble()
-        driver.solve()
+
+        driver.non_linear_solve()
 
         driver.post_iterate()
         extra_funs = {

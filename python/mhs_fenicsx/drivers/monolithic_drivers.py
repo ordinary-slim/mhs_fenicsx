@@ -36,44 +36,8 @@ class MonolithicDomainDecompositionDriver:
         self.ext_conductivity = {}
         self.midpoints_gamma = {p1:None, p2:None}
 
-    def solve(self):
-        ''' Solve '''
-        # Create nest system
-        (p1, p2) = (self.p1, self.p2)
-        self.A = PETSc.Mat().createNest([[p1.A, self.A12], [self.A21, p2.A]])
-        self.L = PETSc.Vec().createNest([p1.L, p2.L])
-        # SOLVE
-        l_cpp = [p1.mr_instance, p2.mr_instance]
-        restriction = [p1.restriction, p2.restriction]
-        du1du2 = multiphenicsx.fem.petsc.create_vector_nest(l_cpp, restriction=restriction)
-        ksp = PETSc.KSP()
-        ksp.create(p1.domain.comm)
-        ksp.setOperators(self.A)
-        ksp.setType("preonly")
-        PETSc.Options().setValue('-ksp_error_if_not_converged', 'true')
-        ksp.getPC().setType("lu")
-        ksp.getPC().setFactorSolverType("mumps")
-        ksp.getPC().setFactorSetUpSolverType()
-        ksp.getPC().getFactorMatrix().setMumpsIcntl(icntl=7, ival=4)
-        #ksp.setFromOptions()
-        ksp.solve(self.L, du1du2)
-        for du1du2_sub in du1du2.getNestSubVecs():
-            du1du2_sub.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
-        ksp.destroy()
-        # Split the block solution in components
-        with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(
-                du1du2, [p1.v.dofmap, p2.v.dofmap], restriction) as u1u2_wrapper:
-            for u1u2_wrapper_local, component in zip(u1u2_wrapper, (p1.du, p2.du)):
-                with component.x.petsc_vec.localForm() as component_local:
-                    component_local[:] = u1u2_wrapper_local
-        du1du2.destroy()
-        for p in [p1, p2]:
-            p.u.x.array[:] += p.du.x.array[:]
-            p.is_grad_computed = False
-
     def post_iterate(self):
-        for mat in [self.A12, self.A21]:
-            mat.destroy()
+        pass
 
 class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
     def __init__(self, sub_problem_1:Problem,sub_problem_2:Problem, quadrature_degree):
@@ -92,6 +56,9 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
             self.quadrature_points_cell[p]  = np.zeros((num_gps_facet * num_facets_cell, cdim), dtype=self.Qe[p]._points.dtype)
             for ifacet in range(num_facets_cell):
                 self.quadrature_points_cell[p][ifacet*num_gps_facet : ifacet*num_gps_facet + num_gps_facet, :cdim] = map_facet_points(self.Qe[p]._points, ifacet, cell_type)
+
+    def __del__(self):
+        self._destroy()
 
     def compile_forms(self):
         '''TODO: Make this domain independent'''
@@ -134,21 +101,19 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                                  coefficient_map=lcoeffmap,
                                                  constant_map=lconstmap)
 
-    def setup_coupling(self):
-        # WARNING: Incompatibility with strongly enforced Dirichlet BC!
-        super().setup_coupling()
+    def contribute_to_diagonal_blocks(self):
         (p1,p2) = (self.p1,self.p2)
-        self.A12 = self.assemble_robin_matrix(p1, p2)
-        self.A21 = self.assemble_robin_matrix(p2, p1)
-        # Add LHS term
         for p, p_ext in zip([p1, p2], [p2, p1]):
-            self.instantiate_forms()
             p.A.assemble(PETSc.Mat.AssemblyType.FLUSH)
             multiphenicsx.fem.petsc.assemble_matrix(
                     p.A,
                     self.j_instance[p],
                     bcs=p.dirichlet_bcs,
                     restriction=(p.restriction, p.restriction))
+
+    def contribute_to_residuals(self, R_vec):
+        (p1,p2) = (self.p1,self.p2)
+        for p, p_ext, R_sub_vec in zip([p1, p2], [p2, p1], R_vec.getNestSubVecs()):
             # RHS term Robin for residual formulation
             res = p.restriction
             ext_res = p_ext.restriction
@@ -176,10 +141,10 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
             in_flux.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
 
             # Add
-            p.L += - in_flux - ext_flux
+            R_sub_vec += - in_flux - ext_flux
             for f in [in_flux, ext_flux]:
                 f.destroy()
-            p.L.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
+            R_sub_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
 
     def assemble_robin_matrix(self, p:Problem, p_ext:Problem):
         # GENERATE QUADRATURE
@@ -235,3 +200,93 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                           )
         A.assemble()
         return A
+
+    def non_linear_solve(self):
+        (p1,p2) = (self.p1,self.p2)
+        self._destroy()
+        restriction = [p1.restriction, p2.restriction]
+        dofmaps = [p1.v.dofmap, p2.v.dofmap]
+        self.setup_coupling()
+        self.instantiate_forms()
+        mr_instance = [p1.mr_instance, p2.mr_instance]
+        self.A12 = self.assemble_robin_matrix(p1, p2)
+        self.A21 = self.assemble_robin_matrix(p2, p1)
+
+        self.L = PETSc.Vec().createNest([p1.L, p2.L])
+        self.A = PETSc.Mat().createNest([[p1.A, self.A12], [self.A21, p2.A]])
+        self.x = multiphenicsx.fem.petsc.create_vector_nest(mr_instance, restriction=restriction)
+        self.obj_vec = multiphenicsx.fem.petsc.create_vector_nest(mr_instance, restriction=restriction)
+        def set_snes_sol_vector(self) -> PETSc.Vec:  # type: ignore[no-any-unimported]
+            """
+            Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess
+            """
+            sol_vector = self.x
+            with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(
+                    sol_vector, dofmaps, restriction) as nest_sol:
+                for sol_sub, u_sub in zip(nest_sol, [p1.u, p2.u]):
+                    with u_sub.x.petsc_vec.localForm() as sol_sub_vector_local:
+                        sol_sub_vector_local[:] = sol_sub[:]
+
+        def update_solution(sol_vector):
+            with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(sol_vector, dofmaps, restriction) as nest_sol:
+                for sol_sub, u_sub in zip(nest_sol, [p1.u, p2.u]):
+                    with u_sub.x.petsc_vec.localForm() as u_sub_vector_local:
+                        u_sub_vector_local[:] = sol_sub[:]
+            p1.u.x.scatter_forward()
+            p2.u.x.scatter_forward()
+
+        def assemble_jacobian(
+                snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat, P_mat: PETSc.Mat):
+            for p in [p1, p2]:
+                p.assemble_jacobian(finalize=False)
+            self.contribute_to_diagonal_blocks()
+            J_mat.assemble()
+
+        def assemble_residual(snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
+            # TODO: Make it so that the residual is assembled into R_vec
+            update_solution(x)
+            for p, R_sub_vec in zip([p1, p2], R_vec.getNestSubVecs()):
+                p.assemble_residual(R_sub_vec)
+            self.contribute_to_residuals(R_vec)
+            R_vec.scale(-1)
+
+
+        def obj(  # type: ignore[no-any-unimported]
+            snes: PETSc.SNES, x: PETSc.Vec
+        ) -> np.float64:
+            """Compute the norm of the residual."""
+            assemble_residual(snes, x, self.obj_vec)
+            return self.obj_vec.norm()  # type: ignore[no-any-return]
+
+        # Solve
+        snes = PETSc.SNES().create(p1.domain.comm)
+        snes.setTolerances(max_it=20)
+
+        snes.getKSP().setType("preonly")
+        PETSc.Options().setValue('-ksp_error_if_not_converged', 'true')
+        PETSc.Options().setValue('-snes_linesearch_monitor', 'true')
+        snes.getKSP().getPC().setType("lu")
+        snes.getKSP().getPC().setFactorSolverType("mumps")
+        #snes.getKSP().getPC().setType("fieldsplit")
+        #nested_IS = self.A.getNestISs()
+        #snes.getKSP().getPC().setFieldSplitIS(["u1", nested_IS[0][0]], ["u2", nested_IS[1][1]])
+
+        snes.setObjective(obj)
+        snes.setFunction(assemble_residual, self.L)
+        snes.setJacobian(assemble_jacobian, J=self.A, P=None)
+        snes.setMonitor(lambda _, it, residual: print(it, residual))
+        set_snes_sol_vector(self)
+        snes.solve(None, self.x)
+        update_solution(self.x)
+        assert snes.getConvergedReason() > 0
+        snes.destroy()
+
+        for p in [p1, p2]:
+            p.is_grad_computed = False
+
+    def _destroy(self):
+        for attr in ["x", "A12", "A21", "obj_vec"]:
+            try:
+                self.__dict__[attr].destroy()
+            except KeyError:
+                pass

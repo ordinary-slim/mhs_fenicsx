@@ -2,7 +2,7 @@ from line_profiler import LineProfiler
 from mpi4py import MPI
 from dolfinx import mesh
 from mhs_fenicsx.problem import Problem
-from mhs_fenicsx.drivers import MHSSubstepper, MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper
+from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper
 import yaml
 import numpy as np
 import argparse

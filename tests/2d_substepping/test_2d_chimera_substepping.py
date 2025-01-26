@@ -1,13 +1,16 @@
 import yaml
 from mpi4py import MPI
+
+from mhs_fenicsx.drivers import MonolithicRRDriver, MonolithicDomainDecompositionDriver, StaggeredRRDriver
+from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, MHSStaggeredChimeraSubstepper, MHSSemiMonolithicChimeraSubstepper
 from test_2d_substepping import get_initial_condition, get_dt, write_gcode, get_mesh
 from mhs_fenicsx.problem import Problem
-from mhs_fenicsx.drivers import MHSStaggeredChimeraSubstepper, StaggeredRRDriver
 from mhs_fenicsx.chimera import build_moving_problem
 from mhs_fenicsx.problem.helpers import assert_pointwise_vals, print_vals
 import shutil
 from dolfinx import mesh, fem, io
 import numpy as np
+import argparse
 from line_profiler import LineProfiler
 
 comm = MPI.COMM_WORLD
@@ -74,6 +77,43 @@ def run_staggered_RR(params, writepos=True):
             ps.writepos()
     return ps
 
+def run_hodge(params, writepos=True):
+    els_per_radius = params["els_per_radius"]
+    radius = params["heat_source"]["radius"]
+    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    big_mesh = get_mesh(params, els_per_radius, radius)
+
+    macro_params = params.copy()
+    macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
+    macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
+    ps = Problem(big_mesh, macro_params, name=f"big_chimera_ss_RR")
+    pm = build_moving_problem(ps, els_per_radius)
+    initial_condition_fun = get_initial_condition(params)
+    ps.set_initial_condition(  initial_condition_fun )
+    pm.set_initial_condition(  initial_condition_fun )
+
+    max_timesteps = params["max_timesteps"]
+
+    substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm,
+                                                           writepos=(params["substepper_writepos"] and writepos),
+                                                           do_predictor=params["predictor_step"])
+    pf = substeppin_driver.pf
+    for _ in range(max_timesteps):
+        substeppin_driver.update_fast_problem()
+        substeppin_driver.pre_loop(prepare_fast_problem=False)
+        if substeppin_driver.do_predictor:
+            substeppin_driver.predictor_step(writepos=substeppin_driver.do_writepos and writepos)
+        for _ in range(params["max_staggered_iters"]):
+            substeppin_driver.pre_iterate()
+            substeppin_driver.micro_steps()
+            substeppin_driver.monolithic_step()
+        #    substeppin_driver.post_iterate()
+        #substeppin_driver.post_loop()
+        #if writepos:
+        #    for p in [ps,pf]:
+        #        p.writepos(extra_funcs=[p.u_prev])
+    return ps
+
 def test_staggered_robin_chimera_substepper():
     with open("test_input.yaml", 'r') as f:
         params = yaml.safe_load(f)
@@ -96,21 +136,36 @@ def test_staggered_robin_chimera_substepper():
 if __name__=="__main__":
     with open("input.yaml", 'r') as f:
         params = yaml.safe_load(f)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-ss','--run-sub-sta',action='store_true')
+    parser.add_argument('-sms','--run-sub-mon',action='store_true')
     write_gcode(params)
     lp = LineProfiler()
-    from mhs_fenicsx.drivers import MHSStaggeredSubstepper, MHSSubstepper, MonolithicRRDriver, MonolithicDomainDecompositionDriver
-    from mhs_fenicsx.chimera import interpolate_solution_to_inactive
-    from mhs_fenicsx.problem.helpers import interpolate
-    lp.add_module(MHSStaggeredChimeraSubstepper)
-    lp.add_module(MHSStaggeredSubstepper)
-    lp.add_module(MHSSubstepper)
-    lp.add_module(MonolithicDomainDecompositionDriver)
-    lp.add_module(MonolithicRRDriver)
     lp.add_module(Problem)
-    lp.add_function(interpolate_solution_to_inactive)
-    lp.add_function(interpolate)
-    lp_wrapper = lp(run_staggered_RR)
-    lp_wrapper(params,True)
-    profiling_file = f"profiling_chimera_rss_{rank}.txt"
+    args = parser.parse_args()
+    if args.run_sub_sta:
+        from mhs_fenicsx.chimera import interpolate_solution_to_inactive
+        from mhs_fenicsx.problem.helpers import interpolate
+        lp.add_module(MHSStaggeredChimeraSubstepper)
+        lp.add_module(MHSStaggeredSubstepper)
+        lp.add_module(MHSSubstepper)
+        lp.add_module(MonolithicDomainDecompositionDriver)
+        lp.add_module(MonolithicRRDriver)
+        lp.add_function(interpolate_solution_to_inactive)
+        lp.add_function(interpolate)
+        lp_wrapper = lp(run_staggered_RR)
+        lp_wrapper(params,True)
+        profiling_file = f"profiling_chimera_rss_{rank}.txt"
+    if args.run_sub_mon:
+        from mhs_fenicsx.chimera import interpolate_solution_to_inactive
+        from mhs_fenicsx.problem.helpers import interpolate
+        lp.add_module(MHSSubstepper)
+        lp.add_module(MonolithicDomainDecompositionDriver)
+        lp.add_module(MonolithicRRDriver)
+        lp.add_function(interpolate_solution_to_inactive)
+        lp.add_function(interpolate)
+        lp_wrapper = lp(run_hodge)
+        lp_wrapper(params,True)
+        profiling_file = f"profiling_chimera_hodge_{rank}.txt"
     with open(profiling_file, 'w') as pf:
         lp.print_stats(stream=pf)

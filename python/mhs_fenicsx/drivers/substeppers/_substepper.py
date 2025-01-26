@@ -4,7 +4,7 @@ from dolfinx import fem, io
 import ufl
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx_cpp import mesh_collision
-from mhs_fenicsx.drivers.staggered_drivers import StaggeredRRDriver, StaggeredDNDriver
+from mhs_fenicsx.drivers._staggered_drivers import StaggeredRRDriver, StaggeredDNDriver
 from mhs_fenicsx.geometry import OBB
 import numpy as np
 import shutil
@@ -16,7 +16,8 @@ import multiphenicsx.fem.petsc
 class MHSSubstepper(ABC):
     def __init__(self,slow_problem:Problem,writepos=True,
                  max_nr_iters=25,max_ls_iters=5,
-                 do_predictor=False):
+                 do_predictor=False,
+                 compile_forms=True):
         self.ps = slow_problem
         self.pf = self.ps.copy(name=f"{self.ps.name}_micro_iters")
         self.plist = [self.ps, self.pf]
@@ -28,7 +29,8 @@ class MHSSubstepper(ABC):
         self.do_predictor = do_predictor
         self.mr_ufl, self.j_ufl, self.mr_compiled, self.j_compiled = {}, {}, {}, {}
         self.integration_tag = {ps:1, pf:2}
-        self.compile_forms()
+        if compile_forms:
+            self.compile_forms()
     
     @abstractmethod
     def compile_forms(self):
@@ -46,12 +48,14 @@ class MHSSubstepper(ABC):
             w.close()
 
     def update_fast_problem(self, subproblem_els=None):
+        (ps, pf) = plist = (self.ps, self.pf)
         self.result_folder = f"post_{self.name}_tstep#{self.ps.iter}"
         # TODO: Complete. Data to set activation in predictor_step
+        self.t0_macro_step = ps.time
+        self.t1_macro_step = ps.time + ps.dt.value
         self.initial_active_els = self.ps.active_els_func.x.array.nonzero()[0]
         self.initial_restriction = self.ps.restriction
         self.fraction_macro_step = 0
-        (ps, pf) = plist = (self.ps, self.pf)
         for p in plist:
             p.clear_gamma_data()
         # Store this and use it for deactivation?
@@ -76,6 +80,8 @@ class MHSSubstepper(ABC):
         self.macro_iter = 0
         self.prev_iter = {p:p.iter for p in self.plist}
         self.u_prev = {p:p.u.copy() for p in self.plist}
+        for u in self.u_prev.values():
+            u.name = "u_prev_driver"
         self.initialize_post()
 
     @abstractmethod
@@ -91,8 +97,6 @@ class MHSSubstepper(ABC):
 
     def find_subproblem_els(self):
         ps = self.ps
-        self.t0_macro_step = ps.time
-        self.t1_macro_step = ps.time + ps.dt.value
         cdim = ps.dim
         # Determine geometry of subproblem
         # To do it properly, get initial time of macro step, final time of macro step
@@ -155,21 +159,21 @@ class MHSSubstepper(ABC):
 class MHSSemiMonolithicSubstepper(MHSSubstepper):
     def __init__(self,slow_problem: Problem ,writepos=True,
                  max_nr_iters=25,max_ls_iters=5,
-                 do_predictor=False):
-        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters,do_predictor)
+                 do_predictor=False, compile_forms=True):
+        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters,do_predictor,compile_forms)
         self.name = "semi_monolithic_substepper"
 
     def compile_forms(self):
-        (ps,pf) = plist = (self.ps,self.pf)
-        for p in plist:
+        (ps,pf) = (self.ps,self.pf)
+        for p in self.plist:
             p.set_forms_domain(subdomain_idx=self.integration_tag[p])
             p.set_forms_boundary(subdomain_idx=self.integration_tag[p])
             r_ufl = p.a_ufl - p.l_ufl
             self.mr_ufl[p] = -r_ufl
             self.j_ufl[p]  = ufl.derivative(r_ufl, p.u)
-            self.j_compiled[p]  = fem.compile_form(ps.domain.comm, self.j_ufl[p],
+            self.j_compiled[p]  = fem.compile_form(p.domain.comm, self.j_ufl[p],
                                           form_compiler_options={"scalar_type": np.float64})
-            self.mr_compiled[p] = fem.compile_form(ps.domain.comm, self.mr_ufl[p],
+            self.mr_compiled[p] = fem.compile_form(p.domain.comm, self.mr_ufl[p],
                                           form_compiler_options={"scalar_type": np.float64})
         # Monolithic problem
         r_mono_ufl = (ps.a_ufl + pf.a_ufl) - (ps.l_ufl + pf.l_ufl)
@@ -180,19 +184,16 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         self.mr_mono_compiled = fem.compile_form(ps.domain.comm, self.mr_mono_ufl,
                                       form_compiler_options={"scalar_type": np.float64})
 
-    def pre_loop(self):
+    def pre_loop(self, prepare_fast_problem=True):
         super().pre_loop()
         (ps,pf) = (self.ps,self.pf)
         self.num_micro_steps = np.round(ps.dt.value / pf.dt.value, 9).astype(np.int32)
         # Prepare fast problem
-        self.instantiate_forms(pf)
         self.set_dirichlet_fast()
-        pf.pre_assemble()
-        # Prepare slow problem
-        self.u_prev = {ps:ps.u.copy(),pf:pf.u.copy()}
-        for f in self.u_prev.values():
-            f.name = "u_prev_driver"
         self.initialize_post()
+        if prepare_fast_problem:
+            self.instantiate_forms(pf)
+            pf.pre_assemble()
 
     def post_iterate(self):
         (ps,pf) = (self.ps,self.pf)
@@ -220,7 +221,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
             pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
             self.micro_iter += 1
             f = self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
-            #TODO: Update Dirichlet BC pf here!
+            # Update Dirichlet BC pf here!
             self.fast_dirichlet_tcon.g.x.array[self.gamma_dofs_fast] = \
                     (1-f)*ps.u_prev.x.array[self.gamma_dofs_fast] + \
                     f*ps.u.x.array[self.gamma_dofs_fast]
@@ -230,17 +231,14 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
             if self.do_writepos:
                 self.writepos("micro")
 
-    def monolithic_step(self):
+    def set_gamma_slow_to_fast(self):
         (ps, pf) = (self.ps, self.pf)
-        pf.clear_dirchlet_bcs()
-        pf.pre_iterate()
-        ps.pre_iterate(forced_time_derivative=True)
-
-        # Set-up incremental solve of both problem in ps
         ps.u.x.array[self.dofs_fast] = pf.u.x.array[self.dofs_fast]
         ps.dt_func.x.array[self.gamma_dofs_fast] = pf.dt.value
         ps.u_prev.x.array[self.gamma_dofs_fast] = pf.u_prev.x.array[self.gamma_dofs_fast]
 
+    def instantiate_monolithic_forms(self):
+        (ps, pf) = (self.ps, self.pf)
         cell_subdomain_data = [(self.integration_tag[p], p.local_active_els) for p in  [ps, pf]]
         facet_subdomain_data = [(self.integration_tag[p], p.get_facet_integrations_entities(p.bfacets_tag.find(1))) for p in  [ps, pf]]
         form_subdomain_data = {fem.IntegralType.cell:cell_subdomain_data,
@@ -259,6 +257,16 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
                                      subdomains=form_subdomain_data,
                                      coefficient_map=lcoeffmap,
                                      constant_map=lconstmap)
+        return j_instance, mr_instance
+
+    def monolithic_step(self):
+        (ps, pf) = (self.ps, self.pf)
+        pf.clear_dirchlet_bcs()
+        pf.pre_iterate()
+        ps.pre_iterate(forced_time_derivative=True)
+
+        self.set_gamma_slow_to_fast()
+        j_instance, mr_instance = self.instantiate_monolithic_forms()
 
         A = multiphenicsx.fem.petsc.create_matrix(j_instance, restriction=(self.initial_restriction, self.initial_restriction))
         R = multiphenicsx.fem.petsc.create_vector(mr_instance, restriction=self.initial_restriction)
@@ -378,8 +386,9 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 class MHSStaggeredSubstepper(MHSSubstepper):
     def __init__(self,slow_problem:Problem,writepos=True,
                  max_nr_iters=25,max_ls_iters=5,
-                 do_predictor=False):
-        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, do_predictor)
+                 do_predictor=False,
+                 compile_forms=True):
+        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, do_predictor, compile_forms)
         self.name = "staggered_substepper"
 
     def compile_forms(self):

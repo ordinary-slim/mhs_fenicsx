@@ -680,6 +680,7 @@ class Problem:
         snes.setMonitor(lambda _, it, residual: print(it, residual))
         self.set_snes_sol_vector()
         snes.solve(None, self.x)
+        assert (snes.getConvergedReason() > 0)
         self._update_solution(self.x)  # TODO can this be safely removed?
         snes.destroy()
         self.is_grad_computed = False#dubious line

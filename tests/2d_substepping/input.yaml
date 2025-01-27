@@ -36,13 +36,13 @@ petsc_opts_macro: {
 domain_width: 1
 domain_height: 1
 path: "Path.gcode"
-els_per_radius: 2
+els_per_radius: 4
 max_staggered_iters: 1
-max_timesteps: 1
+max_timesteps: 4
 driver_type: "robin"
 initial_condition: False
 predictor_step: True
-substepper_writepos: True
+substepper_writepos: False
 quadrature_metadata: {}
 
 max_nr_iters: 30

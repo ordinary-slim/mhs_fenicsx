@@ -219,6 +219,10 @@ class Problem:
             self.liquidus_temperature = fem.Function(self.dg0,name="liquidus_temperature")
             self.smoothing_cte_phase_change = fem.Constant(self.domain,
                                                            float(parameters["smoothing_cte_phase_change"]))
+            sigma_temperature   = (self.liquidus_temperature - self.solidus_temperature) / 2.0
+            melting_temperature = (self.liquidus_temperature + self.solidus_temperature) / 2.0
+            self.liquid_fraction   = lambda tem : 0.5*(ufl.tanh((self.smoothing_cte_phase_change/sigma_temperature) * (tem - melting_temperature)) + 1)
+            self.dliquid_fraction  = lambda tem : (self.smoothing_cte_phase_change/sigma_temperature)/2.0*(1 - ufl.tanh((self.smoothing_cte_phase_change/sigma_temperature)*(tem - melting_temperature))**2)
         self.set_material_funcs()
     
     def _update_mat_at_cells(self, mat_id, cells):
@@ -256,8 +260,9 @@ class Problem:
             self.bb_tree_nodes.bbox_coordinates[:] += dx
             self.dof_coords += dx
             self.clear_gamma_data()
-            if self.is_supg:
-                self.compute_advected_el_size()
+
+        if self.is_supg and (np.linalg.norm(self.advection_speed.value) > 1e-7):
+            self.compute_advected_el_size()
 
         self.source.set_fem_function(self.dof_coords)
         self.iter += 1
@@ -428,23 +433,23 @@ class Problem:
 
         # Time derivative
         time_derivative_coefficient = self.rho * self.cp
-        ## Phase change
+        advection_coefficient = self.rho * self.cp
         if self.phase_change:
-            cte = (2.0*self.smoothing_cte_phase_change/(self.liquidus_temperature - self.solidus_temperature))
-            melting_temperature = (self.liquidus_temperature + self.solidus_temperature) / 2.0
-            fp  = lambda tem : cte/2.0*(1 - ufl.tanh(cte*(tem - melting_temperature))**2)
-            time_derivative_coefficient += self.rho * self.latent_heat * fp(u)
-
+            advection_coefficient += self.rho * self.latent_heat * self.dliquid_fraction(u)
         if not(self.is_steady):
             self.a_ufl += time_derivative_coefficient * \
                     (u - self.u_prev)/self.dt_func * \
                     v * dx(subdomain_idx)
+            if self.phase_change:
+                self.a_ufl += self.rho * self.latent_heat * \
+                        (self.liquid_fraction(u) - self.liquid_fraction(self.u_prev))/self.dt_func * \
+                        v * dx(subdomain_idx)
 
         # Translational advection
-        has_advection = np.linalg.norm(self.advection_speed.value)
+        has_advection = (np.linalg.norm(self.advection_speed.value) > 1e-7)
         if has_advection:
             advection_norm = fem.Constant(self.domain, np.linalg.norm(self.advection_speed.value))
-            self.a_ufl += time_derivative_coefficient*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
+            self.a_ufl += advection_coefficient*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
             # Translational advection stabilization
             if self.is_supg:
                 assert(self.advected_el_size is not None)
@@ -453,13 +458,19 @@ class Problem:
                          4 * self.k)
                 if not(self.is_steady):
                     self.a_ufl += supg_coeff * time_derivative_coefficient * \
-                            time_derivative_coefficient * (u - self.u_prev)/self.dt_func * \
-                            ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
-                self.a_ufl += supg_coeff * time_derivative_coefficient * \
-                        time_derivative_coefficient * ufl.dot(self.advection_speed,ufl.grad(u)) * \
+                            (u - self.u_prev)/self.dt_func * \
+                            advection_coefficient * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
+                    if self.phase_change:
+                        self.a_ufl += supg_coeff * self.rho * self.latent_heat * \
+                                (self.liquid_fraction(u) - self.liquid_fraction(self.u_prev))/self.dt_func * \
+                                advection_coefficient * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
+                self.a_ufl += supg_coeff * advection_coefficient * \
+                        ufl.dot(self.advection_speed,ufl.grad(u)) * \
+                        advection_coefficient * \
                         ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
-                self.l_ufl += supg_coeff * time_derivative_coefficient * \
+                self.l_ufl += supg_coeff * \
                         self.source.fem_function * \
+                        advection_coefficient * \
                         ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
 
         # Rotational advection
@@ -471,7 +482,7 @@ class Problem:
                 pointwise_advection_speed = (self.angular_advection_speed)*ufl.perp(x-self.rotation_center)
             else:
                 pointwise_advection_speed = ufl.cross(self.angular_advection_speed,x-self.rotation_center)
-            self.a_ufl += time_derivative_coefficient*ufl.dot(pointwise_advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
+            self.a_ufl += advection_coefficient*ufl.dot(pointwise_advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
 
     def set_forms_boundary(self, subdomain_idx=1, argument=None):
         '''

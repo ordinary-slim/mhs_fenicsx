@@ -23,7 +23,7 @@ convection_coeff : 0.0
 environment_temperature : *solidus_temperature
 advection_speed : [0.0, 0.0, 0.0]
 supg : 0
-smoothing_cte_phase_change : 15 # 15 doesn't work!
+smoothing_cte_phase_change : 60 # 15 doesn't work!
 nelems : 200
 max_num_timesteps : 20
 x_left  : 0.0

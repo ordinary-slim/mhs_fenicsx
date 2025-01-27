@@ -363,6 +363,7 @@ class Problem:
         # TODO: Add p_ext as argument
         if ext_active_dofs_array is None:
             ext_active_dofs_array = self.get_active_in_external(p_ext)
+        self.ext_nodal_activation[p_ext] = ext_active_dofs_array
         self.gamma_facets[p_ext] = mesh.MeshTags(mhs_fenicsx_cpp.find_interface(
             self.domain._cpp_object,
             self.bfacets_tag._cpp_object,

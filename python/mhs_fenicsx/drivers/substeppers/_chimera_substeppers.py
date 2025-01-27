@@ -6,6 +6,7 @@ import numpy as np
 from dolfinx import fem
 from mhs_fenicsx.chimera import interpolate_solution_to_inactive
 import multiphenicsx
+from petsc4py import PETSc
 
 def check_assumptions(ps, pf, pm):
     return not(np.logical_and(pf.gamma_facets[pm].values, ps.bfacets_tag.values).all())
@@ -197,7 +198,6 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
 
     def monolithic_step(self):
         (ps, pf, pm) = (self.ps, self.pf, self.pm)
-        pf.clear_dirchlet_bcs()
         pm.intersect_problem(pf, finalize=False)
         ps.pre_iterate(forced_time_derivative=True)
         pf.pre_iterate()
@@ -210,84 +210,139 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
         assert(check_assumptions(ps, pf, pm))
 
         self.set_gamma_slow_to_fast()
-        j_instance, mr_instance = self.instantiate_monolithic_forms()
+        self.j_instance, self.mr_instance = self.instantiate_monolithic_forms()
 
-        A = multiphenicsx.fem.petsc.create_matrix(j_instance, restriction=(self.initial_restriction, self.initial_restriction))
-        R = multiphenicsx.fem.petsc.create_vector(mr_instance, restriction=self.initial_restriction)
+        # Set-up SNES solve
+        pf.clear_dirchlet_bcs()
+        pf.u.x.array[self.dofs_slow] = ps.u.x.array[self.dofs_slow]#useful before set_snes
 
-        #lin_algebra_objects = [A, R, x, obj_vec]
+        # Make a new restriction
+        dofs_big_mesh = np.hstack((pf.active_dofs, self.dofs_slow))
+        dofs_big_mesh.sort()# TODO: maybe REMOVABLE
+        self.restriction = multiphenicsx.fem.DofMapRestriction(pf.v.dofmap, dofs_big_mesh)
+        pf.j_instance = self.j_instance
+        pf.mr_instance = self.mr_instance
+        pf.restriction = self.restriction
+        self.initial_restriction = self.restriction
+        pf.pre_assemble()
 
-        ## SOLVE
-        #def set_snes_sol_vector() -> PETSc.Vec:  # type: ignore[no-any-unimported]
-        #    """
-        #    Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess
-        #    """
-        #    with multiphenicsx.fem.petsc.VecSubVectorWrapper(
-        #            x, ps.v.dofmap, self.initial_restriction) as x_wrapper:
-        #        with pf.u.x.petsc_vec.localForm() as uf_sub_vector_local, \
-        #          ps.u.x.petsc_vec.localForm() as us_sub_vector_local:
-        #              x_wrapper[:] = us_sub_vector_local
-        #              x_wrapper[self.dofs_fast] = uf_sub_vector_local[self.dofs_fast]
+        self.instantiate_forms(pm)
+        pm.pre_assemble()
 
-        #def update_solution(sol_vector):
-        #    with pf.u.x.petsc_vec.localForm() as uf_sub_vector_local, \
-        #         ps.u.x.petsc_vec.localForm() as us_sub_vector_local, \
-        #            multiphenicsx.fem.petsc.VecSubVectorWrapper(sol_vector, ps.v.dofmap, self.initial_restriction) as sol_vector_wrapper:
-        #                us_sub_vector_local[:] = sol_vector_wrapper
-        #                uf_sub_vector_local[:] = sol_vector_wrapper
-        #    ps.u.x.scatter_forward()
-        #    pf.u.x.scatter_forward()
+        cd = self.chimera_driver
+        cd.pre_assemble()
+        self.L = cd.L
+        self.A = cd.A
+        self.x = cd.x
+        self.obj_vec = cd.obj_vec
 
-        #def assemble_residual(snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
-        #    update_solution(x)
-        #    with R_vec.localForm() as R_local:
-        #        R_local.set(0.0)
-        #    multiphenicsx.fem.petsc.assemble_vector(R_vec,
-        #                                            mr_instance,
-        #                                            restriction=self.initial_restriction)
-        #    # TODO: Dirichlet here?
-        #    R_vec.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
-        #    R_vec.scale(-1)
+        def set_snes_sol_vector(self) -> PETSc.Vec:  # type: ignore[no-any-unimported]
+            """
+            Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess
+            """
+            sol_vector = self.x
+            with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(
+                    sol_vector, cd.dofmaps, cd.restriction) as nest_sol:
+                for sol_sub, u_sub in zip(nest_sol, [pf.u, pm.u]):
+                    with u_sub.x.petsc_vec.localForm() as u_sol_sub_vector_local:
+                        sol_sub[:] = u_sol_sub_vector_local[:]
 
-        #def assemble_jacobian(
-        #        snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat, P_mat: PETSc.Mat):
-        #    J_mat.zeroEntries()
-        #    multiphenicsx.fem.petsc.assemble_matrix(J_mat, j_instance, restriction=(self.initial_restriction, self.initial_restriction))
-        #    J_mat.assemble()
+        def update_solution(sol_vector, interpolate=False):
+            with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(sol_vector, cd.dofmaps, cd.restriction) as nest_sol:
+                for sol_sub, u_sub in zip(nest_sol, [pf.u, pm.u]):
+                    with u_sub.x.petsc_vec.localForm() as u_sub_vector_local:
+                        u_sub_vector_local[:] = sol_sub[:]
+            pm.u.x.scatter_forward()
+            pf.u.x.scatter_forward()
+            if interpolate:
+                interpolate_solution_to_inactive(pf,pm)
+            ps.u.x.array[:] = pf.u.x.array[:]
 
+        def assemble_jacobian(
+                snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat, P_mat: PETSc.Mat):
+            super(type(self), self).assemble_jacobian(snes, x, J_mat.getNestSubMatrix(0,0), P_mat)
+            pm.assemble_jacobian(finalize=False)
+            self.chimera_driver.contribute_to_diagonal_blocks()
+            J_mat.assemble()
 
-        #def obj(  # type: ignore[no-any-unimported]
-        #    snes: PETSc.SNES, x: PETSc.Vec
-        #) -> np.float64:
-        #    """Compute the norm of the residual."""
-        #    assemble_residual(snes, x, obj_vec)
-        #    return obj_vec.norm()  # type: ignore[no-any-return]
+        def assemble_residual(snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
+            # TODO: Make it so that the residual is assembled into R_vec
+            update_solution(x)
+            Rf, Rm = R_vec.getNestSubVecs()
+            with Rf.localForm() as R_local:
+                R_local.set(0.0)
+            multiphenicsx.fem.petsc.assemble_vector(Rf,
+                                                    self.mr_instance,
+                                                    restriction=pf.restriction)
+            Rf.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
+            pm.assemble_residual(Rm)
+            cd.contribute_to_residuals(R_vec)
+            R_vec.scale(-1)
 
-        ## Solve
-        #snes = PETSc.SNES().create(ps.domain.comm)
-        #snes.setTolerances(max_it=self.max_nr_iters)
-        #ksp_opts = PETSc.Options()
-        #for k,v in ps.linear_solver_opts.items():
-        #    ksp_opts[k] = v
+        def obj(  # type: ignore[no-any-unimported]
+            snes: PETSc.SNES, x: PETSc.Vec
+        ) -> np.float64:
+            """Compute the norm of the residual."""
+            assemble_residual(snes, x, self.obj_vec)
+            return self.obj_vec.norm()  # type: ignore[no-any-return]
+
+        # Solve
+        snes = PETSc.SNES().create(pf.domain.comm)
+        snes.setTolerances(max_it=20)
+
+        snes.getKSP().setType("preonly")
+        PETSc.Options().setValue('-ksp_error_if_not_converged', 'true')
+        PETSc.Options().setValue('-snes_type', 'newtonls')
+        #PETSc.Options().setValue('-snes_line_search_type', 'l2')
+        snes.setFromOptions()
         #snes.getKSP().setFromOptions()
-        #snes.setObjective(obj)
-        #snes.setFunction(assemble_residual, R)
-        #snes.setJacobian(assemble_jacobian, J=A, P=None)
-        #snes.setMonitor(lambda _, it, residual: print(it, residual))
-        #set_snes_sol_vector()
-        #snes.solve(None, x)
-        #update_solution(x)
-        #snes.destroy()
-        #for ds in lin_algebra_objects:
-        #    ds.destroy()
+        snes.getKSP().getPC().setType("lu")
+        snes.getKSP().getPC().setFactorSolverType("mumps")
+        #snes.getKSP().getPC().setType("fieldsplit")
+        #nested_IS = self.A.getNestISs()
+        #snes.getKSP().getPC().setFieldSplitIS(["u1", nested_IS[0][0]], ["u2", nested_IS[1][1]])
+
+        snes.setObjective(obj)
+        snes.setFunction(assemble_residual, self.L)
+        snes.setJacobian(assemble_jacobian, J=self.A, P=None)
+        snes.setMonitor(lambda _, it, residual: print(it, residual))
+        set_snes_sol_vector(self)
+        snes.solve(None, self.x)
+        update_solution(self.x, interpolate=True)
+        assert (snes.getConvergedReason() > 0)
+        snes.destroy()
 
         ## POST-ITERATE
-        #for p in self.plist:
-        #    p.post_iterate()
-        #ps.set_dt(ps.dt.value)
-        #pf.dirichlet_bcs = [self.fast_dirichlet_tcon]
+        for p in self.plist:
+            p.post_iterate()
+        ps.set_dt(ps.dt.value)
+        pf.dirichlet_bcs = [self.fast_dirichlet_tcon]
 
-        #self.micro_iter += 1
-        #self.fraction_macro_step = 1.0
-        #if self.do_writepos:
-        #    self.writepos()
+        self.micro_iter += 1
+        self.fraction_macro_step = 1.0
+        if self.do_writepos:
+            self.writepos()
+
+    def writepos(self,case="macro",extra_funs=[]):
+        if not(self.do_writepos):
+            return
+        (pf, ps) = (self.pf, self.ps)
+        if not(self.writers):
+            self.initialize_post()
+        if case=="predictor":
+            p = ps
+            time = 0.0
+        elif case=="micro":
+            p = pf
+            time = (self.macro_iter-1) + self.fraction_macro_step
+        else:
+            p = ps
+            time = (self.macro_iter-1) + self.fraction_macro_step
+        get_funs = lambda p : [p.u, p.source.fem_function,p.active_els_func,p.grad_u,
+                p.u_prev,self.u_prev[p]] + list(p.gamma_nodes.values())
+
+        p.compute_gradient()
+        #print(f"time = {time}, micro_iter = {self.micro_iter}, macro_iter = {self.macro_iter}")
+        self.writers[pf].write_function(get_funs(p),t=time)
+        if not(case=="predictor"):
+            self.writers[self.pm].write_function(get_funs(self.pm),t=time)

@@ -1,5 +1,5 @@
 from mhs_fenicsx import problem
-from mhs_fenicsx.drivers.monolithic_drivers import MonolithicRRDriver
+from mhs_fenicsx.drivers import MonolithicRRDriver
 from mhs_fenicsx.chimera import build_moving_problem, interpolate_solution_to_inactive
 from mhs_fenicsx.problem.helpers import assert_pointwise_vals
 import numpy as np

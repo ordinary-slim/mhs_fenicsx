@@ -201,62 +201,73 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         A.assemble()
         return A
 
-    def non_linear_solve(self):
+    def pre_assemble(self):
         (p1,p2) = (self.p1,self.p2)
         self._destroy()
-        restriction = [p1.restriction, p2.restriction]
-        dofmaps = [p1.v.dofmap, p2.v.dofmap]
+        self.restriction = [p1.restriction, p2.restriction]
+        self.dofmaps = [p1.v.dofmap, p2.v.dofmap]
         self.setup_coupling()
         self.instantiate_forms()
         mr_instance = [p1.mr_instance, p2.mr_instance]
+
+        # Coupling matrices can be assembled directly since they won't change
         self.A12 = self.assemble_robin_matrix(p1, p2)
         self.A21 = self.assemble_robin_matrix(p2, p1)
 
         self.L = PETSc.Vec().createNest([p1.L, p2.L])
         self.A = PETSc.Mat().createNest([[p1.A, self.A12], [self.A21, p2.A]])
-        self.x = multiphenicsx.fem.petsc.create_vector_nest(mr_instance, restriction=restriction)
-        self.obj_vec = multiphenicsx.fem.petsc.create_vector_nest(mr_instance, restriction=restriction)
-        def set_snes_sol_vector(self) -> PETSc.Vec:  # type: ignore[no-any-unimported]
-            """
-            Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess
-            """
-            sol_vector = self.x
-            with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(
-                    sol_vector, dofmaps, restriction) as nest_sol:
-                for sol_sub, u_sub in zip(nest_sol, [p1.u, p2.u]):
-                    with u_sub.x.petsc_vec.localForm() as sol_sub_vector_local:
-                        sol_sub_vector_local[:] = sol_sub[:]
+        self.x = multiphenicsx.fem.petsc.create_vector_nest(mr_instance, restriction=self.restriction)
+        self.obj_vec = multiphenicsx.fem.petsc.create_vector_nest(mr_instance, restriction=self.restriction)
 
-        def update_solution(sol_vector):
-            with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(sol_vector, dofmaps, restriction) as nest_sol:
-                for sol_sub, u_sub in zip(nest_sol, [p1.u, p2.u]):
-                    with u_sub.x.petsc_vec.localForm() as u_sub_vector_local:
-                        u_sub_vector_local[:] = sol_sub[:]
-            p1.u.x.scatter_forward()
-            p2.u.x.scatter_forward()
+    def set_snes_sol_vector(self) -> PETSc.Vec:  # type: ignore[no-any-unimported]
+        """
+        Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess
+        """
+        (p1,p2) = (self.p1,self.p2)
+        sol_vector = self.x
+        with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(
+                sol_vector, self.dofmaps, self.restriction) as nest_sol:
+            for sol_sub, u_sub in zip(nest_sol, [p1.u, p2.u]):
+                with u_sub.x.petsc_vec.localForm() as u_sol_sub_vector_local:
+                    sol_sub[:] = u_sol_sub_vector_local[:]
 
-        def assemble_jacobian(
-                snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat, P_mat: PETSc.Mat):
-            for p in [p1, p2]:
-                p.assemble_jacobian(finalize=False)
-            self.contribute_to_diagonal_blocks()
-            J_mat.assemble()
+    def update_solution(self, sol_vector):
+        (p1,p2) = (self.p1,self.p2)
+        with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(sol_vector, self.dofmaps, self.restriction) as nest_sol:
+            for sol_sub, u_sub in zip(nest_sol, [p1.u, p2.u]):
+                with u_sub.x.petsc_vec.localForm() as u_sub_vector_local:
+                    u_sub_vector_local[:] = sol_sub[:]
+        p1.u.x.scatter_forward()
+        p2.u.x.scatter_forward()
 
-        def assemble_residual(snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
-            # TODO: Make it so that the residual is assembled into R_vec
-            update_solution(x)
-            for p, R_sub_vec in zip([p1, p2], R_vec.getNestSubVecs()):
-                p.assemble_residual(R_sub_vec)
-            self.contribute_to_residuals(R_vec)
-            R_vec.scale(-1)
+    def assemble_jacobian(
+            self, snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat, P_mat: PETSc.Mat):
+        (p1,p2) = (self.p1,self.p2)
+        for p in [p1, p2]:
+            p.assemble_jacobian(finalize=False)
+        self.contribute_to_diagonal_blocks()
+        J_mat.assemble()
+
+    def assemble_residual(self, snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
+        (p1,p2) = (self.p1,self.p2)
+        # TODO: Make it so that the residual is assembled into R_vec
+        self.update_solution(x)
+        for p, R_sub_vec in zip([p1, p2], R_vec.getNestSubVecs()):
+            p.assemble_residual(R_sub_vec)
+        self.contribute_to_residuals(R_vec)
+        R_vec.scale(-1)
 
 
-        def obj(  # type: ignore[no-any-unimported]
-            snes: PETSc.SNES, x: PETSc.Vec
-        ) -> np.float64:
-            """Compute the norm of the residual."""
-            assemble_residual(snes, x, self.obj_vec)
-            return self.obj_vec.norm()  # type: ignore[no-any-return]
+    def obj(  # type: ignore[no-any-unimported]
+            self, snes: PETSc.SNES, x: PETSc.Vec
+    ) -> np.float64:
+        """Compute the norm of the residual."""
+        self.assemble_residual(snes, x, self.obj_vec)
+        return self.obj_vec.norm()  # type: ignore[no-any-return]
+
+    def non_linear_solve(self):
+        (p1,p2) = (self.p1,self.p2)
+        self.pre_assemble()
 
         # Solve
         snes = PETSc.SNES().create(p1.domain.comm)
@@ -274,13 +285,13 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         #nested_IS = self.A.getNestISs()
         #snes.getKSP().getPC().setFieldSplitIS(["u1", nested_IS[0][0]], ["u2", nested_IS[1][1]])
 
-        snes.setObjective(obj)
-        snes.setFunction(assemble_residual, self.L)
-        snes.setJacobian(assemble_jacobian, J=self.A, P=None)
+        snes.setObjective(self.obj)
+        snes.setFunction(self.assemble_residual, self.L)
+        snes.setJacobian(self.assemble_jacobian, J=self.A, P=None)
         snes.setMonitor(lambda _, it, residual: print(it, residual))
-        set_snes_sol_vector(self)
+        self.set_snes_sol_vector()
         snes.solve(None, self.x)
-        update_solution(self.x)
+        self.update_solution(self.x)
         assert (snes.getConvergedReason() > 0)
         snes.destroy()
 

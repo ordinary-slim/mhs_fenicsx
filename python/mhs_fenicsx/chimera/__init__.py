@@ -5,13 +5,13 @@ from mhs_fenicsx.problem import Problem, HeatSource
 import mhs_fenicsx_cpp
 
 def interpolate_solution_to_inactive(p:Problem, p_ext:Problem):
-    local_inactive_dofs = (p.active_nodes_func.x.array == 0).nonzero()[0]
-    local_inactive_dofs = local_inactive_dofs[:np.searchsorted(local_inactive_dofs, p.domain.topology.index_map(0).size_local)]
+    local_ext_inactive_dofs = np.logical_and((p.active_nodes_func.x.array == 0), p.ext_nodal_activation[p_ext]).nonzero()[0]
+    local_ext_inactive_dofs = local_ext_inactive_dofs[:np.searchsorted(local_ext_inactive_dofs, p.domain.topology.index_map(0).size_local)]
     mhs_fenicsx_cpp.interpolate_cg1_affine(p_ext.u._cpp_object,
                                            p.u._cpp_object,
                                            np.arange(p_ext.cell_map.size_local),
-                                           local_inactive_dofs,
-                                           p.dof_coords[local_inactive_dofs],
+                                           local_ext_inactive_dofs,
+                                           p.dof_coords[local_ext_inactive_dofs],
                                            1e-6)
 
 def build_moving_problem(p_fixed:Problem,els_per_radius=2):

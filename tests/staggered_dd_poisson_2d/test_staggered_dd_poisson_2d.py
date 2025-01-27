@@ -4,8 +4,7 @@ from mpi4py import MPI
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.problem.helpers import assert_pointwise_vals, set_same_mesh_interface
 import yaml
-from mhs_fenicsx.drivers.staggered_drivers import StaggeredDNDriver, StaggeredRRDriver
-from mhs_fenicsx_cpp import cellwise_determine_point_ownership
+from mhs_fenicsx.drivers import StaggeredDNDriver, StaggeredRRDriver
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()

@@ -74,6 +74,9 @@ class MHSSubstepper(ABC):
             ps.set_form_subdomain_data()
         set_same_mesh_interface(ps, pf)
         self.dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim, subproblem_els)
+        mask_dofs_slow = np.ones(ps.v.dofmap.index_map.size_local + ps.v.dofmap.index_map.num_ghosts, np.bool)
+        mask_dofs_slow[self.dofs_fast] = np.False_
+        self.dofs_slow = mask_dofs_slow.nonzero()[0]
 
     @abstractmethod
     def pre_loop(self):
@@ -83,6 +86,15 @@ class MHSSubstepper(ABC):
         for u in self.u_prev.values():
             u.name = "u_prev_driver"
         self.initialize_post()
+
+    def initialize_post(self):
+        if not(self.do_writepos):
+            return
+        for w in self.writers.values():
+            w.close()
+        shutil.rmtree(self.result_folder,ignore_errors=True)
+        for p in self.plist:
+            self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{self.name}_{p.name}.pvd", "wb")
 
     @abstractmethod
     def writepos(self,case="macro",extra_funs=[]):
@@ -259,6 +271,56 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
                                      constant_map=lconstmap)
         return j_instance, mr_instance
 
+    def set_snes_sol_vector(self, x) -> PETSc.Vec:  # type: ignore[no-any-unimported]
+        """
+        Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess
+        """
+        (ps, pf) = (self.ps, self.pf)
+        with multiphenicsx.fem.petsc.VecSubVectorWrapper(
+                x, ps.v.dofmap, self.initial_restriction) as x_wrapper:
+            with pf.u.x.petsc_vec.localForm() as uf_sub_vector_local, \
+              ps.u.x.petsc_vec.localForm() as us_sub_vector_local:
+                  x_wrapper[:] = us_sub_vector_local
+                  x_wrapper[self.dofs_fast] = uf_sub_vector_local[self.dofs_fast]
+
+    def update_solution(self, sol_vector):
+        (ps, pf) = (self.ps, self.pf)
+        with pf.u.x.petsc_vec.localForm() as uf_sub_vector_local, \
+             ps.u.x.petsc_vec.localForm() as us_sub_vector_local, \
+                multiphenicsx.fem.petsc.VecSubVectorWrapper(sol_vector, ps.v.dofmap, self.initial_restriction) as sol_vector_wrapper:
+                    us_sub_vector_local[:] = sol_vector_wrapper
+                    uf_sub_vector_local[:] = sol_vector_wrapper
+        ps.u.x.scatter_forward()
+        pf.u.x.scatter_forward()
+
+    def assemble_residual(self, snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
+        self.update_solution(x)
+        (ps, pf) = (self.ps, self.pf)
+        with R_vec.localForm() as R_local:
+            R_local.set(0.0)
+        multiphenicsx.fem.petsc.assemble_vector(R_vec,
+                                                self.mr_instance,
+                                                restriction=self.initial_restriction)
+        # TODO: Dirichlet here?
+        R_vec.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
+        R_vec.scale(-1)
+
+    def assemble_jacobian(
+            self, snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat, P_mat: PETSc.Mat):
+        (ps, pf) = (self.ps, self.pf)
+        J_mat.zeroEntries()
+        multiphenicsx.fem.petsc.assemble_matrix(J_mat, self.j_instance, restriction=(self.initial_restriction, self.initial_restriction))
+        J_mat.assemble()
+
+
+    def obj(  # type: ignore[no-any-unimported]
+        self, snes: PETSc.SNES, x: PETSc.Vec
+    ) -> np.float64:
+        (ps, pf) = (self.ps, self.pf)
+        """Compute the norm of the residual."""
+        self.assemble_residual(snes, x, self.obj_vec)
+        return self.obj_vec.norm()  # type: ignore[no-any-return]
+
     def monolithic_step(self):
         (ps, pf) = (self.ps, self.pf)
         pf.clear_dirchlet_bcs()
@@ -266,60 +328,15 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         ps.pre_iterate(forced_time_derivative=True)
 
         self.set_gamma_slow_to_fast()
-        j_instance, mr_instance = self.instantiate_monolithic_forms()
+        self.j_instance, self.mr_instance = self.instantiate_monolithic_forms()
 
-        A = multiphenicsx.fem.petsc.create_matrix(j_instance, restriction=(self.initial_restriction, self.initial_restriction))
-        R = multiphenicsx.fem.petsc.create_vector(mr_instance, restriction=self.initial_restriction)
-        x = multiphenicsx.fem.petsc.create_vector(mr_instance, restriction=self.initial_restriction)
-        obj_vec = multiphenicsx.fem.petsc.create_vector(mr_instance, restriction=self.initial_restriction)
-        lin_algebra_objects = [A, R, x, obj_vec]
+        self.A = multiphenicsx.fem.petsc.create_matrix(self.j_instance, restriction=(self.initial_restriction, self.initial_restriction))
+        self.R = multiphenicsx.fem.petsc.create_vector(self.mr_instance, restriction=self.initial_restriction)
+        self.x = multiphenicsx.fem.petsc.create_vector(self.mr_instance, restriction=self.initial_restriction)
+        self.obj_vec = multiphenicsx.fem.petsc.create_vector(self.mr_instance, restriction=self.initial_restriction)
+        lin_algebra_objects = [self.A, self.R, self.x, self.obj_vec]
 
         # SOLVE
-        def set_snes_sol_vector() -> PETSc.Vec:  # type: ignore[no-any-unimported]
-            """
-            Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess
-            """
-            with multiphenicsx.fem.petsc.VecSubVectorWrapper(
-                    x, ps.v.dofmap, self.initial_restriction) as x_wrapper:
-                with pf.u.x.petsc_vec.localForm() as uf_sub_vector_local, \
-                  ps.u.x.petsc_vec.localForm() as us_sub_vector_local:
-                      x_wrapper[:] = us_sub_vector_local
-                      x_wrapper[self.dofs_fast] = uf_sub_vector_local[self.dofs_fast]
-
-        def update_solution(sol_vector):
-            with pf.u.x.petsc_vec.localForm() as uf_sub_vector_local, \
-                 ps.u.x.petsc_vec.localForm() as us_sub_vector_local, \
-                    multiphenicsx.fem.petsc.VecSubVectorWrapper(sol_vector, ps.v.dofmap, self.initial_restriction) as sol_vector_wrapper:
-                        us_sub_vector_local[:] = sol_vector_wrapper
-                        uf_sub_vector_local[:] = sol_vector_wrapper
-            ps.u.x.scatter_forward()
-            pf.u.x.scatter_forward()
-
-        def assemble_residual(snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
-            update_solution(x)
-            with R_vec.localForm() as R_local:
-                R_local.set(0.0)
-            multiphenicsx.fem.petsc.assemble_vector(R_vec,
-                                                    mr_instance,
-                                                    restriction=self.initial_restriction)
-            # TODO: Dirichlet here?
-            R_vec.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
-            R_vec.scale(-1)
-
-        def assemble_jacobian(
-                snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat, P_mat: PETSc.Mat):
-            J_mat.zeroEntries()
-            multiphenicsx.fem.petsc.assemble_matrix(J_mat, j_instance, restriction=(self.initial_restriction, self.initial_restriction))
-            J_mat.assemble()
-
-
-        def obj(  # type: ignore[no-any-unimported]
-            snes: PETSc.SNES, x: PETSc.Vec
-        ) -> np.float64:
-            """Compute the norm of the residual."""
-            assemble_residual(snes, x, obj_vec)
-            return obj_vec.norm()  # type: ignore[no-any-return]
-
         # Solve
         snes = PETSc.SNES().create(ps.domain.comm)
         snes.setTolerances(max_it=self.max_nr_iters)
@@ -327,13 +344,13 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         for k,v in ps.linear_solver_opts.items():
             ksp_opts[k] = v
         snes.getKSP().setFromOptions()
-        snes.setObjective(obj)
-        snes.setFunction(assemble_residual, R)
-        snes.setJacobian(assemble_jacobian, J=A, P=None)
+        snes.setObjective(self.obj)
+        snes.setFunction(self.assemble_residual, self.R)
+        snes.setJacobian(self.assemble_jacobian, J=self.A, P=None)
         snes.setMonitor(lambda _, it, residual: print(it, residual))
-        set_snes_sol_vector()
-        snes.solve(None, x)
-        update_solution(x)
+        self.set_snes_sol_vector(self.x)
+        snes.solve(None, self.x)
+        self.update_solution(self.x)
         snes.destroy()
         for ds in lin_algebra_objects:
             ds.destroy()
@@ -348,16 +365,6 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
         if self.do_writepos:
             self.writepos()
-
-    def initialize_post(self):
-        if not(self.do_writepos):
-            return
-        for w in self.writers.values():
-            w.close()
-        self.result_folder = f"post_{self.name}_tstep#{self.ps.iter}"
-        shutil.rmtree(self.result_folder,ignore_errors=True)
-        p = self.pf
-        self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{self.name}_{p.name}.pvd", "wb")
 
     def writepos(self,case="macro",extra_funs=[]):
         if not(self.do_writepos):
@@ -402,15 +409,6 @@ class MHSStaggeredSubstepper(MHSSubstepper):
                                       form_compiler_options={"scalar_type": np.float64})
         self.mr_compiled[ps] = fem.compile_form(ps.domain.comm, self.mr_ufl[ps],
                                       form_compiler_options={"scalar_type": np.float64})
-
-    def initialize_post(self):
-        if not(self.do_writepos):
-            return
-        for w in self.writers.values():
-            w.close()
-        shutil.rmtree(self.result_folder,ignore_errors=True)
-        for p in self.plist:
-            self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{self.name}_{p.name}.pvd", "wb")
 
     def writepos(self,case="macro",extra_funs=[]):
         if not(self.do_writepos):

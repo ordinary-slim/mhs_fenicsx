@@ -86,7 +86,7 @@ def run_hodge(params, writepos=True):
     macro_params = params.copy()
     macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(big_mesh, macro_params, name=f"big_chimera_ss_RR")
+    ps = Problem(big_mesh, macro_params, name=f"big_chimera_sms")
     pm = build_moving_problem(ps, els_per_radius)
     initial_condition_fun = get_initial_condition(params)
     ps.set_initial_condition(  initial_condition_fun )
@@ -107,11 +107,11 @@ def run_hodge(params, writepos=True):
             substeppin_driver.pre_iterate()
             substeppin_driver.micro_steps()
             substeppin_driver.monolithic_step()
-        #    substeppin_driver.post_iterate()
-        #substeppin_driver.post_loop()
-        #if writepos:
-        #    for p in [ps,pf]:
-        #        p.writepos(extra_funcs=[p.u_prev])
+            substeppin_driver.post_iterate()
+        substeppin_driver.post_loop()
+        if writepos:
+            for p in [ps,pf]:
+                p.writepos(extra_funcs=[p.u_prev])
     return ps
 
 def test_staggered_robin_chimera_substepper():
@@ -130,6 +130,25 @@ def test_staggered_robin_chimera_substepper():
         782.87969,
         24.998454,
         1625.5163,
+        ])
+    assert_pointwise_vals(p,points,vals)
+
+def test_sms_chimera_substepper():
+    with open("test_input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    params["material_metal"].pop("phase_change")
+    p = run_hodge(params, writepos=False)
+    points = np.array([
+        [-0.250, -0.250, 0.0],
+        [-0.250, -0.375, 0.0],
+        [+0.250, +0.000, 0.0],
+        [+0.375, -0.125, 0.0],
+        ])
+    vals = np.array([
+        230.22777,
+        783.1233,
+        25.236909,
+        1626.8163,
         ])
     assert_pointwise_vals(p,points,vals)
 
@@ -160,6 +179,7 @@ if __name__=="__main__":
         from mhs_fenicsx.chimera import interpolate_solution_to_inactive
         from mhs_fenicsx.problem.helpers import interpolate
         lp.add_module(MHSSubstepper)
+        lp.add_module(MHSSemiMonolithicChimeraSubstepper)
         lp.add_module(MonolithicDomainDecompositionDriver)
         lp.add_module(MonolithicRRDriver)
         lp.add_function(interpolate_solution_to_inactive)

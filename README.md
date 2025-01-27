@@ -22,7 +22,7 @@ CHECKPOINTS
 - [ ] Temperature dependent parameters
 - [x] 5 tests
 - [x] 10 tests
-- [ ] Chimera inside of substepper (difficult)
+- [x] Chimera inside of substepper (difficult)
 - [x] Coupling of Hodge
 - [x] Try out no submesh
 
@@ -35,17 +35,17 @@ NOTES
 TODO
 ====
 
+- [x] Move monolithic driver to outside of time-stepping
+- [x] Add test for get_active_dofs_external! (low priority)
+- [x] (VERY IMPORTANT) Update SUPG with phase change
 - [ ] Stop storing ext_conductivity (low priority)
-- [ ] Add test for get_active_dofs_external! (low priority)
 - [ ] Unify extract_cell_geo of get_active_dofs_external and geometry_utils (low priority)
 - [ ] h for Robin's gamma not computed explicitly
-- [ ] (VERY IMPORTANT) Update SUPG with phase change
 - [ ] (IMPORTANT) Substepper + Dirichlet conditions
-- [ ] On delete of substepper, set activation to physical (high priority)
 - [ ] In substepper, update physical domain restriction where relevant
 - [ ] Material rework to subdomains
 - [ ] Store material properties as functions of Temperature
 - [ ] Move Chimera problem to initial position in pre_loop of substepper
 - [ ] Mesh independent forms in monolithic robin driver
-- [ ] Move monolithic driver to outside of time-stepping
 - [ ] Set explicit linear solve in SNES where it matters
+- [ ] On delete of substepper, set activation to physical (high priority)

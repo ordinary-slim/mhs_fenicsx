@@ -126,10 +126,10 @@ def test_staggered_robin_chimera_substepper():
         [+0.375, -0.125, 0.0],
         ])
     vals = np.array([
-        229.38574,
-        782.87969,
-        24.998454,
-        1625.5163,
+        229.3857385,
+        782.8796867,
+        24.99886208,
+        1340.33064,
         ])
     assert_pointwise_vals(p,points,vals)
 
@@ -145,10 +145,10 @@ def test_sms_chimera_substepper():
         [+0.375, -0.125, 0.0],
         ])
     vals = np.array([
-        230.22777,
-        783.1233,
-        25.236909,
-        1626.8163,
+        230.2277686,
+        783.1233017,
+        25.24031342,
+        1341.826798,
         ])
     assert_pointwise_vals(p,points,vals)
 
@@ -158,6 +158,7 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-ss','--run-sub-sta',action='store_true')
     parser.add_argument('-sms','--run-sub-mon',action='store_true')
+    parser.add_argument('-t','--testing',action='store_true')
     write_gcode(params)
     lp = LineProfiler()
     lp.add_module(Problem)
@@ -187,5 +188,9 @@ if __name__=="__main__":
         lp_wrapper = lp(run_hodge)
         lp_wrapper(params,True)
         profiling_file = f"profiling_chimera_hodge_{rank}.txt"
+    if args.testing:
+        test_staggered_robin_chimera_substepper()
+        test_sms_chimera_substepper()
+        exit()
     with open(profiling_file, 'w') as pf:
         lp.print_stats(stream=pf)

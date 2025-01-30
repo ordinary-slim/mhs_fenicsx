@@ -17,8 +17,10 @@ def interpolate_solution_to_inactive(p:Problem, p_ext:Problem):
 def build_moving_problem(p_fixed:Problem,els_per_radius=2):
     moving_domain = mesh_around_hs(p_fixed.source,p_fixed.domain.topology.dim,els_per_radius)
     params = p_fixed.input_parameters.copy()
-    params["domain_speed"]    = p_fixed.source.speed
-    params["advection_speed"] = -p_fixed.source.speed
+    params["attached_to_hs"] = 1
+    # Placeholders
+    params["domain_speed"] = np.array([1.0, 0.0, 0.0])
+    params["advection_speed"] = np.array([-1.0, 0.0, 0.0])
     if "petsc_opts_moving" in params:
         params["petsc_opts"] = params["petsc_opts_moving"]
     p = Problem(moving_domain, params,name=p_fixed.name+"_moving")

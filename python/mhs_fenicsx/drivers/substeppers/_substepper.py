@@ -62,8 +62,8 @@ class MHSSubstepper(ABC):
         if not(subproblem_els):
             subproblem_els = self.find_subproblem_els()
         hs_radius = pf.source.R
-        track_t0 = pf.source.path.get_track(self.t0_macro_step)
-        hs_speed  = track_t0.speed# TODO: Can't use this speed!
+        self.track = pf.source.path.get_track(self.t0_macro_step)
+        hs_speed  = self.track.speed# TODO: Can't use this speed only!
         pf.set_dt( ps.input_parameters["micro_adim_dt"] * (hs_radius / hs_speed) )
         pf.set_activation(subproblem_els)
         pf.set_linear_solver(pf.input_parameters["petsc_opts_micro"])

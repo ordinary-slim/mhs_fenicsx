@@ -104,6 +104,7 @@ class Problem:
         self.dt_func.x.array[:] = self.dt.value
         # Motion
         self.domain_speed     = np.array(parameters["domain_speed"]) if "domain_speed" in parameters else None
+        self.attached_to_hs   = bool(parameters["attached_to_hs"]) if "attached_to_hs" in parameters else False
         advection_speed = parameters["advection_speed"][:self.domain.topology.dim] if "advection_speed" in parameters else np.zeros(self.domain.topology.dim)
         self.advection_speed = fem.Constant(self.domain,advection_speed)
         angular_advection_speed = parameters["angular_advection_speed"] if "angular_advection_speed" in parameters else np.zeros(3)
@@ -175,6 +176,11 @@ class Problem:
     def set_dt(self, dt : float):
         self.dt.value = dt
         self.dt_func.x.array[:] = dt
+
+    def set_domain_speed(self, v : npt.NDArray[typing.Union[np.float32, np.float64]]):
+        assert(v.size == 3)
+        self.domain_speed = v
+        self.advection_speed.value = -v[:self.dim]
 
     def set_initial_condition( self, expression ):
         try:
@@ -252,6 +258,9 @@ class Problem:
         if rank==0 and verbose:
             print(f"\nProblem {self.name} about to solve for iter {self.iter+1}, time {self.time+self.dt.value}")
         self.source.pre_iterate(self.time,self.dt.value,verbose=verbose)
+        # If chimera, update domain speed here
+        if self.attached_to_hs:
+            self.set_domain_speed(self.source.speed)
         # Mesh motion
         if self.domain_speed is not None and not(self.is_mesh_shared):
             dx = np.round(self.domain_speed*self.dt.value,7)
@@ -448,7 +457,7 @@ class Problem:
         # Translational advection
         has_advection = (np.linalg.norm(self.advection_speed.value) > 1e-7)
         if has_advection:
-            advection_norm = fem.Constant(self.domain, np.linalg.norm(self.advection_speed.value))
+            advection_norm = ufl.sqrt(ufl.dot(self.advection_speed, self.advection_speed))
             self.a_ufl += advection_coefficient*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
             # Translational advection stabilization
             if self.is_supg:
@@ -675,7 +684,7 @@ class Problem:
         """Assemble the jacobian."""
         self.assemble_jacobian(J_mat)
 
-    def non_linear_solve(self, max_iter=20, snes_opts = {}):
+    def non_linear_solve(self, max_iter=50, snes_opts = {}):
         if not(self.has_preassembled):
             self.pre_assemble()
         # Solve

@@ -4,6 +4,7 @@
 #include <dolfinx/mesh/Mesh.h>
 #include <dolfinx/geometry/BoundingBoxTree.h>
 #include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
 #include <dolfinx/geometry/gjk.h>
 #include <basix/mdspan.hpp>
 
@@ -21,7 +22,7 @@ void extract_cell_geometry(std::vector<T> &cell_geo, int ielem, int nnodes_per_e
 }
 
 template <std::floating_point T>
-std::vector<int> mesh_collision(
+std::vector<std::int32_t> mesh_collision(
     const dolfinx::mesh::Mesh<T> &mesh_big,
     const dolfinx::mesh::Mesh<T> &mesh_small,
     const dolfinx::geometry::BoundingBoxTree<T> *bb_tree_big = nullptr) {
@@ -53,11 +54,11 @@ std::vector<int> mesh_collision(
   std::vector<T> cell_geo_big(nnodes_per_el_big * 3); 
 
   int num_potential_collisions = ent_pairs.size()/2;
-  std::vector<int> big_colliding_cells;
+  std::vector<std::int32_t> big_colliding_cells;
   big_colliding_cells.reserve(num_potential_collisions);
   for (int ipair = 0; ipair < num_potential_collisions; ++ipair) {
-    int cell_big = ent_pairs[2*ipair];
-    int cell_small = ent_pairs[2*ipair+1];
+    std::int32_t cell_big = ent_pairs[2*ipair];
+    std::int32_t cell_small = ent_pairs[2*ipair+1];
     extract_cell_geometry(cell_geo_small, cell_small, nnodes_per_el_small, dofmap_small, x_geo_small);
     extract_cell_geometry(cell_geo_big, cell_big, nnodes_per_el_big, dofmap_big, x_geo_big);
     std::array<T, 3> d = dolfinx::geometry::compute_distance_gjk<T>(cell_geo_small, cell_geo_big);
@@ -76,7 +77,21 @@ namespace nb = nanobind;
 template <std::floating_point T>
 void templated_declare_mesh_collision(nb::module_ &m) {
   m.def(
-      "mesh_collision",&mesh_collision<T>,nb::arg("mesh_big"),nb::arg("mesh_small"),nb::arg("bb_tree_big").none());
+      "mesh_collision",
+      [](
+        const dolfinx::mesh::Mesh<T> &mesh_big,
+        const dolfinx::mesh::Mesh<T> &mesh_small,
+        const dolfinx::geometry::BoundingBoxTree<T>& bb_tree_big
+        )
+      {
+        std::vector<std::int32_t> elements = mesh_collision(
+            mesh_big,
+            mesh_small,
+            &bb_tree_big
+            );
+        return nb::ndarray<const std::int32_t, nb::numpy>(elements.data(),
+                                                  {elements.size()}).cast();
+      }, nb::arg("mesh_big"),nb::arg("mesh_small"),nb::arg("bb_tree_big").none());
 }
 
 void declare_mesh_collision(nb::module_ &m) {

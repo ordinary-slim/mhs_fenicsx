@@ -271,7 +271,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
 
         # Solve
         snes = PETSc.SNES().create(p1.domain.comm)
-        snes.setTolerances(max_it=20)
+        snes.setTolerances(max_it=50)
 
         snes.getKSP().setType("preonly")
         opts = PETSc.Options()

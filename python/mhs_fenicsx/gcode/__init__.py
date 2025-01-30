@@ -34,10 +34,15 @@ class Track:
     def get_speed(self):
         return self.speed*self.get_direction()
 
-    def get_position(self,time):
-        if (time < self.t0 or time > self.t1 + tol):
+    def get_position(self,time, bound=False):
+        if ((time < self.t0 or time > self.t1 + tol) and not(bound)):
             raise Exception( "Time is out of bounds for this track.")
-        return self.p0 + (time-self.t0)/(self.t1-self.t0)*(self.p1-self.p0)
+        if time < self.t0:
+            return self.p0.copy()
+        elif time > self.t1:
+            return self.p1.copy()
+        else:
+            return self.p0 + (time-self.t0)/(self.t1-self.t0)*(self.p1-self.p0)
 
     def __repr__(self):
         return f"Track #{self.index} is a {self.type} track from {self.p0}@t={self.t0} to {self.p1}@t={self.t1}"
@@ -45,7 +50,7 @@ class Track:
 class Path:
     def __init__(self,tracks:list[Track]):
         self.tracks = tracks
-        self.times = np.empty(len(tracks)+1)
+        self.times = np.empty(len(tracks)+1, dtype=np.float64)
         for idx in range(len(tracks)):
             self.times[idx] = tracks[idx].t0
         self.times[-1] = tracks[-1].t1
@@ -57,15 +62,23 @@ class Path:
     def update(self,time):
         self.current_track = self.get_track(time)
 
-    def get_track(self,t:float):
-        assert (t >= self.tracks[0].t0 and t <= self.tracks[-1].t1 + tol), "Time is out of bounds for this path."
+    def get_track_idx(self, t:float, pad=-1e-9):
+        assert (t >= self.tracks[0].t0 and t <= self.tracks[-1].t1 + tol), \
+                "Time is out of bounds for this path."
         idx_track = 0
         for track in self.tracks:
-            if t < track.t1 - tol:
+            if t < track.t1 + pad:
                 break
             idx_track += 1
         idx_track = min(idx_track,len(self.tracks)-1)
-        return self.tracks[idx_track]
+        return idx_track
+
+    def get_track(self,t:float):
+        return self.tracks[self.get_track_idx(t)]
+
+    def get_track_interval(self, t0:float, t1:float):
+        assert(t0 <= t1)
+        return self.tracks[self.get_track_idx(t0): self.get_track_idx(t1, pad=+1e-9)+1]
 
     def __repr__(self):
         return str([str(t) for t in self.tracks])

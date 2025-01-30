@@ -46,7 +46,7 @@ class HeatSource(ABC):
 
     def pre_iterate(self,tn,dt,verbose=True):
         try:
-            self.x_prev = self.path.current_track.get_position(tn)
+            self.x_prev = self.path.current_track.get_position(tn, False)
         except:
             self.x_prev[:] = self.x[:]
 
@@ -55,9 +55,10 @@ class HeatSource(ABC):
         else:
             tnp1 = tn + dt
             self.path.update(tn)
-            self.x      = self.path.current_track.get_position(tnp1)
-            self.speed  = self.path.current_track.get_speed()
-            self.power  = self.path.current_track.power
+            track_tnp1 = self.path.get_track(tnp1)
+            self.x      = track_tnp1.get_position(tnp1, False)
+            self.speed  = track_tnp1.get_speed()
+            self.power  = track_tnp1.power
             if rank==0 and verbose:
                 print(f"Current track is {self.path.current_track}")
 
@@ -107,7 +108,6 @@ class LumpedHeatSource(HeatSource):
         obb = OBB(self.x_prev,self.x,self.mdwidth,self.mdheight, 0.0, self.domain.topology.dim)
         obb_mesh = obb.get_dolfinx_mesh()
         self.heated_els = mesh_collision(self.domain._cpp_object,obb_mesh._cpp_object,bb_tree_big=self.bb_tree._cpp_object)
-        self.heated_els = np.array(self.heated_els,dtype=np.int32)
         # Compute volume of heated els
         dV = ufl.Measure("dx",
                          subdomain_data=

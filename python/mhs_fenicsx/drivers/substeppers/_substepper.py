@@ -114,24 +114,25 @@ class MHSSubstepper(ABC):
         # To do it properly, get initial time of macro step, final time of macro step
         # Do collision tests across track and accumulate elements to extract
         # Here we just do a single collision test
-        track_t0 = ps.source.path.get_track(self.t0_macro_step)
-        track_t1 = ps.source.path.get_track(self.t1_macro_step)
-        #assert(track_t0==ps.source.path.current_track)
+        tracks = ps.source.path.get_track_interval(self.t0_macro_step, self.t1_macro_step)
         hs_radius = ps.source.R
         back_pad = 5*hs_radius
         front_pad = 5*hs_radius
         side_pad = 3*hs_radius
-        p0 = track_t0.get_position(self.t0_macro_step)
-        p1 = track_t1.get_position(self.t1_macro_step)
-        direction = track_t0.get_direction()
-        p0 -= direction*back_pad
-        p1 += direction*front_pad
-        obb = OBB(p0,p1,width=back_pad,height=side_pad,depth=side_pad,dim=cdim,
-                                       shrink=False)
-        obb_mesh = obb.get_dolfinx_mesh()
-        #subproblem_els = mhs_fenicsx.geometry.mesh_collision(ps.domain,obb_mesh,bb_tree_mesh_big=ps.bb_tree)
-        subproblem_els = mesh_collision(ps.domain._cpp_object,obb_mesh._cpp_object,bb_tree_big=ps.bb_tree._cpp_object)
-        return np.array(subproblem_els,dtype=np.int32)
+        subproblem_els_mask = np.zeros((ps.cell_map.size_local + ps.cell_map.num_ghosts), dtype=np.bool_)
+        for track in tracks:
+            p0 = track.get_position(self.t0_macro_step, bound=True)
+            p1 = track.get_position(self.t1_macro_step, bound=True)
+            direction = track.get_direction()
+            p0 -= direction*back_pad
+            p1 += direction*front_pad
+            obb = OBB(p0,p1,width=back_pad,height=side_pad,depth=side_pad,dim=cdim,
+                                           shrink=False)
+            obb_mesh = obb.get_dolfinx_mesh()
+            #subproblem_els = mhs_fenicsx.geometry.mesh_collision(ps.domain,obb_mesh,bb_tree_mesh_big=ps.bb_tree)
+            colliding_els = mesh_collision(ps.domain._cpp_object,obb_mesh._cpp_object,bb_tree_big=ps.bb_tree._cpp_object)
+            subproblem_els_mask[colliding_els] = np.True_
+        return subproblem_els_mask.nonzero()[0]
 
     def predictor_step(self, writepos=False):
         ''' Always linear '''

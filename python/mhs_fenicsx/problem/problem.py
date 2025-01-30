@@ -675,16 +675,20 @@ class Problem:
         """Assemble the jacobian."""
         self.assemble_jacobian(J_mat)
 
-    def non_linear_solve(self, max_iter=20):
+    def non_linear_solve(self, max_iter=20, snes_opts = {}):
         if not(self.has_preassembled):
             self.pre_assemble()
         # Solve
         snes = PETSc.SNES().create(self.domain.comm)
         snes.setTolerances(max_it=max_iter)
-        ksp_opts = PETSc.Options()
+        opts = PETSc.Options()
         for k,v in self.linear_solver_opts.items():
-            ksp_opts[k] = v
+            opts[k] = v
         snes.getKSP().setFromOptions()
+        opts.clear()
+        for k,v in snes_opts.items():
+            opts[k] = v
+        snes.setFromOptions()
         snes.setObjective(self.obj)
         snes.setFunction(self.R, self.L)
         snes.setJacobian(self.J, J=self.A, P=None)
@@ -694,6 +698,8 @@ class Problem:
         assert (snes.getConvergedReason() > 0)
         self._update_solution(self.x)  # TODO can this be safely removed?
         snes.destroy()
+        [opts.__delitem__(k) for k in opts.getAll().keys()] # Clear options data-base
+        opts.destroy()
         self.is_grad_computed = False#dubious line
 
 class GammaL2Dotter:

@@ -87,9 +87,9 @@ def test_1d_phase_change():
         [+0.0080, 0.0, 0.0],
         ])
     vals = np.array([
-        1895.205212,
-        1748.631706,
-        1561.736834
+        1894.398592,
+        1748.72238,
+        1563.268393
         ])
     assert_pointwise_vals(p,points,vals)
 

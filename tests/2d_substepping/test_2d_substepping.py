@@ -185,10 +185,10 @@ def test_staggered_robin_substepper():
         [+0.375, -0.125, 0.0],
         ])
     vals = np.array([
-        224.88049,
-        757.965243,
-        24.9966748,
-        1451.8787,
+        234.5589654,
+        805.9203145,
+        24.99666684,
+        1571.867472,
         ])
     assert_pointwise_vals(p,points,vals)
 
@@ -203,10 +203,10 @@ def test_hodge_semi_monolothic_substepper():
         [+0.375, -0.125, 0.0],
         ])
     vals = np.array([
-        225.76946,
-        757.97848,
-        25.23716,
-        1452.3217,
+        235.5031273,
+        805.9198418,
+        25.23722158,
+        1572.531289,
         ])
     assert_pointwise_vals(p,points,vals)
 

@@ -274,9 +274,10 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         snes.setTolerances(max_it=20)
 
         snes.getKSP().setType("preonly")
-        PETSc.Options().setValue('-ksp_error_if_not_converged', 'true')
-        PETSc.Options().setValue('-snes_type', 'newtonls')
-        #PETSc.Options().setValue('-snes_line_search_type', 'l2')
+        opts = PETSc.Options()
+        opts.setValue('-ksp_error_if_not_converged', 'true')
+        opts.setValue('-snes_type', 'newtonls')
+        #opts.setValue('-snes_line_search_type', 'l2')
         snes.setFromOptions()
         #snes.getKSP().setFromOptions()
         snes.getKSP().getPC().setType("lu")
@@ -294,6 +295,8 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.update_solution(self.x)
         assert (snes.getConvergedReason() > 0)
         snes.destroy()
+        [opts.__delitem__(k) for k in opts.getAll().keys()] # Clear options data-base
+        opts.destroy()
 
         for p in [p1, p2]:
             p.is_grad_computed = False

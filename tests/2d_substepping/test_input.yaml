@@ -19,6 +19,7 @@ material_metal : {
     liquidus_temperature : 1750.0
   }
 }
+smoothing_cte_phase_change : 5.0
 #convection_coeff : 1.0E-00
 environment_temperature : 25
 # END_ESSENTIAL
@@ -44,6 +45,5 @@ predictor_step: True
 substepper_writepos: False
 quadrature_metadata: {}
 
-smoothing_cte_phase_change : 1.0
 max_nr_iters: 30
 max_ls_iters: 5

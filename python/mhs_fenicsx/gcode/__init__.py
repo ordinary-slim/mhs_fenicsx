@@ -1,5 +1,6 @@
 from __future__ import annotations
 import numpy as np
+import numpy.typing as npt
 from enum import Enum, IntEnum
 
 tol = 1e-9
@@ -11,11 +12,10 @@ class TrackType(Enum):
     RECOATING = 3
 
 class Track:
-    def __init__(self, p0:np.ndarray, p1:np.ndarray,
-                       t0:float,t1:float,
+    def __init__(self, p0:npt.NDArray[np.float64], p1:npt.NDArray[np.float64],
+                       t0:np.float64, t1:np.float64,
                        track_type:TrackType,
-                       speed:float,power:float,
-                       index=-1,
+                       speed:np.float64, power:np.float64,
                        ):
         self.p0 = p0
         self.p1 = p1
@@ -24,12 +24,15 @@ class Track:
         self.type = track_type
         self.speed = speed
         self.power = power
-        self.index = index
         self.length = np.linalg.norm(p1-p0)
 
     def get_direction(self):
         step = (self.p1-self.p0)
-        return step/np.linalg.norm(step)
+        stepsize = np.linalg.norm(step)
+        if stepsize >1e-9:
+            return step/stepsize
+        else:
+            return np.zeros(3, dtype=np.float64)
 
     def get_speed(self):
         return self.speed*self.get_direction()
@@ -45,7 +48,16 @@ class Track:
             return self.p0 + (time-self.t0)/(self.t1-self.t0)*(self.p1-self.p0)
 
     def __repr__(self):
-        return f"Track #{self.index} is a {self.type} track from {self.p0}@t={self.t0} to {self.p1}@t={self.t1}"
+        return f"{self.type} track from {self.p0}@t={self.t0} to {self.p1}@t={self.t1}"
+
+def get_infinite_track(p0:npt.NDArray[np.float64],
+                       t0:np.float64,
+                       speed:npt.NDArray[np.float64],
+                       power:np.float64):
+    dt = 1e9
+    t1 = t0 + dt
+    p1 = p0 + dt * speed
+    return Track(p0, p1, t0, t1, TrackType.PRINTING, np.linalg.norm(speed), power)
 
 class Path:
     def __init__(self,tracks:list[Track]):
@@ -73,10 +85,10 @@ class Path:
         idx_track = min(idx_track,len(self.tracks)-1)
         return idx_track
 
-    def get_track(self,t:float):
-        return self.tracks[self.get_track_idx(t)]
+    def get_track(self,t:float, pad=-1e-9):
+        return self.tracks[self.get_track_idx(t, pad=pad)]
 
-    def get_track_interval(self, t0:float, t1:float):
+    def get_track_interval(self, t0:np.float64, t1:np.float64):
         assert(t0 <= t1)
         return self.tracks[self.get_track_idx(t0): self.get_track_idx(t1, pad=+1e-9)+1]
 
@@ -146,9 +158,8 @@ def gcode_to_path(gcodeFile,default_power=100.0) -> Path:
 
         if timePassed:
             tracks.append(Track(previousPosition,currentPosition,
-                          previousTime,currentTime,
-                          trackType,currentSpeed,currentPower,
-                          index=track_counter))
+                          previousTime, currentTime,
+                          trackType,currentSpeed,currentPower))
             previousPosition=currentPosition.copy()
             previousTime=currentTime
             track_counter+=1

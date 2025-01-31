@@ -70,6 +70,15 @@ class Problem:
         self.gamma_facets_index_map : dict['Problem', dolfinx.common.IndexMap] = {}
         self.gamma_imap_to_global_imap : dict['Problem', npt.NDArray[np.int32]] = {}
         self.gamma_integration_data : dict['Problem', npt.NDArray[np.int32]] = {}
+
+        # Time
+        self.is_steady = parameters["isSteady"]
+        self.iter     = 0
+        self.time     = 0.0
+        dt = parameters["dt"] if not(self.is_steady) else -1.0
+        self.dt       = fem.Constant(self.domain, dt)
+        self.dt_func  = fem.Function(self.v, name="dt")
+        self.dt_func.x.array[:] = self.dt.value
                          
         # Source term
         try:
@@ -94,14 +103,6 @@ class Problem:
 
         self.rhs = None # For python functions
 
-        # Time
-        self.is_steady = parameters["isSteady"]
-        self.iter     = 0
-        self.time     = 0.0
-        dt = parameters["dt"] if not(self.is_steady) else -1.0
-        self.dt       = fem.Constant(self.domain, dt)
-        self.dt_func  = fem.Function(self.v, name="dt")
-        self.dt_func.x.array[:] = self.dt.value
         # Motion
         self.domain_speed     = np.array(parameters["domain_speed"]) if "domain_speed" in parameters else None
         self.attached_to_hs   = bool(parameters["attached_to_hs"]) if "attached_to_hs" in parameters else False

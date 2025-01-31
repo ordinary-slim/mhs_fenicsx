@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import numpy as np
-from mhs_fenicsx.gcode import Path, Track, gcode_to_path
+from mhs_fenicsx.gcode import Path, Track, gcode_to_path, get_infinite_track
 from mpi4py import MPI
 from dolfinx import fem, mesh
 from typing import TYPE_CHECKING
@@ -26,12 +26,14 @@ class HeatSource(ABC):
         self.R = params["heat_source"]["radius"]
         self.power = params["heat_source"]["power"]
         self.speed = np.array(params["heat_source"]["initial_speed"],dtype=np.float64)
-        self.path  = None
         if "path" in params:
             self.path  = gcode_to_path(params["path"],default_power=self.power)
             self.x     = self.path.tracks[0].p0
             self.speed = self.path.tracks[0].get_speed()
-        self.x_prev = self.x.copy()
+        else:
+            track = get_infinite_track(self.x, p.time, self.speed, self.power)
+            self.path = Path([track])
+        self.tn = self.path.tracks[0].t0
         self.initialize_fem_function(p)
 
     @abstractmethod
@@ -45,22 +47,15 @@ class HeatSource(ABC):
         self.fem_function = fem.Function(p.v,name="source")
 
     def pre_iterate(self,tn,dt,verbose=True):
-        try:
-            self.x_prev = self.path.current_track.get_position(tn, False)
-        except:
-            self.x_prev[:] = self.x[:]
-
-        if self.path is None:
-            self.x += self.speed*dt
-        else:
-            tnp1 = tn + dt
-            self.path.update(tn)
-            track_tnp1 = self.path.get_track(tnp1)
-            self.x      = track_tnp1.get_position(tnp1, False)
-            self.speed  = track_tnp1.get_speed()
-            self.power  = track_tnp1.power
-            if rank==0 and verbose:
-                print(f"Current track is {self.path.current_track}")
+        self.tn = tn
+        self.tnp1 = tn + dt
+        self.path.update(tn)
+        track_tnp1 = self.path.get_track(self.tnp1, pad=+1e-9)
+        self.x      = track_tnp1.get_position(self.tnp1, False)
+        self.speed  = track_tnp1.get_speed()
+        self.power  = track_tnp1.power
+        if rank==0 and verbose:
+            print(f"Current track is {self.path.current_track}")
 
     def __deepcopy__(self,memo):
         result = self.__class__.__new__(self.__class__)
@@ -99,25 +94,41 @@ class LumpedHeatSource(HeatSource):
         self.mdheight = params["mdheight"]
         self.domain = p.domain
         self.bb_tree = p.bb_tree
+        self.compile_volume_form()
+
+    def compile_volume_form(self):
+        dV = ufl.Measure("dx", metadata={"quadrature_degree":1,})
+        volume_form_ufl = ufl.TestFunction(self.fem_function.function_space)*dV(1)
+        self.volume_form_compiled = fem.compile_form(self.domain.comm, volume_form_ufl,
+                                                     form_compiler_options={"scalar_type": np.float64})
+    def instantiate_volume_form(self):
+        subdomain_data = {fem.IntegralType.cell : [(1, self.heated_els)]}
+        coefficient_map = {self.fem_function:self.fem_function}
+        return fem.create_form(self.volume_form_compiled,
+                               [self.fem_function.function_space],
+                               msh=self.domain,
+                               subdomains=subdomain_data,
+                               coefficient_map=coefficient_map,
+                               constant_map={})
 
     def initialize_fem_function(self,p:'Problem'):
         self.fem_function = fem.Function(p.dg0,name="source")
+
     def set_fem_function(self, x):
-        # Mark heated elements
-        # Collision
-        obb = OBB(self.x_prev,self.x,self.mdwidth,self.mdheight, 0.0, self.domain.topology.dim)
-        obb_mesh = obb.get_dolfinx_mesh()
-        self.heated_els = mesh_collision(self.domain._cpp_object,obb_mesh._cpp_object,bb_tree_big=self.bb_tree._cpp_object)
-        # Compute volume of heated els
-        dV = ufl.Measure("dx",
-                         subdomain_data=
-                             mesh.meshtags(self.domain,
-                                           self.domain.topology.dim,
-                                           self.heated_els,
-                                           np.ones_like(self.heated_els,)),
-                         metadata={"quadrature_degree":1,}
-                        )
-        heated_volume_form = fem.form(ufl.TestFunction(self.fem_function.function_space)*dV(1))
+        tracks = self.path.get_track_interval(self.tn, self.tnp1)
+        tdim = self.domain.topology.dim
+        cell_map = self.domain.topology.index_map(tdim)
+        heated_els_mask = np.zeros((cell_map.size_local + cell_map.num_ghosts), dtype=np.bool_)
+        for track in tracks:
+            p0 = track.get_position(self.tn,   bound=True)
+            p1 = track.get_position(self.tnp1, bound=True)
+            obb = OBB(p0, p1, self.mdwidth, self.mdheight, 0.0, tdim)
+            obb_mesh = obb.get_dolfinx_mesh()
+            heated_els = mesh_collision(self.domain._cpp_object,obb_mesh._cpp_object,bb_tree_big=self.bb_tree._cpp_object)
+            heated_els_mask[heated_els] = np.True_
+
+        self.heated_els = heated_els_mask[:cell_map.size_local].nonzero()[0]
+        heated_volume_form = self.instantiate_volume_form()
         heated_volume = fem.assemble_scalar(heated_volume_form)
         heated_volume = comm.allreduce(heated_volume, op=MPI.SUM)
         heated_volume = np.round(heated_volume,9)

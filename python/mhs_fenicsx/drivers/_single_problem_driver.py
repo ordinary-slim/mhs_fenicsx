@@ -41,34 +41,31 @@ class SingleProblemDriver:
         p.compile_create_forms()
 
     def set_dt(self):
-        if self.p.source.path is not None:
-            track_tn = self.p.source.path.get_track(self.p.time)
-            if track_tn != self.track_tn:
-                self.is_new_track = True
-            self.track_tn = track_tn
-            max_dt = self.track_tn.t1 - self.p.time
-            if self.track_tn.type is TrackType.PRINTING:
-                dt = self.printing_dt
-            else:
-                dt = self.cooling_dt
-            if max_dt > 1e-7:
-                self.dt = min(dt,max_dt)
-            self.p.dt.value = self.dt
+        track_tn = self.p.source.path.get_track(self.p.time)
+        if track_tn != self.track_tn:
+            self.is_new_track = True
+        self.track_tn = track_tn
+        max_dt = self.track_tn.t1 - self.p.time
+        if self.track_tn.type is TrackType.PRINTING:
+            dt = self.printing_dt
+        else:
+            dt = self.cooling_dt
+        if max_dt > 1e-7:
+            self.dt = min(dt,max_dt)
+        self.p.dt.value = self.dt
 
     def on_new_track_operations(self):
-        if self.p.source.path is not None:
-            if self.track_tn.type is TrackType.RECOATING:
-                self.deposit_new_layer()
-                self.layer_counter += 1
+        if self.track_tn.type is TrackType.RECOATING:
+            self.deposit_new_layer()
+            self.layer_counter += 1
 
     def pre_iterate(self):
         self.is_new_track = False
         self.set_dt()
-        if self.p.source.path is not None:
-            if self.is_new_track:
-                self.on_new_track_operations()
-            if self.track_tn.type is TrackType.PRINTING:
-                self.hatch_to_metal()
+        if self.is_new_track:
+            self.on_new_track_operations()
+        if self.track_tn.type is TrackType.PRINTING:
+            self.hatch_to_metal()
         self.p.pre_iterate()
 
     def hatch_to_metal(self):

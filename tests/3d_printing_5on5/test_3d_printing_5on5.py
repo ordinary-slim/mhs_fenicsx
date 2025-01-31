@@ -41,8 +41,6 @@ def run():
 
     for _ in range(5):
         problem.pre_iterate()
-        problem.set_activation(np.hstack((problem.active_els_func.x.array.nonzero()[0], problem.source.heated_els)))
-        problem.u_prev.x.array[problem.just_activated_nodes] = problem.T_dep
         problem.instantiate_forms()
         problem.pre_assemble()
         problem.non_linear_solve()

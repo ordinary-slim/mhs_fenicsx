@@ -16,9 +16,11 @@ from abc import ABC, abstractmethod
 from mhs_fenicsx import gcode
 from mhs_fenicsx.problem.helpers import *
 from mhs_fenicsx.problem.heatsource import *
+from mhs_fenicsx.problem.printer import Printer
 from mhs_fenicsx.problem.material import Material, base_mat_to_problem, phase_change_mat_to_problem
 import mhs_fenicsx_cpp
 import typing
+import functools
 import copy
 
 comm = MPI.COMM_WORLD
@@ -102,6 +104,9 @@ class Problem:
                 self.source = Gaussian3D(self)
 
         self.rhs = None # For python functions
+
+        # 3D printing
+        self.printer : typing.Optional[Printer] = Printer(self) if "printer" in parameters else None
 
         # Motion
         self.domain_speed     = np.array(parameters["domain_speed"]) if "domain_speed" in parameters else None
@@ -275,8 +280,13 @@ class Problem:
             self.compute_advected_el_size()
 
         self.source.set_fem_function(self.dof_coords)
+        # Print
+        if self.printer:
+            self.printer.deposit(self.time, self.dt.value)
+
         self.iter += 1
         self.time += self.dt.value
+
         if not(forced_time_derivative):
             self.u_prev.x.array[:] = self.u.x.array
 
@@ -294,16 +304,27 @@ class Problem:
         if finalize:
             self.finalize_activation()
 
-    # TODO: Overload this function
-    def set_activation(self, active_els=typing.Optional[list], finalize=True):
-        if active_els is None:
-            active_els = np.arange(self.num_cells,dtype=np.int32)
+    @functools.singledispatchmethod
+    def set_activation(self, active_els, finalize=True):
+        raise ValueError
+
+    @set_activation.register
+    def _(self, active_els: np.ndarray, finalize=True):
         self.active_els = active_els
         self.active_els_func.x.array.fill(0.0)
         self.active_els_func.x.array[active_els] = 1.0
         self.active_els_func.x.scatter_forward()
         self.local_active_els = self.active_els_func.x.array.nonzero()[0]
         self.local_active_els = self.local_active_els[:np.searchsorted(self.local_active_els, self.cell_map.size_local)]
+        if finalize:
+            self.finalize_activation()
+
+    @set_activation.register
+    def _(self, active_els: fem.Function, finalize=True): 
+        self.active_els_func = active_els
+        self.active_els_func.x.scatter_forward()
+        self.active_els = self.active_els_func.x.array.nonzero()[0]
+        self.local_active_els = self.active_els[:np.searchsorted(self.active_els, self.cell_map.size_local)]
         if finalize:
             self.finalize_activation()
 

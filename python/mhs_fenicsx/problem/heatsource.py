@@ -3,18 +3,16 @@ import numpy as np
 from mhs_fenicsx.gcode import Path, Track, gcode_to_path, get_infinite_track
 from mpi4py import MPI
 from dolfinx import fem, mesh
-from typing import TYPE_CHECKING
 import ufl
 from mhs_fenicsx.geometry import OBB
 from mhs_fenicsx_cpp import mesh_collision
 import copy
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mhs_fenicsx.problem.Problem import Problem
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
-
-# TODO: Compiled expressions here? Faster rhs assembly
 
 class HeatSource(ABC):
     def __init__(self,p:'Problem'):

@@ -295,6 +295,9 @@ class Problem:
         self.has_preassembled = False
         self.is_grad_computed = False
 
+    def is_path_over(self):
+        return (self.source.path.tracks[-1].t1 - self.time) < 1e-7
+
     def initialize_activation(self, finalize=True):
         self.active_els = np.arange(self.num_cells,dtype=np.int32)
         self.active_els_func= fem.Function(self.dg0,name="active_els")
@@ -306,10 +309,10 @@ class Problem:
 
     @functools.singledispatchmethod
     def set_activation(self, active_els, finalize=True):
-        raise ValueError
+        pass
 
     @set_activation.register
-    def _(self, active_els: np.ndarray, finalize=True):
+    def _(self, active_els: np.ndarray, finalize=True) -> typing.NoReturn:
         self.active_els = active_els
         self.active_els_func.x.array.fill(0.0)
         self.active_els_func.x.array[active_els] = 1.0
@@ -320,7 +323,7 @@ class Problem:
             self.finalize_activation()
 
     @set_activation.register
-    def _(self, active_els: fem.Function, finalize=True): 
+    def _(self, active_els: fem.Function, finalize=True) -> typing.NoReturn:
         self.active_els_func = active_els
         self.active_els_func.x.scatter_forward()
         self.active_els = self.active_els_func.x.array.nonzero()[0]

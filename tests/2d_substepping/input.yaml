@@ -6,18 +6,16 @@ heat_source : {
   radius : 0.05,
   power : 500,
 }
-micro_adim_dt: 0.5
-macro_adim_dt: 5
 # PROPS
 material_metal : {
   density : 4.3E-06, # kg / mm3
   conductivity : 10.0E-03, # W / mm / K
   specific_heat : 700, # J / kg / K
-  #phase_change : {
-  #  latent_heat : 350.0E+03,
-  #  solidus_temperature : &solidus_temperature 1600.0,
-  #  liquidus_temperature : 1650.0
-  #}
+  phase_change : {
+    latent_heat : 350.0E+03,
+    solidus_temperature : &solidus_temperature 1600.0,
+    liquidus_temperature : 1650.0
+  }
 }
 smoothing_cte_phase_change : 1.0
 #convection_coeff : 1.0E-00
@@ -38,12 +36,19 @@ domain_height: 1
 path: "Path.gcode"
 els_per_radius: 4
 max_staggered_iters: 1
-max_timesteps: 4
+
+max_timesteps: 2
+micro_adim_dt: 0.5
+macro_adim_dt: 10
+
 driver_type: "robin"
 initial_condition: False
 predictor_step: True
-substepper_writepos: False
+substepper_writepos: True
 quadrature_metadata: {}
+supg: 1
 
 max_nr_iters: 30
 max_ls_iters: 5
+
+chimera_always_on: False

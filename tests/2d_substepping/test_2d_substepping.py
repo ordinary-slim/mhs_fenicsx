@@ -85,7 +85,9 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
         k = float(params["material_metal"]["conductivity"])
         staggered_driver.set_dirichlet_coefficients(h, k)
 
-    for _ in range(max_timesteps):
+    itime_step = 0
+    while ((itime_step < max_timesteps) and not(ps.is_path_over())):
+        itime_step += 1
         substeppin_driver.update_fast_problem()
         substeppin_driver.set_staggered_driver(staggered_driver)
         staggered_driver.pre_loop(prepare_subproblems=False)
@@ -130,7 +132,9 @@ def run_semi_monolithic(params, els_per_radius, writepos=True):
     max_timesteps = params["max_timesteps"]
     substeppin_driver = MHSSemiMonolithicSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos), do_predictor=params["predictor_step"])
 
-    for _ in range(max_timesteps):
+    itime_step = 0
+    while ((itime_step < max_timesteps) and not(big_p.is_path_over())):
+        itime_step += 1
         substeppin_driver.update_fast_problem()
         (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
         substeppin_driver.pre_loop()

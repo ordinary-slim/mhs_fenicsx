@@ -38,6 +38,7 @@ TODO
 - [x] Move monolithic driver to outside of time-stepping
 - [x] Add test for get_active_dofs_external! (low priority)
 - [x] (VERY IMPORTANT) Update SUPG with phase change
+- [x] On delete of substepper, set activation to physical (high priority)
 - [ ] Stop storing ext_conductivity (low priority)
 - [ ] Unify extract_cell_geo of get_active_dofs_external and geometry_utils (low priority)
 - [ ] h for Robin's gamma not computed explicitly
@@ -48,4 +49,4 @@ TODO
 - [ ] Move Chimera problem to initial position in pre_loop of substepper
 - [ ] Mesh independent forms in monolithic robin driver
 - [ ] Set explicit linear solve in SNES where it matters
-- [ ] On delete of substepper, set activation to physical (high priority)
+- [ ] In micro_pre_iterate, abort if end of path and set t1_macro and ps.dt to diff values

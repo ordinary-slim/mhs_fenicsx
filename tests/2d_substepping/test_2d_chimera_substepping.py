@@ -36,7 +36,8 @@ def run_staggered_RR(params, writepos=True):
 
     substeppin_driver = MHSStaggeredChimeraSubstepper(ps, pm,
                                                       writepos=(params["substepper_writepos"] and writepos),
-                                                      do_predictor=params["predictor_step"])
+                                                      do_predictor=params["predictor_step"],
+                                                      chimera_always_on=params["chimera_always_on"])
     pf = substeppin_driver.pf
     staggered_driver = StaggeredRRDriver(pf,ps,
                                          max_staggered_iters=params["max_staggered_iters"],
@@ -47,7 +48,9 @@ def run_staggered_RR(params, writepos=True):
     k = float(params["material_metal"]["conductivity"])
     staggered_driver.set_dirichlet_coefficients(h, k)
 
-    for _ in range(max_timesteps):
+    itime_step = 0
+    while ((itime_step < max_timesteps) and not(ps.is_path_over())):
+        itime_step += 1
         substeppin_driver.update_fast_problem()
         substeppin_driver.set_staggered_driver(staggered_driver)
         staggered_driver.pre_loop(prepare_subproblems=False)
@@ -96,9 +99,12 @@ def run_hodge(params, writepos=True):
 
     substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm,
                                                            writepos=(params["substepper_writepos"] and writepos),
-                                                           do_predictor=params["predictor_step"])
+                                                           do_predictor=params["predictor_step"],
+                                                           chimera_always_on=params["chimera_always_on"])
     pf = substeppin_driver.pf
-    for _ in range(max_timesteps):
+    itime_step = 0
+    while ((itime_step < max_timesteps) and not(ps.is_path_over())):
+        itime_step += 1
         substeppin_driver.update_fast_problem()
         substeppin_driver.pre_loop(prepare_fast_problem=False)
         if substeppin_driver.do_predictor:

@@ -154,6 +154,26 @@ class MHSSubstepper(ABC):
         ps.set_activation(slow_subdomain_data[fem.IntegralType.cell][0][1])
         ps.form_subdomain_data = slow_subdomain_data
 
+    def micro_steps(self):
+        self.micro_iter = 0
+        while self.is_substepping():
+            self.micro_pre_iterate()
+            self.micro_step()
+            self.writepos(case="micro")
+            self.micro_post_iterate()
+
+    @abstractmethod
+    def is_substepping(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    def micro_step(self):
+        raise NotImplementedError
+
+    def micro_pre_iterate(self):
+        #TODO: Raise flag if new track
+        self.micro_iter += 1
+
     def micro_post_iterate(self):
         '''
         post_iterate of micro_step
@@ -226,23 +246,21 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         self.fast_dirichlet_tcon = fem.dirichletbc(dirichlet_fun_fast, self.gamma_dofs_fast)
         pf.dirichlet_bcs.append(self.fast_dirichlet_tcon)
 
-    def micro_steps(self):
+    def is_substepping(self):
+        return (self.t1_macro_step - (self.pf.time + self.pf.dt.value)) > 1e-7
+
+
+    def micro_step(self):
         (ps,pf) = (self.ps,self.pf)
-        self.micro_iter = 0
-        while self.micro_iter < (self.num_micro_steps - 1):
-            forced_time_derivative = (self.micro_iter==0)
-            pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
-            self.micro_iter += 1
-            f = self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
-            # Update Dirichlet BC pf here!
-            self.fast_dirichlet_tcon.g.x.array[self.gamma_dofs_fast] = \
-                    (1-f)*ps.u_prev.x.array[self.gamma_dofs_fast] + \
-                    f*ps.u.x.array[self.gamma_dofs_fast]
-            pf.non_linear_solve()
-            #pf.post_iterate()
-            self.micro_post_iterate()
-            if self.do_writepos:
-                self.writepos("micro")
+        forced_time_derivative = (pf.time - self.t0_macro_step) < 1e-7
+        pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
+        f = self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
+        # Update Dirichlet BC pf here!
+        self.fast_dirichlet_tcon.g.x.array[self.gamma_dofs_fast] = \
+                (1-f)*ps.u_prev.x.array[self.gamma_dofs_fast] + \
+                f*ps.u.x.array[self.gamma_dofs_fast]
+        pf.non_linear_solve()
+        #pf.post_iterate()
 
     def set_gamma_slow_to_fast(self):
         (ps, pf) = (self.ps, self.pf)
@@ -439,32 +457,29 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         funs += extra_funs
         self.writers[p].write_function(funs,t=time)
 
-    def micro_steps(self):
+    def is_substepping(self):
+        return (self.t1_macro_step - self.pf.time) > 1e-7
+
+    def micro_step(self):
         (ps,pf) = (self.ps,self.pf)
         sd = self.staggered_driver
-        self.micro_iter = 0
-        while (self.t1_macro_step - pf.time) > 1e-7:
-            forced_time_derivative = (self.micro_iter==0)
-            pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
-            self.micro_iter += 1
-            self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
-            if type(sd)==StaggeredRRDriver:
-                f = self.fraction_macro_step
-                sd.net_ext_sol[pf].x.array[:] = (1-f)*self.ext_sol_tn[pf].x.array[:] + \
-                        f*self.ext_sol_array_tnp1[:]
-                sd.net_ext_flux[pf].x.array[:] = (1-f)*self.ext_flux_tn[pf].x.array[:] + \
-                        f*self.ext_flux_array_tnp1[:]
-            elif type(sd)==StaggeredDNDriver and sd.p_dirichlet==pf:
-                sd.dirichlet_tcon.g.x.array[:] = (1-sd.relaxation_coeff[pf].value)*pf.u.x.array[:] + \
-                                                 sd.relaxation_coeff[pf].value*((1-self.fraction_macro_step)*\
-                                                 sd.prev_ext_sol[pf].x.array[:] + self.fraction_macro_step*\
-                                                 sd.ext_sol[pf].x.array[:])
-            elif type(sd)==StaggeredDNDriver and sd.p_neumann==pf:
-                sd.relaxation_coeff[pf].value = self.fraction_macro_step
-            pf.non_linear_solve()
-            #pf.post_iterate()
-            self.micro_post_iterate()
-            self.writepos(case="micro")
+        forced_time_derivative = (pf.time - self.t0_macro_step) < 1e-7
+        pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
+        self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
+        if type(sd)==StaggeredRRDriver:
+            f = self.fraction_macro_step
+            sd.net_ext_sol[pf].x.array[:] = (1-f)*self.ext_sol_tn[pf].x.array[:] + \
+                    f*self.ext_sol_array_tnp1[:]
+            sd.net_ext_flux[pf].x.array[:] = (1-f)*self.ext_flux_tn[pf].x.array[:] + \
+                    f*self.ext_flux_array_tnp1[:]
+        elif type(sd)==StaggeredDNDriver and sd.p_dirichlet==pf:
+            sd.dirichlet_tcon.g.x.array[:] = (1-sd.relaxation_coeff[pf].value)*pf.u.x.array[:] + \
+                                             sd.relaxation_coeff[pf].value*((1-self.fraction_macro_step)*\
+                                             sd.prev_ext_sol[pf].x.array[:] + self.fraction_macro_step*\
+                                             sd.ext_sol[pf].x.array[:])
+        elif type(sd)==StaggeredDNDriver and sd.p_neumann==pf:
+            sd.relaxation_coeff[pf].value = self.fraction_macro_step
+        pf.non_linear_solve()
 
     def iterate_substepped_rr(self):
         (ps,pf) = (self.ps,self.pf)

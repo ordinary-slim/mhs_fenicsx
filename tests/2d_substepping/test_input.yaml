@@ -47,3 +47,5 @@ quadrature_metadata: {}
 
 max_nr_iters: 30
 max_ls_iters: 5
+
+chimera_always_on: True

@@ -1,41 +1,32 @@
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.drivers.substeppers import MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper
 from mhs_fenicsx.drivers._monolithic_drivers import MonolithicRRDriver
+import mhs_fenicsx_cpp
 import ufl
 import numpy as np
 from dolfinx import fem
 from mhs_fenicsx.chimera import interpolate_solution_to_inactive
 import multiphenicsx
 from petsc4py import PETSc
+import typing
 
 def check_assumptions(ps, pf, pm):
     return not(np.logical_and(pf.gamma_facets[pm].values, ps.bfacets_tag.values).all())
-
-def chimera_micro_post_iterate(pf, pm):
-    '''
-    post_iterate of micro_step
-    TODO: Maybe refactor? Seems like ps needs the same thing
-    '''
-    for p in (pf, pm):
-        current_track = p.source.path.get_track(p.time)
-        dt2track_end = current_track.t1 - p.time
-        if abs(p.dt.value - dt2track_end) < 1e-9:
-            p.set_dt(dt2track_end)
-
 
 class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
     def __init__(self,slow_problem:Problem, moving_problem : Problem,
                  writepos=True,
                  max_nr_iters=25,max_ls_iters=5,
                  do_predictor=False,
-                 compile_forms=True):
+                 compile_forms=True,
+                 chimera_always_on=True,
+                 ):
         self.pm = moving_problem
         super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, do_predictor,compile_forms)
         self.plist.append(self.pm)
         self.quadrature_degree = 2 # Gamma Chimera
         self.name = "staggered_chimera_substepper"
-        self.chimera_driver = MonolithicRRDriver(self.pf, self.pm,
-                                                 quadrature_degree=self.quadrature_degree)
+        chimera_post_init(self, chimera_always_on)
 
     def compile_forms(self):
         ps, pm = (self.ps, self.pm)
@@ -61,50 +52,60 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
         for p in plist:
             p.post_iterate()
 
-    def micro_post_iterate(self):
-        chimera_micro_post_iterate(self.pf, self.pm)
+    def micro_pre_iterate(self):
+        chimera_micro_pre_iterate(self)
 
-    def micro_steps(self):
+    def micro_post_iterate(self):
+        chimera_micro_post_iterate(self)
+
+    def micro_step(self):
         (ps,pf,pm) = plist = (self.ps,self.pf,self.pm)
         sd = self.staggered_driver
         cd = self.chimera_driver
+        forced_time_derivative = (pf.time - self.t0_macro_step) < 1e-7
+        pm.intersect_problem(pf, finalize=False)
+        for p in [pm, pf]:
+            p.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
+        self.fast_subproblem_els = pf.active_els_func.x.array.nonzero()[0]
+        pm.intersect_problem(pf, finalize=False)
+        ps_pf_integration_data = pf.form_subdomain_data[fem.IntegralType.exterior_facet][-1]
+        assert(ps_pf_integration_data[0] == sd.gamma_integration_tag)
 
-        self.micro_iter = 0
-        while (self.t1_macro_step - pf.time) > 1e-7:
-            forced_time_derivative = (self.micro_iter==0)
-            pm.intersect_problem(pf, finalize=False)
-            for p in [pm, pf]:
-                p.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
-            fast_subproblem_els = pf.active_els_func.x.array.nonzero()[0]
-            pm.intersect_problem(pf, finalize=False)
-            ps_pf_integration_data = pf.form_subdomain_data[fem.IntegralType.exterior_facet][-1]
-            assert(ps_pf_integration_data[0] == sd.gamma_integration_tag)
+        if not(self.chimera_off):
             pf.subtract_problem(pm, finalize=False)# Can I finalize here?
-            for p, p_ext in [(pm, pf), (pf, pm)]:
-                p.finalize_activation()
-                p.find_gamma(p_ext)#TODO: Re-use previous data here
-            pf.form_subdomain_data[fem.IntegralType.exterior_facet].append(ps_pf_integration_data)
-            assert(check_assumptions(ps, pf, pm))
 
-            self.micro_iter += 1
-            self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
-            f = self.fraction_macro_step
-            sd.net_ext_sol[pf].x.array[:] = (1-f)*self.ext_sol_tn[pf].x.array[:] + \
-                    f*self.ext_sol_array_tnp1[:]
-            sd.net_ext_flux[pf].x.array[:] = (1-f)*self.ext_flux_tn[pf].x.array[:] + \
-                    f*self.ext_flux_array_tnp1[:]
+        for p, p_ext in [(pm, pf), (pf, pm)]:
+            p.finalize_activation()
+            p.find_gamma(p_ext)#TODO: Re-use previous data here
 
-            pf.instantiate_forms()
+        self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
+        f = self.fraction_macro_step
+        sd.net_ext_sol[pf].x.array[:] = (1-f)*self.ext_sol_tn[pf].x.array[:] + \
+                f*self.ext_sol_array_tnp1[:]
+        sd.net_ext_flux[pf].x.array[:] = (1-f)*self.ext_flux_tn[pf].x.array[:] + \
+                f*self.ext_flux_array_tnp1[:]
+
+        pf.form_subdomain_data[fem.IntegralType.exterior_facet].append(ps_pf_integration_data)
+        assert(check_assumptions(ps, pf, pm))
+
+        pf.instantiate_forms()
+        pf.pre_assemble()
+        if not(self.chimera_off):
             self.instantiate_forms(pm)
-            for p in [pm, pf]:
-                p.pre_assemble()
-
+            pm.pre_assemble()
             cd.non_linear_solve()
-
-            self.micro_post_iterate()
             interpolate_solution_to_inactive(pf,pm)
-            self.writepos(case="micro")
-            pf.set_activation(fast_subproblem_els, finalize=False)
+        else:
+            pf.non_linear_solve()
+            local_ext_dofs = pm.ext_nodal_activation[pf].nonzero()[0]
+            local_ext_dofs = local_ext_dofs[:np.searchsorted(local_ext_dofs, pm.domain.topology.index_map(0).size_local)]
+            mhs_fenicsx_cpp.interpolate_cg1_affine(pf.u._cpp_object,
+                                                   pm.u._cpp_object,
+                                                   np.arange(pf.cell_map.size_local),
+                                                   local_ext_dofs,
+                                                   pm.dof_coords[local_ext_dofs],
+                                                   1e-6)
+
 
     def writepos(self,case="macro",extra_funs=[]):
         if not(self.do_writepos):
@@ -141,7 +142,8 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
     def __init__(self,slow_problem:Problem, moving_problem : Problem,
                  writepos=True,
                  max_nr_iters=25,max_ls_iters=5,
-                 do_predictor=False):
+                 do_predictor=False,
+                 chimera_always_on=True):
         self.pm = moving_problem
         super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, do_predictor, compile_forms=False)
         self.plist.append(self.pm)
@@ -149,52 +151,60 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
         self.compile_forms()
         self.quadrature_degree = 2 # Gamma Chimera
         self.name = "semi_monolithic_chimera_substepper"
-        self.chimera_driver = MonolithicRRDriver(self.pf, self.pm,
-                                                 quadrature_degree=self.quadrature_degree)
+        chimera_post_init(self, chimera_always_on)
 
     def pre_loop(self, prepare_fast_problem=False):
         super().pre_loop(prepare_fast_problem)
         self.pm.set_dt(self.pf.dt.value)
 
-    def micro_post_iterate(self):
-        chimera_micro_post_iterate(self.pf, self.pm)
+    def micro_pre_iterate(self):
+        chimera_micro_pre_iterate(self)
 
-    def micro_steps(self):
+    def micro_post_iterate(self):
+        chimera_micro_post_iterate(self)
+
+    def micro_step(self):
         (ps,pf,pm) = plist = (self.ps,self.pf,self.pm)
         cd = self.chimera_driver
+        forced_time_derivative = (pf.time - self.t0_macro_step) < 1e-7
+        pm.intersect_problem(pf, finalize=False)
+        for p in [pm, pf]:
+            p.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
+        pm.intersect_problem(pf, finalize=False)
+        self.fast_subproblem_els = pf.active_els_func.x.array.nonzero()[0]
 
-        self.micro_iter = 0
-        while self.micro_iter < (self.num_micro_steps - 1):
-            forced_time_derivative = (self.micro_iter==0)
-            pm.intersect_problem(pf, finalize=False)
-            for p in [pm, pf]:
-                p.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
-            pm.intersect_problem(pf, finalize=False)
-            fast_subproblem_els = pf.active_els_func.x.array.nonzero()[0]
+        if not(self.chimera_off):
             pf.subtract_problem(pm, finalize=False)# Can I finalize here?
-            for p, p_ext in [(pm, pf), (pf, pm)]:
-                p.finalize_activation()
-                p.find_gamma(p_ext)#TODO: Re-use previous data here
-            assert(check_assumptions(ps, pf, pm))
 
-            self.micro_iter += 1
-            self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
-            f = self.fraction_macro_step
-            self.fast_dirichlet_tcon.g.x.array[self.gamma_dofs_fast] = \
-                    (1-f)*ps.u_prev.x.array[self.gamma_dofs_fast] + \
-                    f*ps.u.x.array[self.gamma_dofs_fast]
+        for p, p_ext in [(pm, pf), (pf, pm)]:
+            p.finalize_activation()
+            p.find_gamma(p_ext)#TODO: Re-use previous data here
+        assert(check_assumptions(ps, pf, pm))
 
-            self.instantiate_forms(pf)
+        self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
+        f = self.fraction_macro_step
+        self.fast_dirichlet_tcon.g.x.array[self.gamma_dofs_fast] = \
+                (1-f)*ps.u_prev.x.array[self.gamma_dofs_fast] + \
+                f*ps.u.x.array[self.gamma_dofs_fast]
+
+        self.instantiate_forms(pf)
+        pf.pre_assemble()
+        if not(self.chimera_off):
             self.instantiate_forms(pm)
-            for p in [pm, pf]:
-                p.pre_assemble()
+            pm.pre_assemble()
 
             cd.non_linear_solve()
-
-            self.micro_post_iterate()
             interpolate_solution_to_inactive(pf,pm)
-            self.writepos(case="micro")
-            pf.set_activation(fast_subproblem_els, finalize=False)
+        else:
+            pf.non_linear_solve()
+            local_ext_dofs = pm.ext_nodal_activation[pf].nonzero()[0]
+            local_ext_dofs = local_ext_dofs[:np.searchsorted(local_ext_dofs, pm.domain.topology.index_map(0).size_local)]
+            mhs_fenicsx_cpp.interpolate_cg1_affine(pf.u._cpp_object,
+                                                   pm.u._cpp_object,
+                                                   np.arange(pf.cell_map.size_local),
+                                                   local_ext_dofs,
+                                                   pm.dof_coords[local_ext_dofs],
+                                                   1e-6)
 
     def monolithic_step(self):
         (ps, pf, pm) = (self.ps, self.pf, self.pm)
@@ -349,3 +359,34 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
         self.writers[pf].write_function(get_funs(p),t=time)
         if not(case=="predictor"):
             self.writers[self.pm].write_function(get_funs(self.pm),t=time)
+
+
+chimera_type = typing.Union[MHSSemiMonolithicSubstepper, MHSStaggeredChimeraSubstepper]
+def chimera_post_init(substepper : chimera_type, chimera_always_on):
+    substepper.chimera_driver = MonolithicRRDriver(substepper.pf, substepper.pm,
+                                             quadrature_degree=substepper.quadrature_degree)
+    substepper.chimera_off = False
+    substepper.chimera_always_on = chimera_always_on
+
+def chimera_micro_pre_iterate(substepper : chimera_type):
+    pf = substepper.pf
+    super(type(substepper), substepper).micro_pre_iterate()
+    if not(substepper.chimera_always_on):
+        next_track = substepper.pf.source.path.get_track(pf.time)
+        if ((pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) < 0.15:
+            substepper.chimera_off = True
+        else:
+            substepper.chimera_off = False
+
+def chimera_micro_post_iterate(substepper):
+    '''
+    post_iterate of micro_step
+    TODO: Maybe refactor? Seems like ps needs the same thing
+    '''
+    (pf, pm) = (substepper.pf, substepper.pm)
+    for p in (pf, pm):
+        current_track = p.source.path.get_track(p.time)
+        dt2track_end = current_track.t1 - p.time
+        if abs(p.dt.value - dt2track_end) < 1e-9:
+            p.set_dt(dt2track_end)
+    substepper.pf.set_activation(substepper.fast_subproblem_els, finalize=False)

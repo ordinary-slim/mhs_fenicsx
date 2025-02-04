@@ -31,7 +31,7 @@ void declare_assemble_robin_robin_monolithic(nb::module_ &m) {
         const std::size_t num_points = gweights_facet.ndim() == 1 ? 1 : gweights_facet.shape(0);
         const std::size_t gdim = V_i.mesh()->geometry().dim();
         std::span<const double> _gp(gweights_facet.data(), gdim * num_points);
-        Mat A;
+        Mat A = NULL;
         assemble_robin_robin_monolithic<double>(
             A,
             set_fn(A, ADD_VALUES),

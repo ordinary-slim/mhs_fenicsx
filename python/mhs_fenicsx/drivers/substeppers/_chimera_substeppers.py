@@ -336,27 +336,27 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
         if self.do_writepos:
             self.writepos()
 
-    def writepos(self,case="macro",extra_funs=[]):
+    def writepos(self,case="macro", extra_funs=[]):
         if not(self.do_writepos):
             return
         (pf, ps) = (self.pf, self.ps)
         if not(self.writers):
             self.initialize_post()
         if case=="predictor":
-            p = ps
+            Ps = [ps]
             time = 0.0
         elif case=="micro":
-            p = pf
+            Ps = [pf]
             time = (self.macro_iter-1) + self.fraction_macro_step
         else:
-            p = ps
+            Ps = [ps, pf]
             time = (self.macro_iter-1) + self.fraction_macro_step
         get_funs = lambda p : [p.u, p.source.fem_function,p.active_els_func,p.grad_u,
                 p.u_prev,self.u_prev[p]] + list(p.gamma_nodes.values())
 
-        p.compute_gradient()
-        #print(f"time = {time}, micro_iter = {self.micro_iter}, macro_iter = {self.macro_iter}")
-        self.writers[pf].write_function(get_funs(p),t=time)
+        for p in Ps:
+            p.compute_gradient()
+            self.writers[p].write_function(get_funs(p),t=time)
         if not(case=="predictor"):
             self.writers[self.pm].write_function(get_funs(self.pm),t=time)
 

@@ -37,19 +37,26 @@ def write_gcode(params):
     with open(params["path"],'w') as f:
         f.writelines(gcode_lines)
 
-def mesh_rectangle(box,el_density):
-    nx = np.round((box[2]-box[0]) * el_density).astype(np.int32)
-    ny = np.round((box[3]-box[1]) * el_density).astype(np.int32)
-    return mesh.create_rectangle(MPI.COMM_WORLD,
-           [box[:2], box[2:]],
-           [nx, ny],
-           #mesh.CellType.quadrilateral,
-           )
-
-def get_mesh(params, els_per_radius, radius):
+def get_mesh(params, els_per_radius, radius, dim):
     el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)
     (Lx, Ly) = (params["domain_width"], params["domain_height"])
-    return mesh_rectangle([-Lx/2.0, -Ly/2.0, +Lx/2.0, +Ly/2.0], el_density)
+    Lz = params["domain_depth"] if "domain_depth" in params else 1.0
+    box = [-Lx/2.0, -Ly/2.0, 0.0, +Lx/2.0, +Ly/2.0, Lz]
+    nx = np.round((box[3]-box[0]) * el_density).astype(np.int32)
+    ny = np.round((box[4]-box[1]) * el_density).astype(np.int32)
+    nz = np.round((box[5]-box[2]) * el_density).astype(np.int32)
+    if dim==2:
+        return mesh.create_rectangle(MPI.COMM_WORLD,
+               [box[:2], box[3:5]],
+               [nx, ny],
+               #mesh.CellType.quadrilateral,
+               )
+    else:
+        return mesh.create_box(MPI.COMM_WORLD,
+               [box[:3], box[3:]],
+               [nx, ny, nz],
+               )
+
 
 def run_staggered(params, driver_type, els_per_radius, writepos=True):
     radius = params["heat_source"]["radius"]
@@ -62,7 +69,7 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
         initial_relaxation_factors=[0.5,1]
     else:
         raise ValueError("Undefined staggered driver type.")
-    big_mesh = get_mesh(params, els_per_radius, radius)
+    big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()
     macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
@@ -120,7 +127,7 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
 def run_semi_monolithic(params, els_per_radius, writepos=True):
     radius = params["heat_source"]["radius"]
     speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
-    big_mesh = get_mesh(params, els_per_radius, radius)
+    big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()
     macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
@@ -154,11 +161,10 @@ def run_semi_monolithic(params, els_per_radius, writepos=True):
 def run_reference(params, els_per_radius):
     radius = params["heat_source"]["radius"]
     speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
-    big_mesh = get_mesh(params, els_per_radius, radius)
+    big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()
     macro_params["dt"] = get_dt(params["micro_adim_dt"], radius, speed)
-    final_t = get_dt(params["macro_adim_dt"], radius, speed)*params["max_timesteps"]
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     big_p = Problem(big_mesh, macro_params, name="big")
 
@@ -168,7 +174,9 @@ def run_reference(params, els_per_radius):
     big_p.set_forms_domain()
     big_p.set_forms_boundary()
     big_p.compile_create_forms()
-    while (final_t - big_p.time) > 1e-7:
+    itime_step = 0
+    while ((itime_step < params["max_timesteps"]) and not(big_p.is_path_over())):
+        itime_step += 1
         big_p.pre_iterate()
         big_p.pre_assemble()
 

@@ -21,7 +21,7 @@ def run_staggered_RR(params, writepos=True):
     radius = params["heat_source"]["radius"]
     speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
     initial_relaxation_factors=[1.0,1.0]
-    big_mesh = get_mesh(params, els_per_radius, radius)
+    big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()
     macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
@@ -84,7 +84,7 @@ def run_hodge(params, writepos=True):
     els_per_radius = params["els_per_radius"]
     radius = params["heat_source"]["radius"]
     speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
-    big_mesh = get_mesh(params, els_per_radius, radius)
+    big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()
     macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)

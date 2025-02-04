@@ -34,11 +34,11 @@ petsc_opts_macro: {
 domain_width: 1
 domain_height: 1
 path: "Path.gcode"
-els_per_radius: 4
+els_per_radius: 16
 max_staggered_iters: 1
 
 max_timesteps: 2
-micro_adim_dt: 0.5
+micro_adim_dt: 0.25
 macro_adim_dt: 10
 
 driver_type: "robin"

@@ -171,8 +171,7 @@ def run_reference(params, els_per_radius):
     initial_condition_fun = get_initial_condition(params)
     big_p.set_initial_condition(  initial_condition_fun )
 
-    big_p.set_forms_domain()
-    big_p.set_forms_boundary()
+    big_p.set_forms()
     big_p.compile_create_forms()
     itime_step = 0
     while ((itime_step < params["max_timesteps"]) and not(big_p.is_path_over())):

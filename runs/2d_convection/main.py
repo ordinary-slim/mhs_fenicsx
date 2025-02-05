@@ -35,8 +35,7 @@ def run(case_name="case"):
     p.set_activation( active_els )
 
     p.set_initial_condition(10.0)
-    p.set_forms_domain()
-    p.set_forms_boundary()
+    p.set_forms()
     p.compile_create_forms()
     for _ in range(10):
         p.pre_iterate()

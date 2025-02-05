@@ -145,8 +145,7 @@ def run_same_mesh(run_type="_"):
 
     idx = 1
     for p in [p_left,p_right]:
-        p.set_forms_domain(subdomain_data=(idx,subdomain_data))
-        #p.set_forms_boundary()
+        p.set_forms(subdomain_data=(idx,subdomain_data))
         idx += 1
 
     res = dict()

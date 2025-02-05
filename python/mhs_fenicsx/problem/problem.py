@@ -33,6 +33,7 @@ class Problem:
         self.domain   = domain
         self.dim = self.domain.topology.dim
         self.name = name
+
         # Function spaces
         self.v       = fem.functionspace(domain, ("Lagrange", 1),)
         self.dof_coords = self.v.tabulate_dof_coordinates()
@@ -42,7 +43,8 @@ class Problem:
                                                            self.domain.basix_cell(),
                                                            0,
                                                            shape=(self.dim,)))
-        self.restriction: typing.Optional[multiphenicsx.fem.DofMapRestriction] = None
+        # Material parameters
+        self.define_materials(parameters)
 
         for dim in [self.dim, self.dim-1]:
             self.domain.topology.create_entities(dim)
@@ -57,6 +59,7 @@ class Problem:
         self.num_nodes = self.node_map.size_local + self.node_map.num_ghosts
         self.bb_tree = geometry.bb_tree(self.domain,self.dim,np.arange(self.num_cells,dtype=np.int32),padding=1e-7)
         self.bb_tree_nodes = geometry.bb_tree(self.domain,0,np.arange(self.num_nodes,dtype=np.int32),padding=1e-7)
+        self.restriction: typing.Optional[multiphenicsx.fem.DofMapRestriction] = None
         self.initialize_activation()
 
         self.u   = fem.Function(self.v, name="uh")   # Solution
@@ -122,8 +125,6 @@ class Problem:
         # Stabilization
         self.is_supg = (("supg" in parameters) and bool(parameters["supg"]))
         self.advected_el_size : typing.Optional[fem.Function] = fem.Function(self.dg0,name="supg_tau") if self.is_supg else None
-        # Material parameters
-        self.define_materials(parameters)
         # Integration
         self.quadrature_metadata = parameters["quadrature_metadata"] \
                 if "quadrature_metadata" in parameters \
@@ -144,10 +145,14 @@ class Problem:
             "is_post_initialized",
             "writers",
             ])
+        to_be_shallow_copied = set([
+            "material_to_itag",
+            ])
         to_be_deep_copied = set([
             "linear_solver_opts",
             "source",
             "dirichlet_bcs",
+            "form_subdomain_data",
             ])
         to_be_reset = set([
             "gamma_nodes",
@@ -156,7 +161,7 @@ class Problem:
             "gamma_imap_to_global_imap",
             "gamma_integration_data",
             ])
-        attributes = (set(self.__dict__.keys()) - to_be_skipped) - to_be_deep_copied
+        attributes = (set(self.__dict__.keys()) - to_be_skipped) - to_be_deep_copied - to_be_shallow_copied
         result = object.__new__(self.__class__)
         for k in attributes:
             attr = self.__dict__[k]
@@ -168,6 +173,8 @@ class Problem:
                 result.__dict__[k] = fem.Constant(self.domain, attr.value)
             else:
                 setattr(result, k, attr)
+        for k in to_be_shallow_copied:
+            setattr(result, k, self.__dict__[k].copy())
         for k in to_be_deep_copied:
             setattr(result, k, copy.deepcopy(self.__dict__[k]))
         for k in to_be_reset:
@@ -218,9 +225,12 @@ class Problem:
                 self.phase_change = (self.phase_change or material.phase_change)
 
         assert len(self.materials) > 0, "No materials defined!"
+        self.material_to_tag  = {mat: (idx+1) for idx, mat in enumerate(self.materials)}
+        self.material_to_itag = self.material_to_tag.copy()
+
         # All domain starts out covered by material #0
         self.material_id = fem.Function(self.dg0,name="material_id")
-        self.material_id.x.array[:] = 0.0
+        self.material_id.x.array.fill(1.0)# Everything initialized to first material
         # Initialize material funcs
         self.k   = fem.Function(self.dg0,name="conductivity")
         self.cp  = fem.Function(self.dg0,name="specific_heat")
@@ -237,22 +247,21 @@ class Problem:
             self.dliquid_fraction  = lambda tem : (self.smoothing_cte_phase_change/sigma_temperature)/2.0*(1 - ufl.tanh((self.smoothing_cte_phase_change/sigma_temperature)*(tem - melting_temperature))**2)
         self.set_material_funcs()
     
-    def _update_mat_at_cells(self, mat_id, cells):
-        material = self.materials[mat_id]
+    def _update_mat_at_cells(self, mat:Material, cells):
         for k, v in base_mat_to_problem.items():
-            self.__dict__[v].x.array[cells] = material.__dict__[k]
+            self.__dict__[v].x.array[cells] = mat.__dict__[k]
         if self.phase_change:
             for k, v in phase_change_mat_to_problem.items():
-                self.__dict__[v].x.array[cells] = material.__dict__[k]
+                self.__dict__[v].x.array[cells] = mat.__dict__[k]
 
-    def update_material_funcs(self,cells,new_id):
-        self.material_id.x.array[cells] = new_id
-        self._update_mat_at_cells(new_id, cells)
+    def update_material_funcs(self, cells, mat : Material):
+        self.material_id.x.array[cells] = self.material_to_tag[mat]
+        self._update_mat_at_cells(mat, cells)
 
     def set_material_funcs(self):
-        for mat_id in range(len(self.materials)):
-            cells = np.flatnonzero(abs(self.material_id.x.array-mat_id)<1e-7)
-            self._update_mat_at_cells(mat_id,cells)
+        for mat, tag in self.material_to_tag.items():
+            cells = np.flatnonzero(abs(self.material_id.x.array-tag)<1e-7)
+            self._update_mat_at_cells(mat, cells)
 
     def compute_advected_el_size(self):
         if self.advected_el_size is None:
@@ -345,9 +354,28 @@ class Problem:
         self.set_form_subdomain_data()
 
     def set_form_subdomain_data(self):
+        cell_subdomain_data = []
+        facet_subdomain_data = []
+
+        active_boundary_data = self.get_facet_integrations_entities(self.bfacets_tag.find(1))
+        active_boun_els = active_boundary_data[::2]
+        active_boun_els_mat = self.material_id.x.array[active_boun_els]
+        for mat, tag in self.material_to_tag.items():
+            # Cell data
+            mat_els_d = np.logical_and((self.material_id.x.array == tag),
+                                     self.active_els_func.x.array).nonzero()[0]
+            mat_els_d = mat_els_d[:np.searchsorted(mat_els_d, self.cell_map.size_local)]
+            cell_subdomain_data.append((self.material_to_itag[mat], mat_els_d))
+            # Facet data
+            # Find which facets have which material
+            ifacets = (active_boun_els_mat == tag).nonzero()[0]
+            indices_integration_data = np.vstack((2*ifacets, 2*ifacets+1)).reshape(-1, order='F')
+            facet_subdomain_data.append((self.material_to_itag[mat],
+                                         active_boundary_data[indices_integration_data]))
+
         self.form_subdomain_data = {
-                fem.IntegralType.cell : [(1, self.local_active_els)],
-                fem.IntegralType.exterior_facet : [(1, self.get_facet_integrations_entities(self.bfacets_tag.find(1)))],
+                fem.IntegralType.cell : cell_subdomain_data,
+                fem.IntegralType.exterior_facet : facet_subdomain_data,
                 }
 
     def update_boundary(self):
@@ -452,90 +480,92 @@ class Problem:
     def get_facet_integrations_entities(self, facet_indices):
         return get_facet_integration_entities(self.domain,facet_indices,self.active_els_func)
 
-    def set_forms_domain(self, subdomain_idx=1, argument=None):
+    def set_forms(self, material_indices={}):
         dx = ufl.Measure("dx", metadata=self.quadrature_metadata)
-        u = argument if argument is not None else self.u
+        u = self.u
         v = ufl.TestFunction(self.v)
 
-        # Conduction
-        self.a_ufl = self.k*ufl.dot(ufl.grad(u), ufl.grad(v))*dx(subdomain_idx)
+        if material_indices:
+            self.material_to_itag = material_indices
 
-        # Source term
-        if self.rhs is not None:
-            self.source.fem_function.interpolate(self.rhs)
-        self.l_ufl = self.source.fem_function*v*dx(subdomain_idx)
+        a_ufl = []
+        l_ufl = []
+        for mat, itag in self.material_to_itag.items():
+            # Conduction
+            a_ufl.append(self.k*ufl.dot(ufl.grad(u), ufl.grad(v))*dx(itag))
 
-        # Time derivative
-        time_derivative_coefficient = self.rho * self.cp
-        advection_coefficient = self.rho * self.cp
-        if self.phase_change:
-            advection_coefficient += self.rho * self.latent_heat * self.dliquid_fraction(u)
-        if not(self.is_steady):
-            self.a_ufl += time_derivative_coefficient * \
-                    (u - self.u_prev)/self.dt_func * \
-                    v * dx(subdomain_idx)
+            # Source term
+            if self.rhs is not None:
+                self.source.fem_function.interpolate(self.rhs)
+            l_ufl.append(self.source.fem_function*v*dx(itag))
+
+            # Time derivative
+            time_derivative_coefficient = self.rho * self.cp
+            advection_coefficient = self.rho * self.cp
             if self.phase_change:
-                self.a_ufl += self.rho * self.latent_heat * \
-                        (self.liquid_fraction(u) - self.liquid_fraction(self.u_prev))/self.dt_func * \
-                        v * dx(subdomain_idx)
+                advection_coefficient += self.rho * self.latent_heat * self.dliquid_fraction(u)
+            if not(self.is_steady):
+                a_ufl.append(time_derivative_coefficient * \
+                        (u - self.u_prev)/self.dt_func * \
+                        v * dx(itag))
+                if self.phase_change:
+                    a_ufl.append(self.rho * self.latent_heat * \
+                            (self.liquid_fraction(u) - self.liquid_fraction(self.u_prev))/self.dt_func * \
+                            v * dx(itag))
 
-        # Translational advection
-        has_advection = (np.linalg.norm(self.advection_speed.value) > 1e-7)
-        if has_advection:
-            advection_norm = ufl.sqrt(ufl.dot(self.advection_speed, self.advection_speed))
-            self.a_ufl += advection_coefficient*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
-            # Translational advection stabilization
-            if self.is_supg:
-                assert(self.advected_el_size is not None)
-                supg_coeff = self.advected_el_size**2 / (2 * self.advected_el_size * \
-                        time_derivative_coefficient * advection_norm + \
-                         4 * self.k)
-                if not(self.is_steady):
-                    self.a_ufl += supg_coeff * time_derivative_coefficient * \
-                            (u - self.u_prev)/self.dt_func * \
-                            advection_coefficient * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
-                    if self.phase_change:
-                        self.a_ufl += supg_coeff * self.rho * self.latent_heat * \
-                                (self.liquid_fraction(u) - self.liquid_fraction(self.u_prev))/self.dt_func * \
-                                advection_coefficient * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
-                self.a_ufl += supg_coeff * advection_coefficient * \
-                        ufl.dot(self.advection_speed,ufl.grad(u)) * \
-                        advection_coefficient * \
-                        ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
-                self.l_ufl += supg_coeff * \
-                        self.source.fem_function * \
-                        advection_coefficient * \
-                        ufl.dot(self.advection_speed,ufl.grad(v)) * dx(subdomain_idx)
+            # Translational advection
+            has_advection = (np.linalg.norm(self.advection_speed.value) > 1e-7)
+            if has_advection:
+                advection_norm = ufl.sqrt(ufl.dot(self.advection_speed, self.advection_speed))
+                a_ufl.append(advection_coefficient*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(itag))
+                # Translational advection stabilization
+                if self.is_supg:
+                    assert(self.advected_el_size is not None)
+                    supg_coeff = self.advected_el_size**2 / (2 * self.advected_el_size * \
+                            time_derivative_coefficient * advection_norm + \
+                             4 * self.k)
+                    if not(self.is_steady):
+                        a_ufl.append(supg_coeff * time_derivative_coefficient * \
+                                (u - self.u_prev)/self.dt_func * \
+                                advection_coefficient * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(itag))
+                        if self.phase_change:
+                            a_ufl.append(supg_coeff * self.rho * self.latent_heat * \
+                                    (self.liquid_fraction(u) - self.liquid_fraction(self.u_prev))/self.dt_func * \
+                                    advection_coefficient * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(itag))
+                    a_ufl.append(supg_coeff * advection_coefficient * \
+                            ufl.dot(self.advection_speed,ufl.grad(u)) * \
+                            advection_coefficient * \
+                            ufl.dot(self.advection_speed,ufl.grad(v)) * dx(itag))
+                    l_ufl.append(supg_coeff * \
+                            self.source.fem_function * \
+                            advection_coefficient * \
+                            ufl.dot(self.advection_speed,ufl.grad(v)) * dx(itag))
 
-        # Rotational advection
-        # WARNING: Stabilziation not implemented
-        has_rotational_advection = np.linalg.norm(self.angular_advection_speed.value)
-        if has_rotational_advection:
-            x = ufl.SpatialCoordinate(self.domain)
-            if self.dim < 3:
-                pointwise_advection_speed = (self.angular_advection_speed)*ufl.perp(x-self.rotation_center)
-            else:
-                pointwise_advection_speed = ufl.cross(self.angular_advection_speed,x-self.rotation_center)
-            self.a_ufl += advection_coefficient*ufl.dot(pointwise_advection_speed,ufl.grad(u))*v*dx(subdomain_idx)
+            # Rotational advection
+            # WARNING: Stabilziation not implemented
+            has_rotational_advection = np.linalg.norm(self.angular_advection_speed.value)
+            if has_rotational_advection:
+                x = ufl.SpatialCoordinate(self.domain)
+                if self.dim < 3:
+                    pointwise_advection_speed = (self.angular_advection_speed)*ufl.perp(x-self.rotation_center)
+                else:
+                    pointwise_advection_speed = ufl.cross(self.angular_advection_speed,x-self.rotation_center)
+                a_ufl.append(advection_coefficient*ufl.dot(pointwise_advection_speed,ufl.grad(u))*v*dx(itag))
 
-    def set_forms_boundary(self, subdomain_idx=1, argument=None):
-        '''
-        rn must be called after set_forms_domain
-        since a_ufl and l_ufl not initialized before
-        '''
-        #TODO: Exclude Gamma facets from this!
-        ds = ufl.Measure('ds', metadata=self.quadrature_metadata)
-        u = argument if argument is not None else self.u
-        v = ufl.TestFunction(self.v)
-        # CONVECTION
-        if self.convection_coeff is not None:
-            self.a_ufl += self.convection_coeff * \
-                          u*v* \
-                          ds(subdomain_idx)
-            T_env   = fem.Constant(self.domain, PETSc.ScalarType(self.T_env))
-            self.l_ufl += self.convection_coeff * \
-                          T_env*v* \
-                          ds(subdomain_idx)
+            # BOUNDARY
+            ds = ufl.Measure('ds', metadata=self.quadrature_metadata)
+            # CONVECTION
+            if self.convection_coeff is not None:
+                a_ufl.append(self.convection_coeff * \
+                              u*v* \
+                              ds(itag))
+                T_env   = fem.Constant(self.domain, PETSc.ScalarType(self.T_env))
+                l_ufl.append(self.convection_coeff * \
+                              T_env*v* \
+                              ds(itag))
+
+        self.a_ufl = sum(a_ufl)
+        self.l_ufl = sum(l_ufl)
 
     def compile_forms(self):
         self.r_ufl = self.a_ufl - self.l_ufl#residual

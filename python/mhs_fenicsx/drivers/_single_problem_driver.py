@@ -36,8 +36,7 @@ class SingleProblemDriver:
         self.p.set_initial_condition(params["environment_temperature"])
         if not(self.print_type.startswith("OFF")):
             self.deactivate_below_surface(set_inactive_to_powder=True)
-        self.p.set_forms_domain()
-        self.p.set_forms_boundary()
+        self.p.set_forms()
         p.compile_create_forms()
 
     def set_dt(self):
@@ -106,6 +105,5 @@ class SingleProblemDriver:
         self.p.u.x.array[self.p.just_activated_nodes] = self.p.T_dep
         self.p.u_prev.x.array[self.p.just_activated_nodes] = self.p.T_dep
         # TODO: Move this
-        self.p.set_forms_domain()
-        self.p.set_forms_boundary()
+        self.p.set_forms()
         self.p.compile_create_forms()

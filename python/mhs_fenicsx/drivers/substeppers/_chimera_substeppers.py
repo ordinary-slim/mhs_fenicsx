@@ -22,6 +22,8 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
                  chimera_always_on=True,
                  ):
         self.pm = moving_problem
+        for mat in self.pm.material_to_itag:
+            self.pm.material_to_itag[mat] += 2*len(slow_problem.materials)
         super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, do_predictor,compile_forms)
         self.plist.append(self.pm)
         self.quadrature_degree = 2 # Gamma Chimera
@@ -30,10 +32,8 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
 
     def compile_forms(self):
         ps, pm = (self.ps, self.pm)
-        self.integration_tag[pm] = 3
         for p in [ps, pm]:
-            p.set_forms_domain(subdomain_idx=self.integration_tag[p])
-            p.set_forms_boundary(subdomain_idx=self.integration_tag[p])
+            p.set_forms()
             r_ufl = p.a_ufl - p.l_ufl
             self.mr_ufl[p] = -r_ufl
             self.j_ufl[p]  = ufl.derivative(r_ufl, p.u)
@@ -147,7 +147,6 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
         self.pm = moving_problem
         super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, do_predictor, compile_forms=False)
         self.plist.append(self.pm)
-        self.integration_tag[self.pm] = 3
         self.compile_forms()
         self.quadrature_degree = 2 # Gamma Chimera
         self.name = "semi_monolithic_chimera_substepper"

@@ -28,7 +28,8 @@ class MHSSubstepper(ABC):
         self.max_ls_iters = max_ls_iters
         self.do_predictor = do_predictor
         self.mr_ufl, self.j_ufl, self.mr_compiled, self.j_compiled = {}, {}, {}, {}
-        self.integration_tag = {ps:1, pf:2}
+        for mat in pf.material_to_itag:
+            pf.material_to_itag[mat] += len(ps.materials)
         if compile_forms:
             self.compile_forms()
     
@@ -39,8 +40,6 @@ class MHSSubstepper(ABC):
     def instantiate_forms(self, p):
         p.j_ufl, p.mr_ufl = (self.j_ufl[p], self.mr_ufl[p])
         p.j_compiled, p.mr_compiled = (self.j_compiled[p], self.mr_compiled[p])
-        p.form_subdomain_data = {fem.IntegralType.cell:[(self.integration_tag[p], p.local_active_els)],
-                                  fem.IntegralType.exterior_facet:[(self.integration_tag[p], p.get_facet_integrations_entities(p.bfacets_tag.find(1)))]}
         p.instantiate_forms()
 
     def __del__(self):
@@ -199,8 +198,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
     def compile_forms(self):
         (ps,pf) = (self.ps,self.pf)
         for p in self.plist:
-            p.set_forms_domain(subdomain_idx=self.integration_tag[p])
-            p.set_forms_boundary(subdomain_idx=self.integration_tag[p])
+            p.set_forms()
             r_ufl = p.a_ufl - p.l_ufl
             self.mr_ufl[p] = -r_ufl
             self.j_ufl[p]  = ufl.derivative(r_ufl, p.u)
@@ -270,8 +268,8 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 
     def instantiate_monolithic_forms(self):
         (ps, pf) = (self.ps, self.pf)
-        cell_subdomain_data = [(self.integration_tag[p], p.local_active_els) for p in  [ps, pf]]
-        facet_subdomain_data = [(self.integration_tag[p], p.get_facet_integrations_entities(p.bfacets_tag.find(1))) for p in  [ps, pf]]
+        cell_subdomain_data = [subdomain for p in [ps, pf] for subdomain in p.form_subdomain_data[fem.IntegralType.cell]]
+        facet_subdomain_data = [subdomain for p in [ps, pf] for subdomain in p.form_subdomain_data[fem.IntegralType.exterior_facet]]
         form_subdomain_data = {fem.IntegralType.cell:cell_subdomain_data,
                                fem.IntegralType.exterior_facet:facet_subdomain_data}
         rcoeffmap, rconstmap = get_identity_maps(self.mr_mono_ufl)
@@ -419,8 +417,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
 
     def compile_forms(self):
         ps = self.ps
-        ps.set_forms_domain(subdomain_idx=self.integration_tag[ps])
-        ps.set_forms_boundary(subdomain_idx=self.integration_tag[ps])
+        ps.set_forms()
         r_ufl = ps.a_ufl - ps.l_ufl
         self.mr_ufl[ps] = -r_ufl
         self.j_ufl[ps]  = ufl.derivative(r_ufl, ps.u)

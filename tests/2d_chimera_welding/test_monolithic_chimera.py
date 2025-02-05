@@ -45,14 +45,13 @@ def main(input_file, writepos=True):
     driver = MonolithicRRDriver(p_fixed, p_moving, quadrature_degree=2)
 
     for p in [p_fixed, p_moving]:
-        p.set_forms_domain()
-        p.set_forms_boundary()
+        p.set_forms()
         p.compile_forms()
 
     for _ in range(max_temporal_iters):
         for p in [p_fixed, p_moving]:
             p.pre_iterate()
-        physical_actival_els = p_fixed.local_active_els
+        physical_active_els = p_fixed.local_active_els
         p_fixed.subtract_problem(p_moving, finalize=True)
         p_moving.find_gamma(p_fixed)
 
@@ -72,7 +71,7 @@ def main(input_file, writepos=True):
             p.post_iterate()
             if writepos:
                 p.writepos(extra_funcs=extra_funs[p])
-        p_fixed.set_activation(physical_actival_els)
+        p_fixed.set_activation(physical_active_els)
     return p_fixed, p_moving
 
 def test_monolothic_chimera_2d_welding():

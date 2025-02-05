@@ -163,7 +163,7 @@ def run(dim, els_side, el_type, writepos=False):
 
     neumann_facets = {}
     for p, marker in zip([p_left, p_right], [left_marker_neumann, right_marker_neumann]):
-        p.set_forms_domain()
+        p.set_forms()
         # Set-up Neumann condition
         neumann_tag = 66
         neumann_facets[p] = marker(p)

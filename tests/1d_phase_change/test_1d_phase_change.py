@@ -58,7 +58,7 @@ def main(params, case_name="demo_phase_change", writepos=True):
     p = Problem(domain, params, name=case_name)
     p.set_initial_condition(p.T_env)
     f_exact = fem.Function(p.v, name="exact_sol")
-    p.set_forms_domain()
+    p.set_forms()
     # Dirichlet BC
     bfacets = mesh.locate_entities_boundary(domain, p.dim-1, lambda x: np.full(x.shape[1], True, dtype=bool))
     bc = fem.dirichletbc(f_exact, fem.locate_dofs_topological(p.v, p.dim-1, bfacets))

@@ -213,8 +213,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
     def compile_forms(self):
         (pd,pn) = plist = (self.p_dirichlet,self.p_neumann)
         for p in plist:
-            p.set_forms_domain()
-            p.set_forms_boundary()
+            p.set_forms()
         self.set_neumann_interface()
         for p in plist:
             p.compile_forms()
@@ -396,8 +395,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
     def compile_forms(self):
         (p1,p2) = plist = (self.p1,self.p2)
         for p in plist:
-            p.set_forms_domain()
-            p.set_forms_boundary()
+            p.set_forms()
             self.set_robin(p)
             p.compile_forms()
 

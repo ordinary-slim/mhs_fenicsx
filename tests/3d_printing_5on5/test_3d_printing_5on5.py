@@ -35,8 +35,7 @@ def run():
     active_els = fem.locate_dofs_geometrical(problem.dg0, lambda x : x[problem.domain.topology.dim-1] < 0.01 )
     problem.set_activation(active_els)
 
-    problem.set_forms_domain()
-    problem.set_forms_boundary()
+    problem.set_forms()
     problem.compile_forms()
 
     for _ in range(5):

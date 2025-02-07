@@ -17,7 +17,7 @@ from mhs_fenicsx import gcode
 from mhs_fenicsx.problem.helpers import *
 from mhs_fenicsx.problem.heatsource import *
 from mhs_fenicsx.problem.printer import Printer
-from mhs_fenicsx.problem.material import Material, base_mat_to_problem, phase_change_mat_to_problem
+from mhs_fenicsx.problem.material import Material
 import mhs_fenicsx_cpp
 import typing
 import functools
@@ -134,8 +134,11 @@ class Problem:
         self.set_linear_solver(parameters["petsc_opts"] if "petsc_opts" in parameters else None)
 
     def __del__(self):
-        for writer in self.writers.values():
-            writer.close()
+        try:
+            for writer in self.writers.values():
+                writer.close()
+        except AttributeError:
+            pass
         self._destroy()
 
     def copy(self,name=None):
@@ -233,26 +236,13 @@ class Problem:
         self.material_id.x.array.fill(1.0)# Everything initialized to first material
         # Initialize material funcs
         self.k   = fem.Function(self.dg0,name="conductivity")
-        self.cp  = fem.Function(self.dg0,name="specific_heat")
-        self.rho = fem.Function(self.dg0,name="density")
-        if self.phase_change:
-            self.latent_heat   = fem.Function(self.dg0,name="latent_heat")
-            self.solidus_temperature  = fem.Function(self.dg0,name="solidus_temperature")
-            self.liquidus_temperature = fem.Function(self.dg0,name="liquidus_temperature")
-            self.smoothing_cte_phase_change = fem.Constant(self.domain,
-                                                           float(parameters["smoothing_cte_phase_change"]))
-            sigma_temperature   = (self.liquidus_temperature - self.solidus_temperature) / 2.0
-            melting_temperature = (self.liquidus_temperature + self.solidus_temperature) / 2.0
-            self.liquid_fraction   = lambda tem : 0.5*(ufl.tanh((self.smoothing_cte_phase_change/sigma_temperature) * (tem - melting_temperature)) + 1)
-            self.dliquid_fraction  = lambda tem : (self.smoothing_cte_phase_change/sigma_temperature)/2.0*(1 - ufl.tanh((self.smoothing_cte_phase_change/sigma_temperature)*(tem - melting_temperature))**2)
+        smoothing_cte_phase_change = parameters["smoothing_cte_phase_change"] \
+                if "smoothing_cte_phase_change" in parameters else 0.0
+        self.smoothing_cte_phase_change = fem.Constant(self.domain, np.float64(smoothing_cte_phase_change))
         self.set_material_funcs()
     
     def _update_mat_at_cells(self, mat:Material, cells):
-        for k, v in base_mat_to_problem.items():
-            self.__dict__[v].x.array[cells] = mat.__dict__[k]
-        if self.phase_change:
-            for k, v in phase_change_mat_to_problem.items():
-                self.__dict__[v].x.array[cells] = mat.__dict__[k]
+        self.k.x.array[cells] = mat.k.Ys[0]
 
     def update_material_funcs(self, cells, mat : Material):
         self.material_id.x.array[cells] = self.material_to_tag[mat]
@@ -492,7 +482,7 @@ class Problem:
         l_ufl = []
         for mat, itag in self.material_to_itag.items():
             # Conduction
-            a_ufl.append(self.k*ufl.dot(ufl.grad(u), ufl.grad(v))*dx(itag))
+            a_ufl.append(mat.k.ufl(u)*ufl.dot(ufl.grad(u), ufl.grad(v))*dx(itag))
 
             # Source term
             if self.rhs is not None:
@@ -500,17 +490,18 @@ class Problem:
             l_ufl.append(self.source.fem_function*v*dx(itag))
 
             # Time derivative
-            time_derivative_coefficient = self.rho * self.cp
-            advection_coefficient = self.rho * self.cp
+            time_derivative_coefficient = mat.rho.ufl(u) * mat.cp.ufl(u)
+            advection_coefficient = mat.rho.ufl(u) * mat.cp.ufl(u)
+            liquid_fraction, dliquid_fraction = mat.get_handles_liquid_fraction(self.domain, self.smoothing_cte_phase_change)
             if self.phase_change:
-                advection_coefficient += self.rho * self.latent_heat * self.dliquid_fraction(u)
+                advection_coefficient += mat.rho.ufl(u) * mat.L.ufl(u) * dliquid_fraction(u)
             if not(self.is_steady):
                 a_ufl.append(time_derivative_coefficient * \
                         (u - self.u_prev)/self.dt_func * \
                         v * dx(itag))
                 if self.phase_change:
-                    a_ufl.append(self.rho * self.latent_heat * \
-                            (self.liquid_fraction(u) - self.liquid_fraction(self.u_prev))/self.dt_func * \
+                    a_ufl.append(mat.rho.ufl(u) * mat.L.ufl(u) * \
+                            (liquid_fraction(u) - liquid_fraction(self.u_prev))/self.dt_func * \
                             v * dx(itag))
 
             # Translational advection
@@ -523,14 +514,14 @@ class Problem:
                     assert(self.advected_el_size is not None)
                     supg_coeff = self.advected_el_size**2 / (2 * self.advected_el_size * \
                             time_derivative_coefficient * advection_norm + \
-                             4 * self.k)
+                             4 * mat.k.ufl(u))
                     if not(self.is_steady):
                         a_ufl.append(supg_coeff * time_derivative_coefficient * \
                                 (u - self.u_prev)/self.dt_func * \
                                 advection_coefficient * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(itag))
                         if self.phase_change:
-                            a_ufl.append(supg_coeff * self.rho * self.latent_heat * \
-                                    (self.liquid_fraction(u) - self.liquid_fraction(self.u_prev))/self.dt_func * \
+                            a_ufl.append(supg_coeff * mat.rho.ufl(u) * mat.L.ufl(u) * \
+                                    (liquid_fraction(u) - liquid_fraction(self.u_prev))/self.dt_func * \
                                     advection_coefficient * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(itag))
                     a_ufl.append(supg_coeff * advection_coefficient * \
                             ufl.dot(self.advection_speed,ufl.grad(u)) * \

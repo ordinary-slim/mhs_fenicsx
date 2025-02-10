@@ -2,7 +2,7 @@ from mhs_fenicsx.problem import Problem
 from dolfinx import fem, mesh, la
 import basix.ufl
 from mhs_fenicsx_cpp import cellwise_determine_point_ownership, scatter_cell_integration_data_po, \
-                            preassemble_robin_robin_monolithic, assemble_robin_robin_monolithic, interpolate_dg0_at_facets, \
+                            MonolithicRobinRobinAssembler64, interpolate_dg0_at_facets, \
                             tabulate_gamma_quadrature
 from mhs_fenicsx.problem.helpers import get_identity_maps
 from ffcx.element_interface import map_facet_points
@@ -50,7 +50,9 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.compile_forms()
         self.Qe = dict()
         self.quadrature_points_cell = dict()
+        self.monolithicRrAssembler = dict()
         for p in (p1, p2):
+            self.monolithicRrAssembler[p] = MonolithicRobinRobinAssembler64()
             cdim = p.domain.topology.dim
             cell_type =  p.domain.topology.entity_types[-1][0].name
             facet_type = p.domain.topology.entity_types[-2][0].name
@@ -199,15 +201,15 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                             self.midpoints_gamma[p],
                                             self.gamma_cells[p_ext],
                                             np.float64(1e-6))
-        return preassemble_robin_robin_monolithic(self.Qe[p]._weights,
-                                                  p.v._cpp_object,
-                                                  p.restriction,
-                                                  p_ext.v._cpp_object,
-                                                  p_ext.restriction,
-                                                  p.gamma_integration_data[p_ext],
-                                                  self.gamma_renumbered_cells_ext[p][p_ext],
-                                                  self.gamma_dofs_cells_ext[p][p_ext],
-                                                  )
+        return self.monolithicRrAssembler[p].preassemble(self.Qe[p]._weights,
+                                                         p.v._cpp_object,
+                                                         p.restriction,
+                                                         p_ext.v._cpp_object,
+                                                         p_ext.restriction,
+                                                         p.gamma_integration_data[p_ext],
+                                                         self.gamma_renumbered_cells_ext[p][p_ext],
+                                                         self.gamma_dofs_cells_ext[p][p_ext],
+                                                         )
 
     def assemble_robin_matrix(self, p:Problem, p_ext:Problem):
         A_coupling = self.A12
@@ -224,20 +226,20 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                   p.gamma_facets_index_map[p_ext],
                                   p.gamma_imap_to_global_imap[p_ext])
 
-        assemble_robin_robin_monolithic(A_coupling, self.ext_conductivity[p]._cpp_object,
-                                        self.gamma_qpoints[p],
-                                        self.quadrature_points_cell[p],
-                                        self.Qe[p]._weights,
-                                        p.v._cpp_object,
-                                        p.restriction,
-                                        p_ext.v._cpp_object,
-                                        p_ext.restriction,
-                                        p.gamma_integration_data[p_ext],
-                                        self.gamma_qpoints_po[p][p_ext],
-                                        self.gamma_renumbered_cells_ext[p][p_ext],
-                                        self.gamma_dofs_cells_ext[p][p_ext],
-                                        self.gamma_geoms_cells_ext[p][p_ext],
-                                        )
+        self.monolithicRrAssembler[p].assemble(A_coupling, self.ext_conductivity[p]._cpp_object,
+                                               self.gamma_qpoints[p],
+                                               self.quadrature_points_cell[p],
+                                               self.Qe[p]._weights,
+                                               p.v._cpp_object,
+                                               p.restriction,
+                                               p_ext.v._cpp_object,
+                                               p_ext.restriction,
+                                               p.gamma_integration_data[p_ext],
+                                               self.gamma_qpoints_po[p][p_ext],
+                                               self.gamma_renumbered_cells_ext[p][p_ext],
+                                               self.gamma_dofs_cells_ext[p][p_ext],
+                                               self.gamma_geoms_cells_ext[p][p_ext],
+                                               )
         A_coupling.assemble()
         return A_coupling
 

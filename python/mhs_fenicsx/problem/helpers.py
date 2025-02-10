@@ -7,6 +7,7 @@ from mpi4py import MPI
 import dolfinx.fem.petsc
 import petsc4py.PETSc
 import mhs_fenicsx_cpp
+import typing
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -185,10 +186,15 @@ def get_identity_maps(form):
     constant_map = {const:const for const in form.constants()}
     return coefficient_map, constant_map
 
-def assert_gamma_tag(gamma_tag:int, p:'Problem'):
-    tag_found = False
-    for tag, _ in p.form_subdomain_data[fem.IntegralType.exterior_facet]:
-        tag_found = (gamma_tag == tag)
-        if tag_found:
+def assert_gamma_tags(gamma_tags:typing.List[int], p:'Problem'):
+    all_tags_found = True
+    for gamma_tag in gamma_tags:
+        tag_found = False
+        for tag, _ in p.form_subdomain_data[fem.IntegralType.exterior_facet]:
+            tag_found = (gamma_tag == tag)
+            if tag_found:
+                break
+        all_tags_found = all_tags_found and tag_found
+        if not(all_tags_found):
             break
-    assert(tag_found)
+    assert(all_tags_found)

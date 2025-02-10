@@ -343,13 +343,25 @@ class Problem:
         self.update_boundary()
         self.set_form_subdomain_data()
 
+    def get_facets_subdomain_data(self, facets_integration_data = None, mat2itag = None):
+        facet_subdomain_data = []
+        if facets_integration_data is None:
+            facets = self.bfacets_tag.find(1)
+            facets_integration_data = self.get_facet_integrations_entities(facets)
+        if mat2itag is None:
+            mat2itag = self.material_to_itag
+        facets_boun_els = facets_integration_data[::2]
+        facets_mats = self.material_id.x.array[facets_boun_els]
+        for mat in self.materials:
+            tag = self.material_to_tag[mat]
+            ifacets = (facets_mats == tag).nonzero()[0]
+            indices_integration_data = np.vstack((2*ifacets, 2*ifacets+1)).reshape(-1, order='F')
+            facet_subdomain_data.append((mat2itag[mat],
+                                         facets_integration_data[indices_integration_data]))
+        return facet_subdomain_data
+
     def set_form_subdomain_data(self):
         cell_subdomain_data = []
-        facet_subdomain_data = []
-
-        active_boundary_data = self.get_facet_integrations_entities(self.bfacets_tag.find(1))
-        active_boun_els = active_boundary_data[::2]
-        active_boun_els_mat = self.material_id.x.array[active_boun_els]
         for mat, tag in self.material_to_tag.items():
             # Cell data
             mat_els_d = np.logical_and((self.material_id.x.array == tag),
@@ -358,14 +370,11 @@ class Problem:
             cell_subdomain_data.append((self.material_to_itag[mat], mat_els_d))
             # Facet data
             # Find which facets have which material
-            ifacets = (active_boun_els_mat == tag).nonzero()[0]
-            indices_integration_data = np.vstack((2*ifacets, 2*ifacets+1)).reshape(-1, order='F')
-            facet_subdomain_data.append((self.material_to_itag[mat],
-                                         active_boundary_data[indices_integration_data]))
+
 
         self.form_subdomain_data = {
                 fem.IntegralType.cell : cell_subdomain_data,
-                fem.IntegralType.exterior_facet : facet_subdomain_data,
+                fem.IntegralType.exterior_facet : self.get_facets_subdomain_data(),
                 }
 
     def update_boundary(self):

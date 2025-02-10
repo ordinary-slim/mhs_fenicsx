@@ -1,5 +1,5 @@
 from dolfinx import fem, mesh, io
-from mhs_fenicsx.problem.helpers import indices_to_function, assert_gamma_tag
+from mhs_fenicsx.problem.helpers import indices_to_function, assert_gamma_tags
 import ufl
 import numpy as np
 from mpi4py import MPI
@@ -27,7 +27,12 @@ class StaggeredDomainDecompositionDriver(ABC):
         self.iter = -1
         self.is_chimera = not(p1.domain == p2.domain) # Different meshes
         self.active_gamma_cells = dict()
-        self.gamma_integration_tag = 4
+        assert(p1.materials == p2.materials)
+        self.gamma_subdomain_data = {p1: [], p2:[]}
+        self.gamma_integration_tags = {}
+        base_tag = 50
+        for idx, mat in enumerate(p1.materials):
+            self.gamma_integration_tags[mat] = base_tag+idx
         if self.is_chimera:
             self.midpoints_facets = dict()
             self.iid_border = dict()
@@ -38,7 +43,6 @@ class StaggeredDomainDecompositionDriver(ABC):
         for relaxation,p in zip(initial_relaxation_factors,[p1,p2]):
             if relaxation<1.0:
                 self.relaxation_coeff[p].value = relaxation
-        self.ext_conductivity = dict()
         self.ext_flux = dict()
         self.net_ext_flux = dict()
         self.ext_sol = dict()
@@ -166,15 +170,32 @@ class StaggeredDomainDecompositionDriver(ABC):
         self.gamma_dofs = dict()
         for p, p_ext in [(p1,p2),(p2,p1)]:
             self.gamma_dofs[p] = fem.locate_dofs_topological(p.v,0,p.gamma_nodes[p_ext].x.array.nonzero()[0],True)
-            p.form_subdomain_data[fem.IntegralType.exterior_facet].append((self.gamma_integration_tag,p.gamma_integration_data[p_ext]))
+            self.set_form_subdomain_data(p)
             self.l2_dot[p].set_gamma(p_ext)
         # Ext bc
         if set_bc is not None:
             #TODO: Fix this, bug prone!
             set_bc(p1,p2)
 
+    def set_form_subdomain_data(self, p):
+        if p==self.p1:
+            p_ext=self.p2
+        else:
+            p_ext=self.p1
+        self.gamma_subdomain_data[p] = []
+        gamma_boundary_data = p.gamma_integration_data[p_ext]
+        gamma_boun_els = gamma_boundary_data[::2]
+        gamma_boun_els_mat = p.material_id.x.array[gamma_boun_els]
+        for mat, tag in p.material_to_tag.items():
+            ifacets = (gamma_boun_els_mat == tag).nonzero()[0]
+            indices_integration_data = np.vstack((2*ifacets, 2*ifacets+1)).reshape(-1, order='F')
+            self.gamma_subdomain_data[p].append((self.gamma_integration_tags[mat],
+                                         gamma_boundary_data[indices_integration_data]))
+        p.form_subdomain_data[fem.IntegralType.exterior_facet].extend(p.get_facets_subdomain_data(p.gamma_integration_data[p_ext],
+                                                                                                  self.gamma_integration_tags))
+
     def assert_tag(self, p):
-        assert_gamma_tag(self.gamma_integration_tag, p)
+        assert_gamma_tags(self.gamma_integration_tags.values(), p)
 
 class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
     def __init__(self,
@@ -194,7 +215,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         (pd,pn) = plist = (self.p_dirichlet,self.p_neumann)
         for p in plist:
             # Neumann Gamma funcs
-            self.ext_conductivity[pn] = fem.Function(pn.dg0,name="ext_conduc")
+            self.ext_sol[pn] = fem.Function(pn.v,name="ext_sol")
             self.ext_flux[pn] = fem.Function(pn.dg0_vec,name="ext_grad")
             self.net_ext_flux[pn] = fem.Function(pn.dg0_vec,name="net_ext_flux")
             self.prev_ext_flux[pn] = fem.Function(pn.dg0_vec,name="prev_flux")
@@ -322,8 +343,11 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         dS = ufl.Measure('ds')
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
-        neumann_con = +ufl.inner(n,self.net_ext_flux[p])
-        p.l_ufl += neumann_con * v * dS(self.gamma_integration_tag)
+        l_ufl = []
+        for mat in p.materials:
+            neumann_con = +ufl.inner(n, mat.k.ufl(self.ext_sol[p])*self.net_ext_flux[p])
+            l_ufl.append(neumann_con * v * dS(self.gamma_integration_tags[mat]))
+        p.l_ufl += sum(l_ufl)
 
     def update_neumann_interface(self):
         (p, p_ext) = (self.p_neumann,self.p_dirichlet)
@@ -331,23 +355,23 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         p_ext.compute_gradient(cells=self.active_gamma_cells[p_ext])
         # Update functions
         if self.is_chimera:
-            interpolate_dg0_at_facets([p_ext.grad_u._cpp_object,p_ext.k._cpp_object],
-                                      [self.ext_flux[p]._cpp_object,self.ext_conductivity[p]._cpp_object],
+            interpolate_dg0_at_facets([p_ext.grad_u._cpp_object],
+                                      [self.ext_flux[p]._cpp_object],
                                       p.active_els_func._cpp_object,
                                       p.gamma_facets[p_ext]._cpp_object,
                                       self.active_gamma_cells[p],
                                       self.iid_d2n_border,
                                       p.gamma_facets_index_map[p_ext],
                                       p.gamma_imap_to_global_imap[p_ext])
+            # Update ext solution
+            # TODO: Swtich this to custom interpolate function
+            self.ext_sol[p].interpolate_nonmatching(p_ext.u,
+                                                    cells=self.gamma_cells[p],
+                                                    interpolation_data=self.iid[p_ext][p])
+            self.ext_sol[p].x.scatter_forward()
         else:
             propagate_dg0_at_facets_same_mesh(p_ext, p_ext.grad_u, p, self.ext_flux[p])
-            propagate_dg0_at_facets_same_mesh(p_ext, p_ext.k, p, self.ext_conductivity[p])
-
-        # TODO: Pass this to c++
-        dim = self.ext_flux[p].function_space.value_size
-        for idx in range(dim):
-            self.ext_flux[p].x.array[self.active_gamma_cells[p]*dim+idx] *= self.ext_conductivity[p].x.array[self.active_gamma_cells[p]]
-        self.ext_flux[p].x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+            self.ext_sol[p].x.array[:] = p_ext.u.x.array[:]
 
         self.net_ext_flux[p].x.array[:] = self.ext_flux[p].x.array[:]
         if self.relaxation_coeff[p].value < 1.0:
@@ -385,7 +409,6 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         for p in plist:
             self.ext_flux[p] = fem.Function(p.dg0_vec,name="ext_grad")
             self.net_ext_flux[p] = fem.Function(p.dg0_vec,name="net_ext_flux")
-            self.ext_conductivity[p] = fem.Function(p.dg0,name="ext_conduc")
             self.ext_sol[p] = fem.Function(p.v,name="ext_sol")
             self.net_ext_sol[p] = fem.Function(p.v,name="net_ext_sol")
             self.prev_ext_flux[p] = fem.Function(p.dg0_vec,name="prev_ext_grad")
@@ -466,9 +489,15 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         v = ufl.TestFunction(p.v)
         n = ufl.FacetNormal(p.domain)
         (u, v) = (p.u,ufl.TestFunction(p.v))
-        p.a_ufl += + self.dirichlet_coeff[p] * u * v * dS(self.gamma_integration_tag)
-        robin_con = self.dirichlet_coeff[p]*self.net_ext_sol[p] + ufl.inner(n,self.net_ext_flux[p])
-        p.l_ufl += robin_con * v * dS(self.gamma_integration_tag)
+        a_ufl = []
+        l_ufl = []
+        for mat in p.materials:
+            a_ufl.append(+ self.dirichlet_coeff[p] * u * v * dS(self.gamma_integration_tags[mat]))
+            robin_con = self.dirichlet_coeff[p]*self.net_ext_sol[p] + \
+                    mat.k.ufl(self.net_ext_sol[p]) * ufl.inner(n, self.net_ext_flux[p])
+            l_ufl.append(robin_con * v * dS(self.gamma_integration_tags[mat]))
+        p.a_ufl += sum(a_ufl)
+        p.l_ufl += sum(l_ufl)
 
     def update_robin(self,p):
         if p==self.p1:
@@ -479,10 +508,8 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         p_ext.compute_gradient(cells=self.active_gamma_cells[p_ext])
         if self.is_chimera:
             # Update flux
-            interpolate_dg0_at_facets([p_ext.grad_u._cpp_object,
-                                       p_ext.k._cpp_object],
-                                      [self.ext_flux[p]._cpp_object,
-                                       self.ext_conductivity[p]._cpp_object],
+            interpolate_dg0_at_facets([p_ext.grad_u._cpp_object],
+                                      [self.ext_flux[p]._cpp_object],
                                       p.active_els_func._cpp_object,
                                       p.gamma_facets[p_ext]._cpp_object,
                                       self.active_gamma_cells[p],
@@ -491,20 +518,13 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
                                       p.gamma_imap_to_global_imap[p_ext])
             # Update ext solution
             self.ext_sol[p].interpolate_nonmatching(p_ext.u,
-                                                      cells=self.gamma_cells[p],
-                                                      interpolation_data=self.iid[p_ext][p])
+                                                    cells=self.gamma_cells[p],
+                                                    interpolation_data=self.iid[p_ext][p])
             self.ext_sol[p].x.scatter_forward()
         else:
             propagate_dg0_at_facets_same_mesh(p_ext, p_ext.grad_u, p, self.ext_flux[p])
-            propagate_dg0_at_facets_same_mesh(p_ext, p_ext.k, p, self.ext_conductivity[p])
             # If this is expensive, consider `self.ext_sol[p] = p_ext.u`
             self.ext_sol[p].x.array[:] = p_ext.u.x.array[:]
-
-        # Compute flux
-        bsize = self.ext_flux[p].function_space.value_size
-        for idx in range(bsize):
-            self.ext_flux[p].x.array[self.active_gamma_cells[p]*bsize+idx] *= self.ext_conductivity[p].x.array[self.active_gamma_cells[p]]
-        self.ext_flux[p].x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
 
         self.net_ext_sol[p].x.array[:] = self.ext_sol[p].x.array[:]
         self.net_ext_flux[p].x.array[:] = self.ext_flux[p].x.array[:]

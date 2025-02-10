@@ -14,7 +14,14 @@ class Material:
             self.L   = to_piecewise_linear(params["phase_change"]["latent_heat"])
             self.T_s = Constant(params["phase_change"]["solidus_temperature"])
             self.T_l = Constant(params["phase_change"]["liquidus_temperature"])
-
+        all_scalars = []
+        for key in self.__dict__.keys():
+            attr = self.__dict__[key]
+            if isinstance(attr, Constant):
+                all_scalars.append(np.array(attr.value, np.float64))
+            elif isinstance(attr, PiecewiseLinearProperty):
+                all_scalars.append(attr.Ys)
+        self._all_scalars = tuple(np.hstack(all_scalars, dtype=np.float64))
 
     def get_handles_liquid_fraction(self, domain, smoothing_cte):
         liquid_fraction, dliquid_fraction = lambda tem : 0.0, lambda tem : 0.0
@@ -26,6 +33,14 @@ class Material:
             liquid_fraction   = lambda tem : 0.5*(ufl.tanh((smoothing_cte/sigma_temperature) * (tem - melting_temperature)) + 1)
             dliquid_fraction  = lambda tem : (smoothing_cte/sigma_temperature)/2.0*(1 - ufl.tanh((smoothing_cte/sigma_temperature)*(tem - melting_temperature))**2)
         return liquid_fraction, dliquid_fraction
+
+    def __eq__(self, other):
+        if isinstance(other, Material):
+            return vars(self) == vars(other)
+        return False
+
+    def __hash__(self):
+        return hash(self._all_scalars)
 
 def to_piecewise_linear(vals: typing.Union[typing.List[typing.Tuple[float, float]],
                                            float]):
@@ -41,6 +56,14 @@ class Constant:
 
     def ufl(self, domain):
         return fem.Constant(domain, self.value)
+
+    def __eq__(self, other):
+        if isinstance(other, Constant):
+            return self.value == other.value
+        return False
+
+    def __hash__(self):
+        return hash(self.value)
 
 class PiecewiseLinearProperty:
     def __init__(self, values: typing.List[typing.Tuple[float, float]]):
@@ -68,3 +91,12 @@ class PiecewiseLinearProperty:
         for i in range(1, len(conditions) - 1):
             interp = ufl.conditional(conditions[i + 1], pieces[i + 1], interp)
         return interp
+
+
+    def __eq__(self, other):
+        if isinstance(other, PiecewiseLinearProperty):
+            return ((self.Xs == other.Xs).all() and (self.Ys == other.Ys).all())
+        return False
+
+    def __hash__(self):
+        return hash(tuple(self.Ys))

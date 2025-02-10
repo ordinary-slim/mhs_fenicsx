@@ -444,11 +444,11 @@ class MHSStaggeredSubstepper(MHSSubstepper):
             time = (self.macro_iter-1) + self.fraction_macro_step
         funs = [p.u,p.gamma_nodes[p_ext],p.source.fem_function,p.active_els_func,p.grad_u,
                 p.u_prev,self.u_prev[p]]
-        for fun_dic in [sd.ext_flux,sd.net_ext_flux,sd.ext_conductivity,sd.ext_sol,
+        for fun_dic in [sd.ext_flux,sd.net_ext_flux,sd.ext_sol,
                         sd.prev_ext_flux,sd.prev_ext_sol]:
             try:
                 funs.append(fun_dic[p])
-            except (AttributeError,KeyError):
+            except (AttributeError, KeyError):
                 continue
 
         funs += extra_funs
@@ -549,13 +549,11 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         # Add a compute gradient around here!
         (p,p_ext) = (pf,ps)
         self.ext_flux_tn = {p:fem.Function(p.dg0_vec,name="ext_flux_tn")}
-        self.ext_conductivity_tn = {p:fem.Function(p.dg0,name="ext_conduc_tn")}
         p_ext.compute_gradient()
         # TODO: Are these necessary? Can I get them from my own data?
         if type(sd)==StaggeredRRDriver:
             self.ext_sol_tn = {p:fem.Function(p.v,name="ext_sol_tn")}
             propagate_dg0_at_facets_same_mesh(p_ext, p_ext.grad_u, p, self.ext_flux_tn[p])
-            propagate_dg0_at_facets_same_mesh(p_ext, p_ext.k, p, self.ext_conductivity_tn[p])
             self.ext_sol_tn[p].x.array[:] = p_ext.u.x.array[:]
         elif type(sd)==StaggeredDNDriver:
             if sd.p_dirichlet==pf:
@@ -563,9 +561,3 @@ class MHSStaggeredSubstepper(MHSSubstepper):
                 self.ext_sol_tn[p].x.array[:] = p_ext.u.x.array[:]
             else:
                 propagate_dg0_at_facets_same_mesh(p_ext, p_ext.grad_u, p, self.ext_flux_tn[p])
-                propagate_dg0_at_facets_same_mesh(p_ext, p_ext.k, p, self.ext_conductivity_tn[p])
-
-        dim = self.ext_flux_tn[p].function_space.value_size
-        for idx in range(dim):
-            self.ext_flux_tn[p].x.array[sd.active_gamma_cells[p]*dim+idx] *= self.ext_conductivity_tn[p].x.array[sd.active_gamma_cells[p]]
-        self.ext_flux_tn[p].x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)

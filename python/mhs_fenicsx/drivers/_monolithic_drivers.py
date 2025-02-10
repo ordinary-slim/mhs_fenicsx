@@ -2,7 +2,7 @@ from mhs_fenicsx.problem import Problem
 from dolfinx import fem, mesh, la
 import basix.ufl
 from mhs_fenicsx_cpp import cellwise_determine_point_ownership, scatter_cell_integration_data_po, \
-                            create_robin_robin_monolithic, assemble_robin_robin_monolithic, interpolate_dg0_at_facets, \
+                            preassemble_robin_robin_monolithic, assemble_robin_robin_monolithic, interpolate_dg0_at_facets, \
                             tabulate_gamma_quadrature
 from mhs_fenicsx.problem.helpers import get_identity_maps
 from ffcx.element_interface import map_facet_points
@@ -24,6 +24,10 @@ class MonolithicDomainDecompositionDriver:
         self.gamma_cells = {
                     p1 : p1.gamma_integration_data[p2][::2],
                     p2 : p2.gamma_integration_data[p1][::2],
+                    }
+        self.gamma_qpoints = {
+                    p1 : None,
+                    p2 : None,
                     }
         self.gamma_qpoints_po = {
                     p1 : { p2 : None },
@@ -50,7 +54,16 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
             cdim = p.domain.topology.dim
             cell_type =  p.domain.topology.entity_types[-1][0].name
             facet_type = p.domain.topology.entity_types[-2][0].name
-            self.Qe[p] = basix.ufl.quadrature_element(facet_type, degree=quadrature_degree)
+            points, weights= None, None
+            if facet_type=='point':
+                points  = np.array([[0.0]], dtype=np.float64)
+                weights = np.array([1.0], dtype=np.float64)
+                quadrature_degree = 1
+            self.Qe[p] = basix.ufl.quadrature_element(facet_type,
+                                                      points=points,
+                                                      weights=weights,
+                                                      degree=quadrature_degree,
+                                                      )
             num_gps_facet = self.Qe[p].num_entity_dofs[-1][0]
             num_facets_cell = p.domain.ufl_cell().num_facets()
             self.quadrature_points_cell[p]  = np.zeros((num_gps_facet * num_facets_cell, cdim), dtype=self.Qe[p]._points.dtype)
@@ -63,14 +76,21 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
     def compile_forms(self):
         '''TODO: Make this domain independent'''
         (p1,p2) = (self.p1,self.p2)
-        self.gamma_integration_tag = 44
+        assert(p1.materials == p2.materials)
+        base_tag = 500
+        self.gamma_integration_tags = {}
+        for idx, mat in enumerate(p1.materials):
+            self.gamma_integration_tags[mat] = base_tag+idx
         self.r_ufl, self.j_ufl = {}, {}
         self.r_compiled, self.j_compiled = {}, {}
+        ds = ufl.Measure('ds')
         for p in [p1, p2]:
             # LHS term Robin
-            ds = ufl.Measure('ds')
             (u, v) = (p.u, ufl.TestFunction(p.v))
-            a_ufl  = + u * v * ds(self.gamma_integration_tag)
+            a_ufl = []
+            for mat in p.materials:
+                a_ufl.append(+ u * v * ds(self.gamma_integration_tags[mat]))
+            a_ufl = sum(a_ufl)
             self.j_ufl[p] = ufl.derivative(a_ufl, p.u)
             # LOC CONTRIBUTION
             self.r_ufl[p] = a_ufl
@@ -79,14 +99,20 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
             self.j_compiled[p] = fem.compile_form(p.domain.comm, self.j_ufl[p],
                                                form_compiler_options={"scalar_type": np.float64})
 
+    def set_form_subdomain_data(self):
+        (p1,p2) = (self.p1,self.p2)
+        self.form_subdomain_data = {p1:[], p2:[]}
+        for p, p_ext in [(p1, p2), (p2, p1)]:
+            self.form_subdomain_data[p] = p.get_facets_subdomain_data(p.gamma_integration_data[p_ext], self.gamma_integration_tags)
+
     def instantiate_forms(self):
         (p1,p2) = (self.p1,self.p2)
         self.r_instance, self.j_instance = {}, {}
+        self.set_form_subdomain_data()
         for p, p_ext in [(p1, p2), (p2, p1)]:
             rcoeffmap, rconstmap = get_identity_maps(self.r_ufl[p])
             form_subdomain_data = {fem.IntegralType.exterior_facet :
-                                   [(self.gamma_integration_tag, p.gamma_integration_data[p_ext])]
-                                     }
+                                   self.form_subdomain_data[p]}
             self.r_instance[p] = fem.create_form(self.r_compiled[p],
                                                  [p.v],
                                                  msh=p.domain,
@@ -146,20 +172,19 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                 f.destroy()
             R_sub_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
 
-    def assemble_robin_matrix(self, p:Problem, p_ext:Problem):
+    def preassemble_robin_matrix(self, p:Problem, p_ext:Problem):
         # GENERATE QUADRATURE
         # Manually tabulate
         num_gps_facet = self.Qe[p].num_entity_dofs[-1][0]
-        gamma_qpoints = tabulate_gamma_quadrature(
+        self.gamma_qpoints[p] = tabulate_gamma_quadrature(
                 p.domain._cpp_object,
                 p.gamma_integration_data[p_ext],
                 num_gps_facet,
                 self.quadrature_points_cell[p]
                 )
-
         self.gamma_qpoints_po[p][p_ext] = \
                 cellwise_determine_point_ownership(p_ext.domain._cpp_object,
-                                                   gamma_qpoints,
+                                                   self.gamma_qpoints[p],
                                                    self.gamma_cells[p_ext],
                                                    np.float64(1e-7))
         self.gamma_renumbered_cells_ext[p][p_ext], \
@@ -174,6 +199,21 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                             self.midpoints_gamma[p],
                                             self.gamma_cells[p_ext],
                                             np.float64(1e-6))
+        return preassemble_robin_robin_monolithic(self.Qe[p]._weights,
+                                                  p.v._cpp_object,
+                                                  p.restriction,
+                                                  p_ext.v._cpp_object,
+                                                  p_ext.restriction,
+                                                  p.gamma_integration_data[p_ext],
+                                                  self.gamma_renumbered_cells_ext[p][p_ext],
+                                                  self.gamma_dofs_cells_ext[p][p_ext],
+                                                  )
+
+    def assemble_robin_matrix(self, p:Problem, p_ext:Problem):
+        A_coupling = self.A12
+        if p_ext == self.p1:
+            A_coupling = self.A21
+        A_coupling.zeroEntries()
         self.ext_conductivity[p] = fem.Function(p.dg0, name="ext_k")
         interpolate_dg0_at_facets([p_ext.k._cpp_object],
                                   [self.ext_conductivity[p]._cpp_object],
@@ -184,22 +224,22 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                   p.gamma_facets_index_map[p_ext],
                                   p.gamma_imap_to_global_imap[p_ext])
 
-        A = create_robin_robin_monolithic(self.ext_conductivity[p]._cpp_object,
-                                          gamma_qpoints,
-                                          self.quadrature_points_cell[p],
-                                          self.Qe[p]._weights,
-                                          p.v._cpp_object,
-                                          p.restriction,
-                                          p_ext.v._cpp_object,
-                                          p_ext.restriction,
-                                          p.gamma_integration_data[p_ext],
-                                          self.gamma_qpoints_po[p][p_ext],
-                                          self.gamma_renumbered_cells_ext[p][p_ext],
-                                          self.gamma_dofs_cells_ext[p][p_ext],
-                                          self.gamma_geoms_cells_ext[p][p_ext],
-                                          )
-        A.assemble()
-        return A
+        assemble_robin_robin_monolithic(A_coupling, self.ext_conductivity[p]._cpp_object,
+                                        self.gamma_qpoints[p],
+                                        self.quadrature_points_cell[p],
+                                        self.Qe[p]._weights,
+                                        p.v._cpp_object,
+                                        p.restriction,
+                                        p_ext.v._cpp_object,
+                                        p_ext.restriction,
+                                        p.gamma_integration_data[p_ext],
+                                        self.gamma_qpoints_po[p][p_ext],
+                                        self.gamma_renumbered_cells_ext[p][p_ext],
+                                        self.gamma_dofs_cells_ext[p][p_ext],
+                                        self.gamma_geoms_cells_ext[p][p_ext],
+                                        )
+        A_coupling.assemble()
+        return A_coupling
 
     def pre_assemble(self):
         (p1,p2) = (self.p1,self.p2)
@@ -210,9 +250,11 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.instantiate_forms()
         mr_instance = [p1.mr_instance, p2.mr_instance]
 
-        # Coupling matrices can be assembled directly since they won't change
-        self.A12 = self.assemble_robin_matrix(p1, p2)
-        self.A21 = self.assemble_robin_matrix(p2, p1)
+        # TODO: Efficient structure needed
+        self.A12 = self.preassemble_robin_matrix(p1, p2)
+        self.A21 = self.preassemble_robin_matrix(p2, p1)
+        self.assemble_robin_matrix(p1, p2)
+        self.assemble_robin_matrix(p2, p1)
 
         self.L = PETSc.Vec().createNest([p1.L, p2.L])
         self.A = PETSc.Mat().createNest([[p1.A, self.A12], [self.A21, p2.A]])
@@ -245,6 +287,9 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         (p1,p2) = (self.p1,self.p2)
         for p in [p1, p2]:
             p.assemble_jacobian(finalize=False)
+        # Could move this to `assemble_residual`
+        self.assemble_robin_matrix(p1, p2)
+        self.assemble_robin_matrix(p2, p1)
         self.contribute_to_diagonal_blocks()
         J_mat.assemble()
 

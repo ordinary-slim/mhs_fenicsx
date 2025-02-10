@@ -68,8 +68,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
             p.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
         self.fast_subproblem_els = pf.active_els_func.x.array.nonzero()[0]
         pm.intersect_problem(pf, finalize=False)
-        ps_pf_integration_data = pf.form_subdomain_data[fem.IntegralType.exterior_facet][-1]
-        assert(ps_pf_integration_data[0] == sd.gamma_integration_tag)
+        sd.assert_tag(pf)
 
         if not(self.chimera_off):
             pf.subtract_problem(pm, finalize=False)# Can I finalize here?
@@ -85,7 +84,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
         sd.net_ext_flux[pf].x.array[:] = (1-f)*self.ext_flux_tn[pf].x.array[:] + \
                 f*self.ext_flux_array_tnp1[:]
 
-        pf.form_subdomain_data[fem.IntegralType.exterior_facet].append(ps_pf_integration_data)
+        pf.form_subdomain_data[fem.IntegralType.exterior_facet].extend(sd.gamma_subdomain_data[pf])
         assert(check_assumptions(ps, pf, pm))
 
         pf.instantiate_forms()

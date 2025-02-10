@@ -98,6 +98,77 @@ inline auto set_fn(Mat A, InsertMode mode)
 }
 
 template <dolfinx::scalar T>
+void preassemble_robin_robin_monolithic(
+    Mat& A,
+    std::span<const T> gweights_facet,
+    const dolfinx::fem::FunctionSpace<double>& V_i,
+    const multiphenicsx::fem::DofMapRestriction& restriction_i,
+    const dolfinx::fem::FunctionSpace<double>& V_j,
+    const multiphenicsx::fem::DofMapRestriction& restriction_j,
+    std::span<const std::int32_t> gamma_integration_data_i,
+    std::span<const int> renumbering_cells_po_mesh_j,
+    std::span<const std::int64_t> _dofs_cells_mesh_j)
+{
+  auto index_map_i = restriction_i.index_map;
+  auto index_map_j = restriction_j.index_map;
+  int bs_i = restriction_i.index_map_bs();
+  int bs_j = restriction_j.index_map_bs();
+
+  auto mesh_i = V_i.mesh();
+  auto element_i = V_i.element()->basix_element();
+  const std::size_t tdim = mesh_i->topology()->dim();
+
+  auto fcell_type_i = basix::cell::sub_entity_type(element_i.cell_type(), tdim-1, 0);
+  size_t num_gps_facet = gweights_facet.size();
+
+  auto con_v_i = restriction_i.dofmap()->map();
+  auto con_v_j = restriction_j.dofmap()->map();
+  size_t num_dofs_cell_i = con_v_i.extent(1);
+  size_t num_dofs_cell_j = con_v_j.extent(1);
+  const size_t num_dofs_facet_i = basix::cell::num_sub_entities(fcell_type_i, 0);
+  size_t num_diff_cells_j = *std::max_element(renumbering_cells_po_mesh_j.begin(),
+                                              renumbering_cells_po_mesh_j.end());
+  MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<const std::int64_t,
+    MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>> dofs_cells_mesh_j(
+        _dofs_cells_mesh_j.data(), num_diff_cells_j, num_dofs_cell_j);
+
+
+  std::vector<int> facet_dofs_i(num_dofs_facet_i);
+  std::vector<std::int64_t> gfacet_dofs_i(num_dofs_facet_i);
+  std::vector<std::int64_t> gdofs_j(num_dofs_cell_j);
+
+  auto sp = CustomSparsityPattern(V_i.mesh()->comm(), {index_map_i, index_map_j}, {bs_i, bs_j});
+  auto sub_cell_con_i = basix::cell::sub_entity_connectivity(element_i.cell_type());
+  size_t num_gamma_facets = gamma_integration_data_i.size() / 2;
+  for (size_t idx = 0; idx < num_gamma_facets; ++idx) {
+    std::int32_t icell_i = gamma_integration_data_i[2*idx];
+    std::int32_t lifacet_i = gamma_integration_data_i[2*idx+1];
+    // relevant dofs are sub_entity_connectivity[fdim][lifacet_i][0]
+    const auto& lfacet_dofs = sub_cell_con_i[tdim-1][lifacet_i][0];
+    // DOFS i
+    auto dofs_cell_i = restriction_i.cell_dofs(icell_i);
+    auto udofs_cell_i = std::span(con_v_i.data_handle() + icell_i * num_dofs_cell_i, num_dofs_cell_i);
+    std::transform(lfacet_dofs.begin(), lfacet_dofs.end(), facet_dofs_i.begin(),
+                   [&dofs_cell_i](size_t index) {return dofs_cell_i[index];});
+    restriction_i.index_map->local_to_global(facet_dofs_i, gfacet_dofs_i);
+
+    for (size_t k = 0; k < num_gps_facet; ++k) {//igauss
+      size_t igp = idx*num_gps_facet + k;
+      // DOFS j
+      int icell_j = renumbering_cells_po_mesh_j[igp];
+      auto gdofs_j = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
+        dofs_cells_mesh_j, icell_j, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
+      // Update sparsity pattern
+      sp.insert(facet_dofs_i, std::span(gdofs_j.data_handle(), gdofs_j.extent(0)));
+    }
+  }
+
+  // Pre-allocate matrix
+  sp.finalize();
+  custom_create_matrix(A, sp.comm(), sp);
+}
+
+template <dolfinx::scalar T>
 void assemble_robin_robin_monolithic(
     Mat& A,
     const std::function<int(const std::int64_t,
@@ -203,8 +274,6 @@ void assemble_robin_robin_monolithic(
   // Estimate total number of contributions
   std::vector<Triplet> contribs;
   contribs.reserve(num_gps_processor * num_dofs_facet_i * num_dofs_cell_j);
-  auto sp = CustomSparsityPattern(V_i.mesh()->comm(), {index_map_i, index_map_j}, {bs_i, bs_j});
-
   auto sub_cell_con_i = basix::cell::sub_entity_connectivity(element_i.cell_type());
 
   // Buffer for coords facet cell i
@@ -223,7 +292,7 @@ void assemble_robin_robin_monolithic(
 
   auto ext_k_arr = ext_conductivity.get().x()->array();
 
-  for (int idx = 0; idx < num_gamma_facets; ++idx) {
+  for (size_t idx = 0; idx < num_gamma_facets; ++idx) {
     std::int32_t icell_i = gamma_integration_data_i[2*idx];
     std::int32_t lifacet_i = gamma_integration_data_i[2*idx+1];
     // relevant dofs are sub_entity_connectivity[fdim][lifacet_i][0]
@@ -269,6 +338,10 @@ void assemble_robin_robin_monolithic(
                std::size_t, 1, MDSPAN_IMPL_STANDARD_NAMESPACE::dynamic_extent>>
         normal(normal_b.data(), 1, gdim);
     switch (fcell_type_i) {
+      case (bct::point):
+        fdetJ = 1.0;
+        normal_b[0] = 1.0;
+        break;
       case (bct::interval):
         for (size_t i = 0; i < gdim; ++i) {
           fdetJ += pow(coord_dofs_i(lfacet_dofs[1],i) - coord_dofs_i(lfacet_dofs[0],i),2);
@@ -359,28 +432,11 @@ void assemble_robin_robin_monolithic(
           contribs.push_back( Triplet(gfacet_dofs_i[i], gdofs_j[j], v) );
         }
       }
-      // Update sparsity pattern
-      sp.insert(facet_dofs_i, std::span(gdofs_j.data_handle(), gdofs_j.extent(0)));
     }
-  }
-
-  // Pre-allocate matrix
-  sp.finalize();
-
-  std::function<int(const std::int64_t,
-      const std::int64_t,
-      const double)> _mat_add;
-
-  if (A == NULL) {
-    // Create and pre-allocate matrix
-    custom_create_matrix(A, sp.comm(), sp);
-    _mat_add = set_fn(A, ADD_VALUES);
-  } else {
-    _mat_add = mat_add;
   }
 
   // Assemble triplets
   for (Triplet& t: contribs) {
-    _mat_add(t.row, t.col, t.value);
+    mat_add(t.row, t.col, t.value);
   }
 }

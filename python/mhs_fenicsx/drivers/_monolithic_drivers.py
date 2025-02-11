@@ -51,7 +51,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.Qe = dict()
         self.quadrature_points_cell = dict()
         self.monolithicRrAssembler = dict()
-        for p in (p1, p2):
+        for p, p_ext in zip((p1, p2), (p2, p1)):
             self.monolithicRrAssembler[p] = MonolithicRobinRobinAssembler64()
             cdim = p.domain.topology.dim
             cell_type =  p.domain.topology.entity_types[-1][0].name
@@ -201,7 +201,9 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                             self.midpoints_gamma[p],
                                             self.gamma_cells[p_ext],
                                             np.float64(1e-6))
-        return self.monolithicRrAssembler[p].preassemble(self.Qe[p]._weights,
+        return self.monolithicRrAssembler[p].preassemble(self.gamma_qpoints[p],
+                                                         self.quadrature_points_cell[p],
+                                                         self.Qe[p]._weights,
                                                          p.v._cpp_object,
                                                          p.restriction,
                                                          p_ext.v._cpp_object,
@@ -209,6 +211,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                                          p.gamma_integration_data[p_ext],
                                                          self.gamma_renumbered_cells_ext[p][p_ext],
                                                          self.gamma_dofs_cells_ext[p][p_ext],
+                                                         self.gamma_geoms_cells_ext[p][p_ext],
                                                          )
 
     def assemble_robin_matrix(self, p:Problem, p_ext:Problem):
@@ -235,10 +238,8 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                                p_ext.v._cpp_object,
                                                p_ext.restriction,
                                                p.gamma_integration_data[p_ext],
-                                               self.gamma_qpoints_po[p][p_ext],
                                                self.gamma_renumbered_cells_ext[p][p_ext],
                                                self.gamma_dofs_cells_ext[p][p_ext],
-                                               self.gamma_geoms_cells_ext[p][p_ext],
                                                )
         A_coupling.assemble()
         return A_coupling
@@ -290,8 +291,6 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         for p in [p1, p2]:
             p.assemble_jacobian(finalize=False)
         # Could move this to `assemble_residual`
-        self.assemble_robin_matrix(p1, p2)
-        self.assemble_robin_matrix(p2, p1)
         self.contribute_to_diagonal_blocks()
         J_mat.assemble()
 
@@ -301,6 +300,9 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.update_solution(x)
         for p, R_sub_vec in zip([p1, p2], R_vec.getNestSubVecs()):
             p.assemble_residual(R_sub_vec)
+        # TODO: Check if expensive
+        self.assemble_robin_matrix(p1, p2)
+        self.assemble_robin_matrix(p2, p1)
         self.contribute_to_residuals(R_vec)
         R_vec.scale(-1)
 

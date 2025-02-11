@@ -188,9 +188,19 @@ class MonolithicRobinRobinAssembler {
     std::vector<std::int64_t> gfacet_dofs_i(num_dofs_facet_i);
     std::vector<std::int64_t> gdofs_j(num_dofs_cell_j);
 
+
     auto sp = CustomSparsityPattern(V_i.mesh()->comm(), {index_map_i, index_map_j}, {bs_i, bs_j});
     auto sub_cell_con_i = basix::cell::sub_entity_connectivity(element_i.cell_type());
     size_t num_gamma_facets = gamma_integration_data_i.size() / 2;
+    facet_normals.resize(3*num_gamma_facets);
+    std::fill(facet_normals.begin(), facet_normals.end(), 0.0);
+    facet_dets.resize(num_gamma_facets);
+    std::fill(facet_dets.begin(), facet_dets.end(), 0.0);
+    // Buffer for coords facet cell i
+    std::vector<U> coord_dofs_i_b(num_dofs_g_i * gdim);
+    mdspan2_t coord_dofs_i(coord_dofs_i_b.data(), num_dofs_g_i, gdim);
+
+    // LOOP 1: get sparsity pattern and pull back gps on mesh j
     for (size_t idx = 0; idx < num_gamma_facets; ++idx) {
       std::int32_t icell_i = gamma_integration_data_i[2*idx];
       std::int32_t lifacet_i = gamma_integration_data_i[2*idx+1];
@@ -203,7 +213,71 @@ class MonolithicRobinRobinAssembler {
                      [&dofs_cell_i](size_t index) {return dofs_cell_i[index];});
       restriction_i.index_map->local_to_global(facet_dofs_i, gfacet_dofs_i);
 
-      // Loop 1: get sparsity pattern and pull back gps on mesh j
+      // Get cell geometry (coordinate dofs)
+      std::array<U, 3> cell_centroid_i = {0, 0, 0};
+      std::array<U, 3> facet_centroid = {0, 0, 0};
+      auto dofs_cell_i_unrestricted = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
+          x_dofmap_i, icell_i, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
+      for (std::size_t i = 0; i < num_dofs_g_i; ++i)
+      {
+        const int pos = 3 * dofs_cell_i_unrestricted[i];
+        for (std::size_t j = 0; j < gdim; ++j) {
+          coord_dofs_i(i, j) = x_g_i[pos + j];
+          cell_centroid_i[j] += x_g_i[pos + j];
+        }
+      }
+      for (std::size_t i = 0; i < lfacet_dofs.size(); ++i) {
+        int idof = lfacet_dofs[i];
+        for (std::size_t j = 0; j < gdim; ++j)
+          facet_centroid[j] += coord_dofs_i(idof,j);
+      }
+      for (std::size_t i = 0; i < gdim; ++i) {
+        cell_centroid_i[i] /= num_dofs_g_i;
+        facet_centroid[i] /= lfacet_dofs.size();
+      }
+
+      // Compute facet det and facet normal
+      std::span<U> normal(facet_normals.data()+3*idx, 3);
+      switch (fcell_type_i) {
+        case (bct::point):
+          facet_dets[idx] = 1.0;
+          normal[0] = 1.0;
+          break;
+        case (bct::interval):
+          for (size_t i = 0; i < gdim; ++i) {
+            facet_dets[idx] += pow(coord_dofs_i(lfacet_dofs[1],i) - coord_dofs_i(lfacet_dofs[0],i),2);
+            normal[i] = coord_dofs_i(lfacet_dofs[1],i) - coord_dofs_i(lfacet_dofs[0],i);
+          }
+          std::swap(normal[0], normal[1]);
+          facet_dets[idx] = pow(facet_dets[idx], 0.5);
+          normal[0] *= -1;
+          break;
+        case (bct::triangle): case (bct::quadrilateral) : {
+          std::array<double, 3> u = {coord_dofs_i(lfacet_dofs[2],0) - coord_dofs_i(lfacet_dofs[0],0), coord_dofs_i(lfacet_dofs[2],1) - coord_dofs_i(lfacet_dofs[0],1), coord_dofs_i(lfacet_dofs[2],2) - coord_dofs_i(lfacet_dofs[0],2)};
+          std::array<double, 3> v = {coord_dofs_i(lfacet_dofs[1],0) - coord_dofs_i(lfacet_dofs[0],0), coord_dofs_i(lfacet_dofs[1],1) - coord_dofs_i(lfacet_dofs[0],1), coord_dofs_i(lfacet_dofs[1],2) - coord_dofs_i(lfacet_dofs[0],2)};
+          normal[0] = u[1] * v[2] - u[2] * v[1];
+          normal[1] = u[2] * v[0] - u[0] * v[2];
+          normal[2] = u[0] * v[1] - u[1] * v[0];
+          for (size_t i = 0; i < 3; ++i) {
+            facet_dets[idx] += pow(normal[i],2);
+          }
+          facet_dets[idx] = pow(facet_dets[idx], 0.5);
+          break;}
+        default:
+          throw std::invalid_argument("Not ready for this type of facet.");
+          break;
+      }
+      for (std::size_t i = 0; i < gdim; ++i)
+        normal[i] /= facet_dets[idx];
+      // If normal is pointing to inside the el, swap it
+      U dot = 0;
+      for (std::size_t i = 0; i < gdim; ++i)
+        dot += normal[i] * (facet_centroid[i] - cell_centroid_i[i]);
+      if (dot < 0) {
+        for (std::size_t i = 0; i < gdim; ++i)
+          normal[i] = -normal[i];
+      }
+
       for (size_t k = 0; k < num_gps_facet; ++k) {//igauss
         // SPARSITY PATTERN
         size_t igp = idx*num_gps_facet + k;
@@ -342,10 +416,6 @@ class MonolithicRobinRobinAssembler {
 
     auto sub_cell_con_i = basix::cell::sub_entity_connectivity(element_i.cell_type());
 
-    // Buffer for coords facet cell i
-    std::vector<U> coord_dofs_i_b(num_dofs_g_i * gdim);
-    mdspan2_t coord_dofs_i(coord_dofs_i_b.data(), num_dofs_g_i, gdim);
-
     assert(gamma_integration_data_i.size() % 2 == 0);
     size_t num_gamma_facets = gamma_integration_data_i.size() / 2;
     assert(num_gps_facet*num_gamma_facets == num_gps_processor);
@@ -368,75 +438,7 @@ class MonolithicRobinRobinAssembler {
       std::transform(lfacet_dofs.begin(), lfacet_dofs.end(), facet_dofs_i.begin(),
                      [&dofs_cell_i](size_t index) {return dofs_cell_i[index];});
       restriction_i.index_map->local_to_global(facet_dofs_i, gfacet_dofs_i);
-
-      // Get cell geometry (coordinate dofs)
-      std::array<U, 3> cell_centroid_i = {0, 0, 0};
-      std::array<U, 3> facet_centroid = {0, 0, 0};
-      auto dofs_cell_i_unrestricted = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
-          x_dofmap_i, icell_i, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
-      for (std::size_t i = 0; i < num_dofs_g_i; ++i)
-      {
-        const int pos = 3 * dofs_cell_i_unrestricted[i];
-        for (std::size_t j = 0; j < gdim; ++j) {
-          coord_dofs_i(i, j) = x_g_i[pos + j];
-          cell_centroid_i[j] += x_g_i[pos + j];
-        }
-      }
-      for (std::size_t i = 0; i < lfacet_dofs.size(); ++i) {
-        int idof = lfacet_dofs[i];
-        for (std::size_t j = 0; j < gdim; ++j)
-          facet_centroid[j] += coord_dofs_i(idof,j);
-      }
-      for (std::size_t i = 0; i < gdim; ++i) {
-        cell_centroid_i[i] /= num_dofs_g_i;
-        facet_centroid[i] /= lfacet_dofs.size();
-      }
-
-      // Compute facet det and facet normal
-      U fdetJ = 0.0;
-      std::array<U, 3> normal_b = {0, 0, 0};
-      MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
-          U, MDSPAN_IMPL_STANDARD_NAMESPACE::extents<
-                 std::size_t, 1, MDSPAN_IMPL_STANDARD_NAMESPACE::dynamic_extent>>
-          normal(normal_b.data(), 1, gdim);
-      switch (fcell_type_i) {
-        case (bct::point):
-          fdetJ = 1.0;
-          normal_b[0] = 1.0;
-          break;
-        case (bct::interval):
-          for (size_t i = 0; i < gdim; ++i) {
-            fdetJ += pow(coord_dofs_i(lfacet_dofs[1],i) - coord_dofs_i(lfacet_dofs[0],i),2);
-            normal_b[i] = coord_dofs_i(lfacet_dofs[1],i) - coord_dofs_i(lfacet_dofs[0],i);
-          }
-          std::swap(normal_b[0], normal_b[1]);
-          fdetJ = pow(fdetJ, 0.5);
-          normal_b[0] *= -1;
-          break;
-        case (bct::triangle): case (bct::quadrilateral) : {
-          std::array<double, 3> u = {coord_dofs_i(lfacet_dofs[2],0) - coord_dofs_i(lfacet_dofs[0],0), coord_dofs_i(lfacet_dofs[2],1) - coord_dofs_i(lfacet_dofs[0],1), coord_dofs_i(lfacet_dofs[2],2) - coord_dofs_i(lfacet_dofs[0],2)};
-          std::array<double, 3> v = {coord_dofs_i(lfacet_dofs[1],0) - coord_dofs_i(lfacet_dofs[0],0), coord_dofs_i(lfacet_dofs[1],1) - coord_dofs_i(lfacet_dofs[0],1), coord_dofs_i(lfacet_dofs[1],2) - coord_dofs_i(lfacet_dofs[0],2)};
-          normal_b =  {u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]};
-          for (size_t i = 0; i < 3; ++i) {
-            fdetJ += pow(normal_b[i],2);
-          }
-          fdetJ = pow(fdetJ, 0.5);
-          break;}
-        default:
-          throw std::invalid_argument("Not ready for this type of facet.");
-          break;
-      }
-      for (std::size_t i = 0; i < gdim; ++i)
-        normal_b[i] /= fdetJ;
-      // If normal is pointing to inside the el, swap it
-      U dot = 0;
-      for (std::size_t i = 0; i < gdim; ++i)
-        dot += normal_b[i] * (facet_centroid[i] - cell_centroid_i[i]);
-      if (dot < 0) {
-        for (std::size_t i = 0; i < gdim; ++i)
-          normal_b[i] = -normal_b[i];
-      }
-
+      std::span<U> normal(facet_normals.data()+3*idx, 3);
       for (size_t k = 0; k < num_gps_facet; ++k) {//igauss
         size_t igp = idx*num_gps_facet + k;
         int icell_j = renumbering_cells_po_mesh_j[igp];
@@ -455,14 +457,14 @@ class MonolithicRobinRobinAssembler {
             // dphi: dim, gp, basis func
             double dot_gradj_n = 0.0;
             for (int w = 0; w < tdim; ++w)
-              dot_gradj_n += normal_b[w] * dphi_j(w,igp,j);
+              dot_gradj_n += normal[w] * dphi_j(w,igp,j);
             v -= ext_k_arr[icell_i] * dot_gradj_n;
             v *= phi_i(0,
                        idx_gp_i,
                        lfacet_dofs[i],
                        0);
             v *= gweights_facet[k];
-            v *= fdetJ;
+            v *= facet_dets[idx];
             contribs.push_back( Triplet(gfacet_dofs_i[i], gdofs_j[j], v) );
           }
         }
@@ -478,6 +480,8 @@ class MonolithicRobinRobinAssembler {
   std::vector<T> phi_i_b;
   std::vector<T> phi_j_b;
   std::vector<T> dphi_j_b;
+  std::vector<T> facet_normals;
+  std::vector<T> facet_dets;
   int _nderivative_i = 0;
   int _nderivative_j = 1;
   std::array<std::size_t, 4> e_shape_j;

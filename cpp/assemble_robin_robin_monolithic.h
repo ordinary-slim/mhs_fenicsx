@@ -105,6 +105,8 @@ class MonolithicRobinRobinAssembler {
       const T, MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>;
   using mdspan3_t = MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
       T, MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 3>>;
+  using cmdspan3_t = MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+      const T, MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 3>>;
   using mdspan4_t = MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
       T, MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 4>>;
   using cmdspan4_t = MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
@@ -342,11 +344,12 @@ class MonolithicRobinRobinAssembler {
     }
   }
 
-  void assemble(
+  void assemble_jacobian(
       const std::function<int(const std::int64_t,
                               const std::int64_t,
                               const double)>& mat_add,
-      std::reference_wrapper<const dolfinx::fem::Function<T>> ext_conductivity,
+      std::span<double (*)(double)> conductivities,
+      std::span<double (*)(double)> dconductivities,
       std::span<const T> _tabulated_gauss_points_gamma,
       std::span<const T> _gauss_points_cell,
       std::span<const T> gweights_facet,
@@ -355,48 +358,129 @@ class MonolithicRobinRobinAssembler {
       const dolfinx::fem::FunctionSpace<double>& V_j,
       const multiphenicsx::fem::DofMapRestriction& restriction_j,
       std::span<const std::int32_t> gamma_integration_data_i,
+      const geometry::PointOwnershipData<U>& po_mesh_j,
       std::span<const int> renumbering_cells_po_mesh_j,
-      std::span<const std::int64_t> _dofs_cells_mesh_j)
+      std::span<const std::int64_t> _dofs_cells_mesh_j,
+      std::span<const T> _u_ext_coeffs,
+      std::span<const std::int32_t> mat_ids)
   {
+    std::vector<Triplet> contribs;
+    _assemble(true,                                              
+        contribs,                                    
+        conductivities,                              
+        dconductivities,                             
+        _tabulated_gauss_points_gamma,               
+        _gauss_points_cell,                          
+        gweights_facet,                              
+        V_i,                                         
+        restriction_i,                               
+        V_j,                                         
+        restriction_j,                               
+        gamma_integration_data_i,                    
+        po_mesh_j,                                   
+        renumbering_cells_po_mesh_j,                 
+        _dofs_cells_mesh_j,                          
+        _u_ext_coeffs,                               
+        mat_ids);                                    
+    // Assemble triplets
+    for (Triplet& t: contribs) {
+      mat_add(t.row, t.col, t.value);
+    }
+  }
+  void assemble_residual(
+      std::span<T> b,
+      std::span<double (*)(double)> conductivities,
+      std::span<double (*)(double)> dconductivities,
+      std::span<const T> _tabulated_gauss_points_gamma,
+      std::span<const T> _gauss_points_cell,
+      std::span<const T> gweights_facet,
+      const dolfinx::fem::FunctionSpace<double>& V_i,
+      const multiphenicsx::fem::DofMapRestriction& restriction_i,
+      const dolfinx::fem::FunctionSpace<double>& V_j,
+      const multiphenicsx::fem::DofMapRestriction& restriction_j,
+      std::span<const std::int32_t> gamma_integration_data_i,
+      const geometry::PointOwnershipData<U>& po_mesh_j,
+      std::span<const int> renumbering_cells_po_mesh_j,
+      std::span<const std::int64_t> _dofs_cells_mesh_j,
+      std::span<const T> _u_ext_coeffs,
+      std::span<const std::int32_t> mat_ids)
+  {
+    std::vector<Triplet> contribs;
+    _assemble(false,
+        contribs,
+        conductivities,
+        dconductivities,
+        _tabulated_gauss_points_gamma,
+        _gauss_points_cell,
+        gweights_facet,
+        V_i,
+        restriction_i,
+        V_j,
+        restriction_j,
+        gamma_integration_data_i,
+        po_mesh_j,
+        renumbering_cells_po_mesh_j,
+        _dofs_cells_mesh_j,
+        _u_ext_coeffs,
+        mat_ids);
+    // Assemble triplets (discarding column info)
+    for (Triplet& t: contribs)
+      b[t.row] += t.value;
+  }
+  private:
+  std::vector<T> phi_i_b;
+  std::vector<T> phi_j_b;
+  std::vector<T> dphi_j_b;
+  std::vector<T> facet_normals;
+  std::vector<T> facet_dets;
+  int _nderivative_i = 0;
+  int _nderivative_j = 1;
+  std::array<std::size_t, 4> e_shape_j;
 
-    // Dictionary cell type to facet cell type
-    auto index_map_i = restriction_i.index_map;
-    auto index_map_j = restriction_j.index_map;
+  void _assemble(
+      bool is_jacobian_assembly,
+      std::vector<Triplet>& contribs,
+      std::span<double (*)(double)> conductivities,
+      std::span<double (*)(double)> dconductivities,
+      std::span<const T> _tabulated_gauss_points_gamma,
+      std::span<const T> _gauss_points_cell,
+      std::span<const T> gweights_facet,
+      const dolfinx::fem::FunctionSpace<double>& V_i,
+      const multiphenicsx::fem::DofMapRestriction& restriction_i,
+      const dolfinx::fem::FunctionSpace<double>& V_j,
+      const multiphenicsx::fem::DofMapRestriction& restriction_j,
+      std::span<const std::int32_t> gamma_integration_data_i,
+      const geometry::PointOwnershipData<U>& po_mesh_j,
+      std::span<const int> renumbering_cells_po_mesh_j,
+      std::span<const std::int64_t> _dofs_cells_mesh_j,
+      std::span<const T> _u_ext_coeffs,
+      std::span<const std::int32_t> mat_ids)
+  {
 
     auto mesh_i = V_i.mesh();
     auto element_i = V_i.element()->basix_element();
     auto element_j = V_j.element()->basix_element();
 
     const std::size_t tdim = mesh_i->topology()->dim();
-    const std::size_t gdim = mesh_i->geometry().dim();
     std::shared_ptr<const common::IndexMap> cmap = mesh_i->topology()->index_map(tdim);
     auto con_cf_i = mesh_i->topology()->connectivity(tdim,tdim-1);
     assert(con_cf_i);
 
     auto fcell_type_i = basix::cell::sub_entity_type(element_i.cell_type(), tdim-1, 0);
-    size_t num_facets_cell = basix::cell::num_sub_entities(element_i.cell_type(), tdim-1);
-    size_t num_gps_facet = gweights_facet.size();
-    size_t num_gps_cell = num_gps_facet * num_facets_cell;
+    const size_t num_dofs_facet_i = basix::cell::num_sub_entities(fcell_type_i, 0);
+    size_t num_facets_cell_i = basix::cell::num_sub_entities(element_i.cell_type(), tdim-1);
+    size_t num_gps_facet_i = gweights_facet.size();
+    size_t num_gps_cell_i = num_gps_facet_i * num_facets_cell_i;
 
     assert(_tabulated_gauss_points_gamma.size() % 3 == 0);
     size_t num_gps_processor = _tabulated_gauss_points_gamma.size() / 3;
     cmdspan2_t tabulated_gauss_points_gamma(_tabulated_gauss_points_gamma.data(), num_gps_processor, 3);
-    cmdspan2_t gauss_points_cell(_gauss_points_cell.data(), num_gps_cell, tdim);
-    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
-        const std::int32_t,
-        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>
-        x_dofmap_i = mesh_i->geometry().dofmap();
-    const size_t num_dofs_g_i = x_dofmap_i.extent(1);
-    std::span<const U> x_g_i = mesh_i->geometry().x();
-    const size_t num_dofs_g_j = V_j.mesh()->geometry().dofmap().extent(1);
+    cmdspan2_t gauss_points_cell(_gauss_points_cell.data(), num_gps_cell_i, tdim);
 
     auto con_v_i = restriction_i.dofmap()->map();
     auto con_v_j = restriction_j.dofmap()->map();
-    auto unrestricted_to_restricted_i = restriction_i.unrestricted_to_restricted();
-    auto unrestricted_to_restricted_j = restriction_j.unrestricted_to_restricted();
     size_t num_dofs_cell_i = con_v_i.extent(1);
     size_t num_dofs_cell_j = con_v_j.extent(1);
-    const size_t num_dofs_facet_i = basix::cell::num_sub_entities(fcell_type_i, 0);
     auto sub_entity_connectivity = basix::cell::sub_entity_connectivity(V_i.element()->basix_element().cell_type());
 
     size_t num_diff_cells_j = *std::max_element(renumbering_cells_po_mesh_j.begin(),
@@ -404,6 +488,7 @@ class MonolithicRobinRobinAssembler {
     MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<const std::int64_t,
       MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>> dofs_cells_mesh_j(
           _dofs_cells_mesh_j.data(), num_diff_cells_j, num_dofs_cell_j);
+    cmdspan2_t u_ext_coeffs(_u_ext_coeffs.data(), num_diff_cells_j, num_dofs_cell_j);
 
     // Create buffer for local contribution
     std::vector<int> facet_dofs_i(num_dofs_facet_i);
@@ -411,21 +496,18 @@ class MonolithicRobinRobinAssembler {
     std::vector<std::int64_t> gdofs_j(num_dofs_cell_j);
 
     // Prepare mesh_j integration data
-    mdspan4_t phi_j(phi_j_b.data(), e_shape_j);
-    mdspan3_t dphi_j(dphi_j_b.data(), tdim, e_shape_j[1], e_shape_j[2]);
+    cmdspan4_t phi_j(phi_j_b.data(), e_shape_j);
+    cmdspan3_t dphi_j(dphi_j_b.data(), tdim, e_shape_j[1], e_shape_j[2]);
 
     auto sub_cell_con_i = basix::cell::sub_entity_connectivity(element_i.cell_type());
 
     assert(gamma_integration_data_i.size() % 2 == 0);
     size_t num_gamma_facets = gamma_integration_data_i.size() / 2;
-    assert(num_gps_facet*num_gamma_facets == num_gps_processor);
-    auto e_shape_i = element_i.tabulate_shape(_nderivative_i, num_gps_cell);
-    mdspan4_t phi_i(phi_i_b.data(), e_shape_i);
-
-    auto ext_k_arr = ext_conductivity.get().x()->array();
+    assert(num_gps_facet_i*num_gamma_facets == num_gps_processor);
+    auto e_shape_i = element_i.tabulate_shape(_nderivative_i, num_gps_cell_i);
+    cmdspan4_t phi_i(phi_i_b.data(), e_shape_i);
 
     // Estimate total number of contributions
-    std::vector<Triplet> contribs;
     contribs.reserve(num_gps_processor * num_dofs_facet_i * num_dofs_cell_j);
     for (size_t idx = 0; idx < num_gamma_facets; ++idx) {
       std::int32_t icell_i = gamma_integration_data_i[2*idx];
@@ -438,51 +520,65 @@ class MonolithicRobinRobinAssembler {
       std::transform(lfacet_dofs.begin(), lfacet_dofs.end(), facet_dofs_i.begin(),
                      [&dofs_cell_i](size_t index) {return dofs_cell_i[index];});
       restriction_i.index_map->local_to_global(facet_dofs_i, gfacet_dofs_i);
-      std::span<U> normal(facet_normals.data()+3*idx, 3);
-      for (size_t k = 0; k < num_gps_facet; ++k) {//igauss
-        size_t igp = idx*num_gps_facet + k;
-        int icell_j = renumbering_cells_po_mesh_j[igp];
-        size_t idx_gp_i = lifacet_i*num_gps_facet + k;
+      std::span<const U> normal(facet_normals.data()+3*idx, 3);
+      for (size_t k = 0; k < num_gps_facet_i; ++k) {//igauss
+        size_t igp = idx*num_gps_facet_i + k;
+        int renumbered_icell_j = renumbering_cells_po_mesh_j[igp];
+        int mat_cell_j = mat_ids[renumbered_icell_j];
+        size_t idx_gp_i = lifacet_i*num_gps_facet_i + k;
         // DOFS j
         auto gdofs_j = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
-          dofs_cells_mesh_j, icell_j, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
+          dofs_cells_mesh_j, renumbered_icell_j, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
+        auto u_ext_coeffs_cell_j = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
+          u_ext_coeffs, renumbered_icell_j, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
 
+        U u_ext_gp = 0.0, dn_u_ext_gp = 0.0;
+        for (size_t j = 0; j < num_dofs_cell_j; ++j) {
+          u_ext_gp += phi_j(0, igp, j, 0) * u_ext_coeffs_cell_j[j];
+          for (size_t w = 0; w < tdim; ++w)
+            dn_u_ext_gp += normal[w] * dphi_j(w,igp,j) * u_ext_coeffs_cell_j[j];
+        }
+        double conductivity = conductivities[mat_cell_j-1](u_ext_gp);
+        double dconductivity = dconductivities[mat_cell_j-1](u_ext_gp);
         // Concatenate triplets with contribs
         double v;
-        for (size_t i = 0; i < num_dofs_facet_i; ++i) {
-          for (size_t j = 0; j < num_dofs_cell_j; ++j) {
+        if (is_jacobian_assembly) {
+          for (size_t i = 0; i < num_dofs_facet_i; ++i) {
+            for (size_t j = 0; j < num_dofs_cell_j; ++j) {
+              v = 0.0;
+              // TODO Consider adding Robin coeff
+              v -= phi_j(0, igp, j, 0);
+              // dphi: dim, gp, basis func
+              double dot_gradj_n = 0.0;
+              for (size_t w = 0; w < tdim; ++w) {
+                dot_gradj_n += normal[w] * dphi_j(w,igp,j);
+              }
+              v -= conductivity * dot_gradj_n;
+              v -= dconductivity * dn_u_ext_gp;
+              v  *= phi_i(0,
+                         idx_gp_i,
+                         lfacet_dofs[i],
+                         0);
+              v *= gweights_facet[k];
+              v *= facet_dets[idx];
+              contribs.push_back( Triplet(gfacet_dofs_i[i], gdofs_j[j], v) );
+            }
+          }
+        } else {// residual assembly
+          for (size_t i = 0; i < num_dofs_facet_i; ++i) {
             v = 0.0;
-            // TODO Consider adding Robin coeff
-            v -= phi_j(0, igp, j, 0);
-            // dphi: dim, gp, basis func
-            double dot_gradj_n = 0.0;
-            for (int w = 0; w < tdim; ++w)
-              dot_gradj_n += normal[w] * dphi_j(w,igp,j);
-            v -= ext_k_arr[icell_i] * dot_gradj_n;
-            v *= phi_i(0,
+            v -= u_ext_gp;
+            v -= conductivity * dn_u_ext_gp;
+            v  *= phi_i(0,
                        idx_gp_i,
                        lfacet_dofs[i],
                        0);
             v *= gweights_facet[k];
             v *= facet_dets[idx];
-            contribs.push_back( Triplet(gfacet_dofs_i[i], gdofs_j[j], v) );
+            contribs.push_back( Triplet(facet_dofs_i[i], -1, v) );
           }
         }
       }
     }
-
-    // Assemble triplets
-    for (Triplet& t: contribs) {
-      mat_add(t.row, t.col, t.value);
-    }
   }
-  private:
-  std::vector<T> phi_i_b;
-  std::vector<T> phi_j_b;
-  std::vector<T> dphi_j_b;
-  std::vector<T> facet_normals;
-  std::vector<T> facet_dets;
-  int _nderivative_i = 0;
-  int _nderivative_j = 1;
-  std::array<std::size_t, 4> e_shape_j;
 };

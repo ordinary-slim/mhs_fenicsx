@@ -188,7 +188,7 @@ def run(dim, els_side, el_type, writepos=False):
         p.post_iterate()
 
     if writepos:
-        p_left.writepos(extra_funcs=[driver.ext_conductivity[p_left], p_left.dirichlet_bcs[0].g, middle_row_func_rl])
+        p_left.writepos(extra_funcs=[p_left.dirichlet_bcs[0].g, middle_row_func_rl])
         p_right.writepos(extra_funcs=[p_right.dirichlet_bcs[0].g, middle_row_func_lr])
 
     # 16 elems per side
@@ -267,6 +267,7 @@ if __name__=="__main__":
     if profiling:
         lp = LineProfiler()
         lp.add_module(Problem)
+        lp.add_module(MonolithicRRDriver)
         lp_wrapper = lp(run)
         run_func = lp_wrapper
     run_func(dim=dim, els_side=els_side, el_type=el_type, writepos=writepos)

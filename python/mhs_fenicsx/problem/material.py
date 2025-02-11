@@ -2,10 +2,12 @@ import numpy as np
 from dolfinx import fem
 import typing
 import ufl
+import numba
+import ctypes
 
 class Material:
     def __init__(self, params: typing.Dict):
-        self.k   = to_piecewise_linear(params["conductivity"])
+        self.k   = to_piecewise_linear(params["conductivity"], compile=True)
         self.rho = to_piecewise_linear(params["density"])
         self.cp  = to_piecewise_linear(params["specific_heat"])
         self.phase_change = False
@@ -43,12 +45,13 @@ class Material:
         return hash(self._all_scalars)
 
 def to_piecewise_linear(vals: typing.Union[typing.List[typing.Tuple[float, float]],
-                                           float]):
+                                           float],
+                        compile=False):
     if isinstance(vals, np.ScalarType):
         values = [(-1e9, np.float64(vals)), (+1e9, np.float64(vals))]
     else:
         values = vals
-    return PiecewiseLinearProperty(values)
+    return PiecewiseLinearProperty(values, compile=compile)
 
 class Constant:
     def __init__(self, value: np.float64):
@@ -66,11 +69,14 @@ class Constant:
         return hash(self.value)
 
 class PiecewiseLinearProperty:
-    def __init__(self, values: typing.List[typing.Tuple[float, float]]):
+    def __init__(self, values: typing.List[typing.Tuple[float, float]], compile=False):
         self.Xs = np.zeros(len(values), dtype=np.float64)
         self.Ys = np.zeros(len(values), dtype=np.float64)
         for idx, val in enumerate(values):
             self.Xs[idx], self.Ys[idx] = val
+        self.compiled_func = None
+        if compile:
+            self.compiled_func, self.compiled_dfunc = self._compile_interpolation()
 
     def ufl(self, u):
         """From https://github.com/jpdean/culham_thermomech/blob/dbcb95779dda4ab9185a35965e6bb3ced136b0c1/utils.py"""
@@ -100,3 +106,29 @@ class PiecewiseLinearProperty:
 
     def __hash__(self):
         return hash(tuple(self.Ys))
+
+    def _compile_interpolation(self):
+        xs, ys = self.Xs, self.Ys
+        @numba.cfunc(numba.float64(numba.float64), nopython=True)
+        def interpolate(x):
+            for i in range(len(xs) - 1):
+                if xs[i] <= x <= xs[i+1]:
+                    t = (x - xs[i]) / (xs[i+1] - xs[i])
+                    return ys[i] + t * (ys[i+1] - ys[i])
+            if x <= xs[0]:
+                return ys[0]
+            if x >= xs[-1]:
+                return ys[-1]
+            return -1e9
+        @numba.cfunc(numba.float64(numba.float64), nopython=True)
+        def dinterpolate(x):
+            for i in range(len(xs) - 1):
+                if xs[i] <= x <= xs[i+1]:
+                    return (ys[i+1] - ys[i]) / (xs[i+1] - xs[i])
+            if x <= xs[0]:
+                return (ys[1] - ys[0]) / (xs[1] - xs[0])
+            if x >= xs[-1]:
+                return (ys[-1] - ys[-2]) / (xs[-1] - xs[-2])
+            return -1e9
+        return (ctypes.cast(f.address, ctypes.c_void_p).value for f in [
+            interpolate, dinterpolate])

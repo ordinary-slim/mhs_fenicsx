@@ -35,7 +35,7 @@ domain_width: 1
 domain_height: 1
 path: "Path.gcode"
 els_per_radius: 16
-max_staggered_iters: 1
+max_staggered_iters: 2
 
 max_timesteps: 2
 micro_adim_dt: 0.25

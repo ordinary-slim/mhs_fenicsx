@@ -10,9 +10,10 @@ void templated_declare_diffmesh_utils(nb::module_ &m) {
   m.def("scatter_cell_integration_data_po",
       [](const dolfinx::geometry::PointOwnershipData<T> &po,
          const dolfinx::fem::FunctionSpace<double>& V,
-         const multiphenicsx::fem::DofMapRestriction& restriction)
+         const multiphenicsx::fem::DofMapRestriction& restriction,
+         const dolfinx::fem::Function<T>& mat_id_func)
       {
-        auto [num_diff_points_rcv, _cell_indices, _gdofs_cells, _geom_cells] = scatter_cell_integration_data_po(po, V, restriction);
+        auto [num_diff_points_rcv, _cell_indices, _mat_ids, _gdofs_cells, _geom_cells] = scatter_cell_integration_data_po(po, V, restriction, mat_id_func);
         auto con_v = restriction.dofmap()->map();
         const size_t num_dofs_cell = con_v.extent(1);
         nb::ndarray<const std::int64_t, nb::ndim<2>, nb::numpy> gdofs_cells(
@@ -22,7 +23,9 @@ void templated_declare_diffmesh_utils(nb::module_ &m) {
         nb::ndarray<const T, nb::ndim<3>, nb::numpy> geom_cells(
             _geom_cells.data(), {num_diff_points_rcv, num_dofs_g, 3});
         auto cell_indices = dolfinx_wrappers::as_nbarray(std::move(_cell_indices));
+        auto mat_ids = dolfinx_wrappers::as_nbarray(std::move(_mat_ids));
         return std::tuple(cell_indices,
+                          mat_ids,
                           gdofs_cells.cast(),
                           geom_cells.cast());
       });

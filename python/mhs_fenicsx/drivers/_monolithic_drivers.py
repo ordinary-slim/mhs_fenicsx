@@ -10,6 +10,10 @@ import numpy as np
 from petsc4py import PETSc
 import multiphenicsx, multiphenicsx.fem.petsc
 import ufl
+from mpi4py import MPI
+
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
 
 class MonolithicDomainDecompositionDriver:
     def __init__(self, sub_problem_1:Problem,sub_problem_2:Problem, quadrature_degree):
@@ -34,11 +38,10 @@ class MonolithicDomainDecompositionDriver:
                     p2 : { p1 : None },
                     }
         self.gamma_renumbered_cells_ext = { p1 : {}, p2 : {}}
+        self.gamma_mat_ids = { p1 : {}, p2 : {}}
         self.gamma_dofs_cells_ext = { p1 : {}, p2 : {}}
         self.gamma_geoms_cells_ext = { p1 : {}, p2 : {}}
-        self.gamma_iid = {p1:{}, p2:{}}
-        self.ext_conductivity = {}
-        self.midpoints_gamma = {p1:None, p2:None}
+        self.gdofs_communicators = {}
 
     def post_iterate(self):
         pass
@@ -47,7 +50,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
     def __init__(self, sub_problem_1:Problem,sub_problem_2:Problem, quadrature_degree):
         (p1,p2) = (sub_problem_1,sub_problem_2)
         super().__init__(p1, p2, quadrature_degree)
-        self.compile_forms()
+        self.set_n_compile_forms()
         self.Qe = dict()
         self.quadrature_points_cell = dict()
         self.monolithicRrAssembler = dict()
@@ -75,7 +78,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
     def __del__(self):
         self._destroy()
 
-    def compile_forms(self):
+    def set_n_compile_forms(self):
         '''TODO: Make this domain independent'''
         (p1,p2) = (self.p1,self.p2)
         assert(p1.materials == p2.materials)
@@ -93,7 +96,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
             for mat in p.materials:
                 a_ufl.append(+ u * v * ds(self.gamma_integration_tags[mat]))
             a_ufl = sum(a_ufl)
-            self.j_ufl[p] = ufl.derivative(a_ufl, p.u)
+            self.j_ufl[p] = ufl.derivative(a_ufl, u)
             # LOC CONTRIBUTION
             self.r_ufl[p] = a_ufl
             self.r_compiled[p] = fem.compile_form(p.domain.comm, self.r_ufl[p],
@@ -129,7 +132,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                                  coefficient_map=lcoeffmap,
                                                  constant_map=lconstmap)
 
-    def contribute_to_diagonal_blocks(self):
+    def assemble_robin_jacobian_p_p(self):
         (p1,p2) = (self.p1,self.p2)
         for p, p_ext in zip([p1, p2], [p2, p1]):
             p.A.assemble(PETSc.Mat.AssemblyType.FLUSH)
@@ -139,39 +142,25 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                     bcs=p.dirichlet_bcs,
                     restriction=(p.restriction, p.restriction))
 
-    def contribute_to_residuals(self, R_vec):
+    def assemble_robin_residual(self, R_vec):
         (p1,p2) = (self.p1,self.p2)
         for p, p_ext, R_sub_vec in zip([p1, p2], [p2, p1], R_vec.getNestSubVecs()):
             # RHS term Robin for residual formulation
             res = p.restriction
-            ext_res = p_ext.restriction
-            in_flux = la.create_petsc_vector(res.index_map, p.v.value_size)
-            ext_flux = la.create_petsc_vector(res.index_map, p.v.value_size)
+            robin_residual = la.create_petsc_vector(res.index_map, p.v.value_size)
 
             # EXT CONTRIBUTION
-            indices = np.array(tuple(ext_res.restricted_to_unrestricted.values()) ,dtype=np.int32)
-            indices.sort()
-            indices = indices[:ext_res.index_map.size_local]
-            indices = ext_res.dofmap.index_map.local_to_global(indices).astype(np.int32)
-            iset = PETSc.IS().createGeneral(indices, p_ext.domain.comm)
-            ext_res_sol = p_ext.u.x.petsc_vec.getSubVector(iset)
-            A_coupling = self.A12
-            if p_ext == p1:
-                A_coupling = self.A21
-            A_coupling.mult(ext_res_sol, ext_flux)
-            ext_flux.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
-            p_ext.u.x.petsc_vec.restoreSubVector(iset, ext_res_sol)
+            self.assemble_robin_residual_p_p_ext(robin_residual, p, p_ext)
 
+            # IN CONTRIBUTION
             multiphenicsx.fem.petsc.assemble_vector(
-                    in_flux,
+                    robin_residual,
                     self.r_instance[p],
                     restriction=p.restriction)
-            in_flux.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
-
-            # Add
-            R_sub_vec += - in_flux - ext_flux
-            for f in [in_flux, ext_flux]:
-                f.destroy()
+            robin_residual.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
+            # TODO: Check sign here?
+            R_sub_vec -= robin_residual
+            robin_residual.destroy()
             R_sub_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
 
     def preassemble_robin_matrix(self, p:Problem, p_ext:Problem):
@@ -190,59 +179,74 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                                    self.gamma_cells[p_ext],
                                                    np.float64(1e-7))
         self.gamma_renumbered_cells_ext[p][p_ext], \
+        self.gamma_mat_ids[p][p_ext], \
         self.gamma_dofs_cells_ext[p][p_ext], \
         self.gamma_geoms_cells_ext[p][p_ext] = \
                         scatter_cell_integration_data_po(self.gamma_qpoints_po[p][p_ext],
-                                                          p_ext.v._cpp_object,
-                                                          p_ext.restriction)
-        self.midpoints_gamma[p] = mesh.compute_midpoints(p.domain,p.domain.topology.dim-1,p.gamma_facets[p_ext].find(1))
-        self.gamma_iid[p][p_ext] = cellwise_determine_point_ownership(
-                                            p_ext.domain._cpp_object,
-                                            self.midpoints_gamma[p],
-                                            self.gamma_cells[p_ext],
-                                            np.float64(1e-6))
-        return self.monolithicRrAssembler[p].preassemble(self.gamma_qpoints[p],
-                                                         self.quadrature_points_cell[p],
-                                                         self.Qe[p]._weights,
-                                                         p.v._cpp_object,
-                                                         p.restriction,
                                                          p_ext.v._cpp_object,
                                                          p_ext.restriction,
-                                                         p.gamma_integration_data[p_ext],
-                                                         self.gamma_renumbered_cells_ext[p][p_ext],
-                                                         self.gamma_dofs_cells_ext[p][p_ext],
-                                                         self.gamma_geoms_cells_ext[p][p_ext],
+                                                         p_ext.material_id._cpp_object
                                                          )
-
-    def assemble_robin_matrix(self, p:Problem, p_ext:Problem):
-        A_coupling = self.A12
-        if p_ext == self.p1:
-            A_coupling = self.A21
-        A_coupling.zeroEntries()
-        self.ext_conductivity[p] = fem.Function(p.dg0, name="ext_k")
-        interpolate_dg0_at_facets([p_ext.k._cpp_object],
-                                  [self.ext_conductivity[p]._cpp_object],
-                                  p.active_els_func._cpp_object,
-                                  p.gamma_facets[p_ext]._cpp_object,
-                                  self.gamma_cells[p],
-                                  self.gamma_iid[p][p_ext],
-                                  p.gamma_facets_index_map[p_ext],
-                                  p.gamma_imap_to_global_imap[p_ext])
-
-        self.monolithicRrAssembler[p].assemble(A_coupling, self.ext_conductivity[p]._cpp_object,
-                                               self.gamma_qpoints[p],
-                                               self.quadrature_points_cell[p],
-                                               self.Qe[p]._weights,
-                                               p.v._cpp_object,
-                                               p.restriction,
-                                               p_ext.v._cpp_object,
-                                               p_ext.restriction,
-                                               p.gamma_integration_data[p_ext],
-                                               self.gamma_renumbered_cells_ext[p][p_ext],
-                                               self.gamma_dofs_cells_ext[p][p_ext],
-                                               )
-        A_coupling.assemble()
+        self.gdofs_communicators[p] = GdofsCommunicator(p, p_ext, self.gamma_dofs_cells_ext[p][p_ext])
+        A_coupling = self.monolithicRrAssembler[p].preassemble(self.gamma_qpoints[p],
+                                                               self.quadrature_points_cell[p],
+                                                               self.Qe[p]._weights,
+                                                               p.v._cpp_object,
+                                                               p.restriction,
+                                                               p_ext.v._cpp_object,
+                                                               p_ext.restriction,
+                                                               p.gamma_integration_data[p_ext],
+                                                               self.gamma_renumbered_cells_ext[p][p_ext],
+                                                               self.gamma_dofs_cells_ext[p][p_ext],
+                                                               self.gamma_geoms_cells_ext[p][p_ext],
+                                                               )
         return A_coupling
+
+    def assemble_robin_jacobian_p_p_ext(self, p:Problem, p_ext:Problem):
+        A = self.A12
+        if p_ext == self.p1:
+            A = self.A21
+        A.zeroEntries()
+        u_ext_coeffs = self.gdofs_communicators[p].point_to_point_comm()
+        self.monolithicRrAssembler[p].assemble_jacobian(A,
+                                                        np.array([mat.k.compiled_func for mat in p_ext.materials], np.uintp),
+                                                        np.array([mat.k.compiled_dfunc for mat in p_ext.materials], np.uintp),
+                                                        self.gamma_qpoints[p],
+                                                        self.quadrature_points_cell[p],
+                                                        self.Qe[p]._weights,
+                                                        p.v._cpp_object,
+                                                        p.restriction,
+                                                        p_ext.v._cpp_object,
+                                                        p_ext.restriction,
+                                                        p.gamma_integration_data[p_ext],
+                                                        self.gamma_qpoints_po[p][p_ext],
+                                                        self.gamma_renumbered_cells_ext[p][p_ext],
+                                                        self.gamma_dofs_cells_ext[p][p_ext],
+                                                        u_ext_coeffs,
+                                                        self.gamma_mat_ids[p][p_ext]
+                                                        )
+        A.assemble()
+
+    def assemble_robin_residual_p_p_ext(self, R_sub_vec: PETSc.Vec, p:Problem, p_ext:Problem):
+        u_ext_coeffs = self.gdofs_communicators[p].point_to_point_comm()
+        with R_sub_vec.localForm() as R_loc:
+            self.monolithicRrAssembler[p].assemble_residual(R_loc.array_w,
+                                                            np.array([mat.k.compiled_func for mat in p_ext.materials], np.uintp),
+                                                            np.array([mat.k.compiled_dfunc for mat in p_ext.materials], np.uintp),
+                                                            self.gamma_qpoints[p],
+                                                            self.quadrature_points_cell[p],
+                                                            self.Qe[p]._weights,
+                                                            p.v._cpp_object,
+                                                            p.restriction,
+                                                            p_ext.v._cpp_object,
+                                                            p_ext.restriction,
+                                                            p.gamma_integration_data[p_ext],
+                                                            self.gamma_qpoints_po[p][p_ext],
+                                                            self.gamma_renumbered_cells_ext[p][p_ext],
+                                                            self.gamma_dofs_cells_ext[p][p_ext],
+                                                            u_ext_coeffs,
+                                                            self.gamma_mat_ids[p][p_ext]
+                                                            )
 
     def pre_assemble(self):
         (p1,p2) = (self.p1,self.p2)
@@ -253,11 +257,8 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.instantiate_forms()
         mr_instance = [p1.mr_instance, p2.mr_instance]
 
-        # TODO: Efficient structure needed
         self.A12 = self.preassemble_robin_matrix(p1, p2)
         self.A21 = self.preassemble_robin_matrix(p2, p1)
-        self.assemble_robin_matrix(p1, p2)
-        self.assemble_robin_matrix(p2, p1)
 
         self.L = PETSc.Vec().createNest([p1.L, p2.L])
         self.A = PETSc.Mat().createNest([[p1.A, self.A12], [self.A21, p2.A]])
@@ -285,33 +286,33 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         p1.u.x.scatter_forward()
         p2.u.x.scatter_forward()
 
-    def assemble_jacobian(
+    def J_snes(
             self, snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat, P_mat: PETSc.Mat):
         (p1,p2) = (self.p1,self.p2)
         for p in [p1, p2]:
             p.assemble_jacobian(finalize=False)
-        # Could move this to `assemble_residual`
-        self.contribute_to_diagonal_blocks()
+        self.assemble_robin_jacobian_p_p_ext(p1, p2)
+        self.assemble_robin_jacobian_p_p_ext(p2, p1)
+        self.assemble_robin_jacobian_p_p()
         J_mat.assemble()
 
-    def assemble_residual(self, snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
+    def R_snes(self, snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
         (p1,p2) = (self.p1,self.p2)
         # TODO: Make it so that the residual is assembled into R_vec
         self.update_solution(x)
+        #self.p1.u.interpolate(lambda x : x[0])
+        #self.p2.u.interpolate(lambda x : x[0])
         for p, R_sub_vec in zip([p1, p2], R_vec.getNestSubVecs()):
             p.assemble_residual(R_sub_vec)
         # TODO: Check if expensive
-        self.assemble_robin_matrix(p1, p2)
-        self.assemble_robin_matrix(p2, p1)
-        self.contribute_to_residuals(R_vec)
+        self.assemble_robin_residual(R_vec)
         R_vec.scale(-1)
 
-
-    def obj(  # type: ignore[no-any-unimported]
+    def obj_snes(  # type: ignore[no-any-unimported]
             self, snes: PETSc.SNES, x: PETSc.Vec
     ) -> np.float64:
         """Compute the norm of the residual."""
-        self.assemble_residual(snes, x, self.obj_vec)
+        self.R_snes(snes, x, self.obj_vec)
         return self.obj_vec.norm()  # type: ignore[no-any-return]
 
     def non_linear_solve(self):
@@ -335,9 +336,9 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         #nested_IS = self.A.getNestISs()
         #snes.getKSP().getPC().setFieldSplitIS(["u1", nested_IS[0][0]], ["u2", nested_IS[1][1]])
 
-        snes.setObjective(self.obj)
-        snes.setFunction(self.assemble_residual, self.L)
-        snes.setJacobian(self.assemble_jacobian, J=self.A, P=None)
+        snes.setObjective(self.obj_snes)
+        snes.setFunction(self.R_snes, self.L)
+        snes.setJacobian(self.J_snes, J=self.A, P=None)
         snes.setMonitor(lambda _, it, residual: print(it, residual))
         self.set_snes_sol_vector()
         snes.solve(None, self.x)
@@ -356,3 +357,68 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                 self.__dict__[attr].destroy()
             except KeyError:
                 pass
+
+class GdofsCommunicator:
+    def __init__(self, p, p_ext, gdofs_p_needs):
+        '''Right after calling scatter_cell_integration_data_po'''
+        self.p, self.p_ext = p, p_ext
+        self.ndofs_cell_ext = gdofs_p_needs.shape[1]
+        self.gdofs_p_needs, self.uiperm_gdofs_ext = np.unique(gdofs_p_needs, return_inverse=True)
+        imap = p_ext.restriction.index_map
+        lrange = imap.local_range
+        bounds = np.zeros(comm.size+1, np.int64)
+        comm.Allgather(np.array(lrange[0]), bounds[:-1])
+        bounds[-1] = imap.size_global
+        self.owners = np.searchsorted(bounds, self.gdofs_p_needs, side="right")
+        self.owners -= 1
+        self.mask_local = (self.owners == rank)
+        self.mask_ghost = np.logical_not(self.mask_local)
+
+        # Counts I need from other procs
+        rcv_sizes = np.zeros(comm.size, np.int32)
+        for ighost in self.mask_ghost.nonzero()[0]:
+            rcv_sizes[self.owners[ighost]] += 1
+        snd_sizes = np.zeros(comm.size, np.int32)
+        comm.Alltoall(rcv_sizes, snd_sizes)
+
+        # dofs i need
+        other_ranks = np.hstack((np.arange(0, rank), np.arange(rank+1, comm.size)))
+        self.dofs_i_rcv = {ghost_owner : self.gdofs_p_needs[(self.owners==ghost_owner).nonzero()[0]] for ghost_owner in other_ranks}
+        self.dofs_i_snd = {ghost_owner : np.zeros(snd_sizes[ghost_owner], dtype=np.int64) for ghost_owner in other_ranks}
+        
+        reqs = []
+        for orank in other_ranks:
+            reqs.append(comm.Isend(self.dofs_i_rcv[orank], dest=orank))
+
+        for orank in other_ranks:
+            reqs.append(comm.Irecv(self.dofs_i_snd[orank], source=orank))
+
+        MPI.Request.Waitall(reqs)
+
+        for other_rank, dofs in self.dofs_i_snd.items():
+            self.dofs_i_snd[other_rank] = p_ext.restriction.unrestrict(imap.global_to_local(dofs))
+        lindices = self.mask_local.nonzero()[0]
+        llindices = imap.global_to_local(self.gdofs_p_needs[lindices])
+        self.my_dofs_i_need = p_ext.restriction.unrestrict(llindices)
+
+        self.data_i_rcv = {ghost_owner : np.zeros(rcv_sizes[ghost_owner], dtype=np.float64) for ghost_owner in other_ranks}
+        self.data_i_snd = {ghost_owner : np.zeros(snd_sizes[ghost_owner], dtype=np.float64) for ghost_owner in other_ranks}
+        self.u_ext_coeffs = np.zeros(self.gdofs_p_needs.size, np.float64)
+
+
+    def point_to_point_comm(self):
+        p_ext = self.p_ext
+        other_ranks = np.hstack((np.arange(0, rank), np.arange(rank+1, comm.size)))
+        reqs = []
+        for orank in other_ranks:
+            self.data_i_snd[orank][:] = p_ext.u.x.array[self.dofs_i_snd[orank]]
+            reqs.append(comm.Isend(self.data_i_snd[orank], dest=orank))
+
+        for orank in other_ranks:
+            reqs.append(comm.Irecv(self.data_i_rcv[orank], source=orank))
+        MPI.Request.Waitall(reqs)
+
+        self.u_ext_coeffs[self.mask_local.nonzero()[0]] = self.p_ext.u.x.array[self.my_dofs_i_need]
+        for other_rank in self.data_i_rcv:
+            self.u_ext_coeffs[(self.owners==other_rank).nonzero()[0]] = self.data_i_rcv[other_rank]
+        return self.u_ext_coeffs[self.uiperm_gdofs_ext].reshape((-1, self.ndofs_cell_ext))

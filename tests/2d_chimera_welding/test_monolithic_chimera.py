@@ -87,12 +87,13 @@ def test_monolothic_chimera_2d_welding():
     assert_pointwise_vals(pf,points,target_vals)
 
 if __name__=="__main__":
-    lp = LineProfiler()
-    lp.add_module(problem)
-    lp.add_function(build_moving_problem)
-    lp.add_function(interpolate_solution_to_inactive)
-    lp.add_module(MonolithicRRDriver)
-    lp_wrapper = lp(main)
-    lp_wrapper("input.yaml")
-    with open(f"monolithic_profiling_{rank}.txt", 'w') as pf:
-        lp.print_stats(stream=pf)
+    #lp = LineProfiler()
+    #lp.add_module(problem)
+    #lp.add_function(build_moving_problem)
+    #lp.add_function(interpolate_solution_to_inactive)
+    #lp.add_module(MonolithicRRDriver)
+    #lp_wrapper = lp(main)
+    #lp_wrapper("input.yaml")
+    #with open(f"monolithic_profiling_{rank}.txt", 'w') as pf:
+    #    lp.print_stats(stream=pf)
+    test_monolothic_chimera_2d_welding()

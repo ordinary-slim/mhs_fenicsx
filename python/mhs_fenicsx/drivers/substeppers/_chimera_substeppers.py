@@ -284,6 +284,8 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
                                                     restriction=pf.restriction)
             Rf.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
             pm.assemble_residual(Rm)
+            cd.assemble_robin_matrix(pm, pf)
+            cd.assemble_robin_matrix(pf, pm)
             cd.contribute_to_residuals(R_vec)
             R_vec.scale(-1)
 

@@ -11,10 +11,9 @@ rank = comm.Get_rank()
 ul, ur = 2.0, 7.0
 L = 2.0
 beta = 1.0
-u_exact = lambda x : ((1 + beta * ul) * \
-                      np.exp( x[0]/L * \
-                      np.log((1 + beta*ur)/(1 + beta*ul))) -1.0) \
-                      / beta
+c2 = ul*(ul+2)
+c1 = (ur*(ur+2) - ul*(ul+2)) / 2.0
+u_exact = lambda x : -1 + np.sqrt(1 + c2 + c1*x[0])
 
 def get_mesh():
     nelems = 20
@@ -24,14 +23,11 @@ def get_mesh():
 
 def ref(params):
     domain = get_mesh()
-    c2 = ul*(ul+2)
-    c1 = (ur*(ur+2) - ul*(ul+2)) / 2.0
-    u_exact = lambda x : -1 + np.sqrt(1 + c2 + c1*x[0])
     p = Problem(domain, params, "nnlinearconduc")
+    p.u.interpolate(u_exact)
     marker  = lambda x : np.logical_or(np.isclose(x[0],0),
                                        np.isclose(x[0],L))
     u_d = fem.Function(p.v,name="exact")
-    u_d.interpolate(u_exact)
     bdofs_dir  = fem.locate_dofs_geometrical(p.v,marker)
     p.dirichlet_bcs = [fem.dirichletbc(u_d, bdofs_dir)]
 
@@ -49,6 +45,8 @@ def set_bc(pright,pleft):
     # Set outside Dirichlet
     pright.add_dirichlet_bc(u_exact, marker=(lambda x : np.isclose(x[0],L)), reset=True)
     pleft.add_dirichlet_bc(u_exact, marker=(lambda x : np.isclose(x[0],0)), reset=True)
+    for p in (pright, pleft):
+        p.dirichlet_bcs[0].g.name = "exact"
 
 def staggered_robin(params):
     domain = get_mesh()
@@ -78,7 +76,9 @@ def staggered_robin(params):
 def monolithic_robin(params):
     domain = get_mesh()
     p_left = Problem(domain, params, "nnlinearconduc_Left_mono_robin")
+    #p_left.u.interpolate(u_exact)
     p_right = p_left.copy(name="nnlinearconduc_Right_mono_robin")
+    #p_right.u.interpolate(u_exact)
     # Activation
     active_els = dict()
     active_els[p_left] = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] <= L/2.0 )
@@ -96,7 +96,7 @@ def monolithic_robin(params):
     driver.post_iterate()
     for p in [p_left, p_right]:
         p.post_iterate()
-        p.writepos()
+        p.writepos(extra_funcs=[p.dirichlet_bcs[0].g])
 
 if __name__=="__main__":
     with open("input.yaml", 'r') as f:

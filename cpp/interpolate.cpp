@@ -91,7 +91,6 @@ void interpolate_dg0_at_facets(std::vector<std::reference_wrapper<const dolfinx:
   }
 
   // 3. Insert vals into receiving_f
-  auto active_els_array = receiving_active_els_f.x()->array();
   auto con_cell_facet = rmesh->topology()->connectivity(cdim,cdim-1);
   assert(con_cell_facet);
   auto rfacet_map = rmesh->topology()->index_map(cdim-1);

@@ -721,23 +721,38 @@ std::vector<int> find_owner_rank(
 
 using dextents2 = MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>;
 template <std::floating_point T>
-std::tuple<size_t, std::vector<int>, std::vector<std::int64_t>, std::vector<T>>
+std::tuple<size_t, std::vector<int>, std::vector<std::int32_t>, std::vector<std::int64_t>, std::vector<T>>
                         scatter_cell_integration_data_po(
                           const dolfinx::geometry::PointOwnershipData<T> &po,
                           const dolfinx::fem::FunctionSpace<double>& V,
-                          const multiphenicsx::fem::DofMapRestriction& restriction
+                          const multiphenicsx::fem::DofMapRestriction& restriction,
+                          const dolfinx::fem::Function<T> &mat_id_func
                         )
 {
   size_t num_pts_snd = po.dest_cells.size();
   size_t num_pts_rcv = po.src_owner.size();
   auto mesh = V.mesh();
-  // Scatter loc cell indices
-  std::vector<std::int32_t> owner_cells(num_pts_rcv);
+  // Scatter loc cell indices and materials
+  std::span<const T> mat_ids = mat_id_func.x()->array();
+  std::vector<std::int32_t> _indices_n_mats_to_rcv(2*num_pts_rcv);
+  std::vector<std::int32_t> _indices_n_mats_to_snd(2*num_pts_snd);
+  for (size_t i = 0; i < num_pts_snd; ++i) {
+    std::int32_t icell = po.dest_cells[i];
+    _indices_n_mats_to_snd[2*i]   = icell;
+    _indices_n_mats_to_snd[2*i+1] = mat_ids[icell];
+  }
   using dextents2 = MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>;
-  MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<const std::int32_t, dextents2> _send_values(
-      po.dest_cells.data(), po.dest_cells.size(), 1);
-  scatter_values(mesh->comm(), po.dest_owners, po.src_owner, _send_values,
-                 std::span(owner_cells));
+  MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<const std::int32_t, dextents2> indices_n_mats_to_send(
+      _indices_n_mats_to_snd.data(), num_pts_snd, 2);
+  scatter_values(mesh->comm(), po.dest_owners, po.src_owner, indices_n_mats_to_send,
+                 std::span(_indices_n_mats_to_rcv));
+  // Unpack
+  std::vector<std::int32_t> mat_ids_rcv(num_pts_rcv);
+  std::vector<std::int32_t> owner_cells(num_pts_rcv);
+  for (size_t i = 0; i < num_pts_rcv; ++i) {
+    owner_cells[i] = _indices_n_mats_to_rcv[2*i];
+    mat_ids_rcv[i] = _indices_n_mats_to_rcv[2*i+1];
+  }
   // Scatter global dofs
   auto con_v = restriction.dofmap()->map();
   auto imap = restriction.index_map;
@@ -791,10 +806,12 @@ std::tuple<size_t, std::vector<int>, std::vector<std::int64_t>, std::vector<T>>
     }
   }
   size_t num_unique_pts_rcv = unique_cell_indices.size();
-  // Subvectors with unique cell ids
+  // Subvectors with unique data
+  std::vector<std::int32_t> unique_mat_ids_rcv(num_unique_pts_rcv);
   std::vector<std::int64_t> unique_cell_gdofs_rcv(num_unique_pts_rcv * num_dofs_cell);
   std::vector<T> unique_cell_geometries_rcv(num_unique_pts_rcv * num_dofs_g * 3);
   for (int i = 0; i < unique_cell_indices.size(); ++i) {
+    unique_mat_ids_rcv[i] = mat_ids_rcv[unique_cell_indices[i]];
     std::move(gdofs_cells_rcv.begin() + unique_cell_indices[i]*num_dofs_cell,
               gdofs_cells_rcv.begin() + unique_cell_indices[i]*num_dofs_cell + num_dofs_cell,
               unique_cell_gdofs_rcv.begin() + i * num_dofs_cell);
@@ -803,5 +820,5 @@ std::tuple<size_t, std::vector<int>, std::vector<std::int64_t>, std::vector<T>>
               unique_cell_geometries_rcv.begin() + i * num_dofs_g * 3);
   }
 
-  return {num_unique_pts_rcv, cell_indices, unique_cell_gdofs_rcv, unique_cell_geometries_rcv};
+  return {num_unique_pts_rcv, cell_indices, unique_mat_ids_rcv, unique_cell_gdofs_rcv, unique_cell_geometries_rcv};
 }

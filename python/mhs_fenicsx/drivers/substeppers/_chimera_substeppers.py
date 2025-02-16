@@ -34,12 +34,11 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
         ps, pm = (self.ps, self.pm)
         for p in [ps, pm]:
             p.set_forms()
-            r_ufl = p.a_ufl - p.l_ufl
-            self.mr_ufl[p] = -r_ufl
-            self.j_ufl[p]  = ufl.derivative(r_ufl, p.u)
+            self.r_ufl[p] = p.a_ufl - p.l_ufl
+            self.j_ufl[p]  = ufl.derivative(self.r_ufl[p], p.u)
             self.j_compiled[p]  = fem.compile_form(p.domain.comm, self.j_ufl[p],
                                           form_compiler_options={"scalar_type": np.float64})
-            self.mr_compiled[p] = fem.compile_form(p.domain.comm, self.mr_ufl[p],
+            self.r_compiled[p] = fem.compile_form(p.domain.comm, self.r_ufl[p],
                                           form_compiler_options={"scalar_type": np.float64})
 
     def pre_loop(self):
@@ -125,7 +124,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
             time = (self.macro_iter-1) + self.fraction_macro_step
         get_funs = lambda p : [p.u,p.source.fem_function,p.active_els_func,p.grad_u, p.u_prev,self.u_prev[p]] + [gn for gn in p.gamma_nodes.values()]
         p_funs = get_funs(p)
-        for fun_dic in [sd.ext_flux,sd.net_ext_flux,sd.ext_conductivity,sd.ext_sol,
+        for fun_dic in [sd.ext_flux,sd.net_ext_flux,sd.ext_sol,
                         sd.prev_ext_flux,sd.prev_ext_sol]:
             try:
                 p_funs.append(fun_dic[p])
@@ -218,7 +217,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
         assert(check_assumptions(ps, pf, pm))
 
         self.set_gamma_slow_to_fast()
-        self.j_instance, self.mr_instance = self.instantiate_monolithic_forms()
+        self.j_instance, self.r_instance = self.instantiate_monolithic_forms()
 
         # Set-up SNES solve
         pf.clear_dirchlet_bcs()
@@ -229,7 +228,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
         dofs_big_mesh.sort()# TODO: maybe REMOVABLE
         self.restriction = multiphenicsx.fem.DofMapRestriction(pf.v.dofmap, dofs_big_mesh)
         pf.j_instance = self.j_instance
-        pf.mr_instance = self.mr_instance
+        pf.r_instance = self.r_instance
         pf.restriction = self.restriction
         self.initial_restriction = self.restriction
         pf.pre_assemble()
@@ -266,34 +265,32 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
                 interpolate_solution_to_inactive(pf,pm)
             ps.u.x.array[:] = pf.u.x.array[:]
 
-        def assemble_jacobian(
+        def J_snes(
                 snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat, P_mat: PETSc.Mat):
             super(type(self), self).assemble_jacobian(snes, x, J_mat.getNestSubMatrix(0,0), P_mat)
             pm.assemble_jacobian(finalize=False)
-            self.chimera_driver.contribute_to_diagonal_blocks()
+            cd.assemble_robin_jacobian_p_p_ext(cd.p1, cd.p2)
+            cd.assemble_robin_jacobian_p_p_ext(cd.p2, cd.p1)
+            cd.assemble_robin_jacobian_p_p()
             J_mat.assemble()
 
-        def assemble_residual(snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
-            # TODO: Make it so that the residual is assembled into R_vec
+        def R_snes(snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
             update_solution(x)
             Rf, Rm = R_vec.getNestSubVecs()
             with Rf.localForm() as R_local:
                 R_local.set(0.0)
             multiphenicsx.fem.petsc.assemble_vector(Rf,
-                                                    self.mr_instance,
+                                                    self.r_instance,
                                                     restriction=pf.restriction)
             Rf.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
             pm.assemble_residual(Rm)
-            cd.assemble_robin_matrix(pm, pf)
-            cd.assemble_robin_matrix(pf, pm)
-            cd.contribute_to_residuals(R_vec)
-            R_vec.scale(-1)
+            cd.assemble_robin_residual(R_vec)
 
-        def obj(  # type: ignore[no-any-unimported]
+        def obj_snes(  # type: ignore[no-any-unimported]
             snes: PETSc.SNES, x: PETSc.Vec
         ) -> np.float64:
             """Compute the norm of the residual."""
-            assemble_residual(snes, x, self.obj_vec)
+            R_snes(snes, x, self.obj_vec)
             return self.obj_vec.norm()  # type: ignore[no-any-return]
 
         # Solve
@@ -313,9 +310,9 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
         #nested_IS = self.A.getNestISs()
         #snes.getKSP().getPC().setFieldSplitIS(["u1", nested_IS[0][0]], ["u2", nested_IS[1][1]])
 
-        snes.setObjective(obj)
-        snes.setFunction(assemble_residual, self.L)
-        snes.setJacobian(assemble_jacobian, J=self.A, P=None)
+        snes.setObjective(obj_snes)
+        snes.setFunction(R_snes, self.L)
+        snes.setJacobian(J_snes, J=self.A, P=None)
         snes.setMonitor(lambda _, it, residual: print(it, residual))
         set_snes_sol_vector(self)
         snes.solve(None, self.x)

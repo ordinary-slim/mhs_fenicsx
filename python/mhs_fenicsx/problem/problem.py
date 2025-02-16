@@ -570,15 +570,14 @@ class Problem:
     def compile_forms(self):
         self.r_ufl = self.a_ufl - self.l_ufl#residual
         self.j_ufl = ufl.derivative(self.r_ufl, self.u)#jacobian
-        self.mr_ufl = -self.r_ufl#minus residual
-        self.mr_compiled = fem.compile_form(self.domain.comm, self.mr_ufl,
+        self.r_compiled = fem.compile_form(self.domain.comm, self.r_ufl,
                                             form_compiler_options={"scalar_type": np.float64})
         self.j_compiled = fem.compile_form(self.domain.comm, self.j_ufl,
                                             form_compiler_options={"scalar_type": np.float64})
 
     def instantiate_forms(self):
-        rcoeffmap, rconstmap = get_identity_maps(self.mr_ufl)
-        self.mr_instance = fem.create_form(self.mr_compiled,
+        rcoeffmap, rconstmap = get_identity_maps(self.r_ufl)
+        self.r_instance = fem.create_form(self.r_compiled,
                                            [self.v],
                                            msh=self.domain,
                                            subdomains=self.form_subdomain_data,
@@ -601,10 +600,10 @@ class Problem:
         self.A = multiphenicsx.fem.petsc.create_matrix(self.j_instance,
                                                   (self.restriction, self.restriction),
                                                   )
-        self.L = multiphenicsx.fem.petsc.create_vector(self.mr_instance,
+        self.L = multiphenicsx.fem.petsc.create_vector(self.r_instance,
                                                        self.restriction)
-        self.x = multiphenicsx.fem.petsc.create_vector(self.mr_instance, restriction=self.restriction)
-        self._obj_vec = multiphenicsx.fem.petsc.create_vector(self.mr_instance, self.restriction)
+        self.x = multiphenicsx.fem.petsc.create_vector(self.r_instance, restriction=self.restriction)
+        self._obj_vec = multiphenicsx.fem.petsc.create_vector(self.r_instance, self.restriction)
         self.has_preassembled = True
 
     def assemble_jacobian(self,
@@ -629,12 +628,12 @@ class Problem:
         with F_vec.localForm() as l_local:
             l_local.set(0.0)
         multiphenicsx.fem.petsc.assemble_vector(F_vec,
-                                                self.mr_instance,
+                                                self.r_instance,
                                                 restriction=self.restriction,)
         # Dirichlet
-        multiphenicsx.fem.petsc.apply_lifting(F_vec, [self.j_instance], [self.dirichlet_bcs], [self.u.x.petsc_vec], restriction=self.restriction)
+        multiphenicsx.fem.petsc.apply_lifting(F_vec, [self.j_instance], [self.dirichlet_bcs], [self.u.x.petsc_vec], restriction=self.restriction, alpha=-1.0)
         F_vec.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
-        multiphenicsx.fem.petsc.set_bc(F_vec,self.dirichlet_bcs, self.u.x.petsc_vec, restriction=self.restriction)
+        multiphenicsx.fem.petsc.set_bc(F_vec,self.dirichlet_bcs, self.u.x.petsc_vec, restriction=self.restriction, alpha=-1.0)
         F_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
 
     def assemble(self):
@@ -711,7 +710,7 @@ class Problem:
     def set_snes_sol_vector(self) -> PETSc.Vec:  # type: ignore[no-any-unimported]
         """ Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess """
         
-        #x = multiphenicsx.fem.petsc.create_vector(self.mr_instance, self.restriction)
+        #x = multiphenicsx.fem.petsc.create_vector(self.r_instance, self.restriction)
         sol = self.u
         with multiphenicsx.fem.petsc.VecSubVectorWrapper(self.x, self.v.dofmap, self.restriction) as x_wrapper:
             with sol.x.petsc_vec.localForm() as solution_local:
@@ -730,7 +729,6 @@ class Problem:
         """Assemble the residual."""
         self._update_solution(x)
         self.assemble_residual(F_vec)
-        F_vec.scale(-1)
 
     def J(  # type: ignore[no-any-unimported]
         self, snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat,

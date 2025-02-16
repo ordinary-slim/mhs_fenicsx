@@ -69,16 +69,16 @@ class StaggeredDomainDecompositionDriver(ABC):
     
     def store_forms(self):
         (p1, p2) = plist = (self.p1, self.p2)
-        self.mr_ufl = {p:p.mr_ufl for p in plist}
+        self.r_ufl = {p:p.r_ufl for p in plist}
         self.j_ufl = {p:p.j_ufl for p in plist}
-        self.mr_compiled = {p:p.mr_compiled for p in plist}
+        self.r_compiled = {p:p.r_compiled for p in plist}
         self.j_compiled = {p:p.j_compiled for p in plist}
 
     def prepare_subproblems(self, finalize=True):
         (p1, p2) = plist = (self.p1, self.p2)
         for p in plist:
-            p.mr_ufl = self.mr_ufl[p]
-            p.mr_compiled = self.mr_compiled[p]
+            p.r_ufl = self.r_ufl[p]
+            p.r_compiled = self.r_compiled[p]
             p.j_ufl = self.j_ufl[p]
             p.j_compiled = self.j_compiled[p]
             if finalize:

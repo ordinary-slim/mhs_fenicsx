@@ -27,7 +27,7 @@ class MHSSubstepper(ABC):
         self.max_nr_iters = max_nr_iters
         self.max_ls_iters = max_ls_iters
         self.do_predictor = do_predictor
-        self.mr_ufl, self.j_ufl, self.mr_compiled, self.j_compiled = {}, {}, {}, {}
+        self.r_ufl, self.j_ufl, self.r_compiled, self.j_compiled = {}, {}, {}, {}
         for mat in pf.material_to_itag:
             pf.material_to_itag[mat] += len(ps.materials)
         if compile_forms:
@@ -38,8 +38,8 @@ class MHSSubstepper(ABC):
         pass
 
     def instantiate_forms(self, p):
-        p.j_ufl, p.mr_ufl = (self.j_ufl[p], self.mr_ufl[p])
-        p.j_compiled, p.mr_compiled = (self.j_compiled[p], self.mr_compiled[p])
+        p.j_ufl, p.r_ufl = (self.j_ufl[p], self.r_ufl[p])
+        p.j_compiled, p.r_compiled = (self.j_compiled[p], self.r_compiled[p])
         p.instantiate_forms()
 
     def __del__(self):
@@ -199,20 +199,18 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         (ps,pf) = (self.ps,self.pf)
         for p in self.plist:
             p.set_forms()
-            r_ufl = p.a_ufl - p.l_ufl
-            self.mr_ufl[p] = -r_ufl
-            self.j_ufl[p]  = ufl.derivative(r_ufl, p.u)
+            self.r_ufl[p] = p.a_ufl - p.l_ufl
+            self.j_ufl[p]  = ufl.derivative(self.r_ufl[p], p.u)
             self.j_compiled[p]  = fem.compile_form(p.domain.comm, self.j_ufl[p],
                                           form_compiler_options={"scalar_type": np.float64})
-            self.mr_compiled[p] = fem.compile_form(p.domain.comm, self.mr_ufl[p],
+            self.r_compiled[p] = fem.compile_form(p.domain.comm, self.r_ufl[p],
                                           form_compiler_options={"scalar_type": np.float64})
         # Monolithic problem
-        r_mono_ufl = (ps.a_ufl + pf.a_ufl) - (ps.l_ufl + pf.l_ufl)
-        self.mr_mono_ufl = -r_mono_ufl
-        self.j_mono_ufl  = ufl.derivative(r_mono_ufl, ps.u) + ufl.derivative(r_mono_ufl, pf.u)
+        self.r_mono_ufl = (ps.a_ufl + pf.a_ufl) - (ps.l_ufl + pf.l_ufl)
+        self.j_mono_ufl  = ufl.derivative(self.r_mono_ufl, ps.u) + ufl.derivative(self.r_mono_ufl, pf.u)
         self.j_mono_compiled  = fem.compile_form(ps.domain.comm, self.j_mono_ufl,
                                       form_compiler_options={"scalar_type": np.float64})
-        self.mr_mono_compiled = fem.compile_form(ps.domain.comm, self.mr_mono_ufl,
+        self.r_mono_compiled = fem.compile_form(ps.domain.comm, self.r_mono_ufl,
                                       form_compiler_options={"scalar_type": np.float64})
 
     def pre_loop(self, prepare_fast_problem=True):
@@ -272,8 +270,8 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         facet_subdomain_data = [subdomain for p in [ps, pf] for subdomain in p.form_subdomain_data[fem.IntegralType.exterior_facet]]
         form_subdomain_data = {fem.IntegralType.cell:cell_subdomain_data,
                                fem.IntegralType.exterior_facet:facet_subdomain_data}
-        rcoeffmap, rconstmap = get_identity_maps(self.mr_mono_ufl)
-        mr_instance = fem.create_form(self.mr_mono_compiled,
+        rcoeffmap, rconstmap = get_identity_maps(self.r_mono_ufl)
+        r_instance = fem.create_form(self.r_mono_compiled,
                                      [ps.v],
                                      msh=ps.domain,
                                      subdomains=form_subdomain_data,
@@ -286,7 +284,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
                                      subdomains=form_subdomain_data,
                                      coefficient_map=lcoeffmap,
                                      constant_map=lconstmap)
-        return j_instance, mr_instance
+        return j_instance, r_instance
 
     def set_snes_sol_vector(self, x) -> PETSc.Vec:  # type: ignore[no-any-unimported]
         """
@@ -316,11 +314,10 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         with R_vec.localForm() as R_local:
             R_local.set(0.0)
         multiphenicsx.fem.petsc.assemble_vector(R_vec,
-                                                self.mr_instance,
+                                                self.r_instance,
                                                 restriction=self.initial_restriction)
         # TODO: Dirichlet here?
         R_vec.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
-        R_vec.scale(-1)
 
     def assemble_jacobian(
             self, snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat, P_mat: PETSc.Mat):
@@ -345,12 +342,12 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         ps.pre_iterate(forced_time_derivative=True)
 
         self.set_gamma_slow_to_fast()
-        self.j_instance, self.mr_instance = self.instantiate_monolithic_forms()
+        self.j_instance, self.r_instance = self.instantiate_monolithic_forms()
 
         self.A = multiphenicsx.fem.petsc.create_matrix(self.j_instance, restriction=(self.initial_restriction, self.initial_restriction))
-        self.R = multiphenicsx.fem.petsc.create_vector(self.mr_instance, restriction=self.initial_restriction)
-        self.x = multiphenicsx.fem.petsc.create_vector(self.mr_instance, restriction=self.initial_restriction)
-        self.obj_vec = multiphenicsx.fem.petsc.create_vector(self.mr_instance, restriction=self.initial_restriction)
+        self.R = multiphenicsx.fem.petsc.create_vector(self.r_instance, restriction=self.initial_restriction)
+        self.x = multiphenicsx.fem.petsc.create_vector(self.r_instance, restriction=self.initial_restriction)
+        self.obj_vec = multiphenicsx.fem.petsc.create_vector(self.r_instance, restriction=self.initial_restriction)
         lin_algebra_objects = [self.A, self.R, self.x, self.obj_vec]
 
         # SOLVE
@@ -418,12 +415,11 @@ class MHSStaggeredSubstepper(MHSSubstepper):
     def compile_forms(self):
         ps = self.ps
         ps.set_forms()
-        r_ufl = ps.a_ufl - ps.l_ufl
-        self.mr_ufl[ps] = -r_ufl
-        self.j_ufl[ps]  = ufl.derivative(r_ufl, ps.u)
+        self.r_ufl[ps] = ps.a_ufl - ps.l_ufl
+        self.j_ufl[ps]  = ufl.derivative(self.r_ufl[ps], ps.u)
         self.j_compiled[ps]  = fem.compile_form(ps.domain.comm, self.j_ufl[ps],
                                       form_compiler_options={"scalar_type": np.float64})
-        self.mr_compiled[ps] = fem.compile_form(ps.domain.comm, self.mr_ufl[ps],
+        self.r_compiled[ps] = fem.compile_form(ps.domain.comm, self.r_ufl[ps],
                                       form_compiler_options={"scalar_type": np.float64})
 
     def writepos(self,case="macro",extra_funs=[]):

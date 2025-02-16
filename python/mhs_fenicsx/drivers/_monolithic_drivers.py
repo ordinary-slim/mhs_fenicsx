@@ -159,7 +159,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                     restriction=p.restriction)
             robin_residual.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
             # TODO: Check sign here?
-            R_sub_vec -= robin_residual
+            R_sub_vec += robin_residual
             robin_residual.destroy()
             R_sub_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
 
@@ -255,15 +255,15 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.dofmaps = [p1.v.dofmap, p2.v.dofmap]
         self.setup_coupling()
         self.instantiate_forms()
-        mr_instance = [p1.mr_instance, p2.mr_instance]
+        r_instance = [p1.r_instance, p2.r_instance]
 
         self.A12 = self.preassemble_robin_matrix(p1, p2)
         self.A21 = self.preassemble_robin_matrix(p2, p1)
 
         self.L = PETSc.Vec().createNest([p1.L, p2.L])
         self.A = PETSc.Mat().createNest([[p1.A, self.A12], [self.A21, p2.A]])
-        self.x = multiphenicsx.fem.petsc.create_vector_nest(mr_instance, restriction=self.restriction)
-        self.obj_vec = multiphenicsx.fem.petsc.create_vector_nest(mr_instance, restriction=self.restriction)
+        self.x = multiphenicsx.fem.petsc.create_vector_nest(r_instance, restriction=self.restriction)
+        self.obj_vec = multiphenicsx.fem.petsc.create_vector_nest(r_instance, restriction=self.restriction)
 
     def set_snes_sol_vector(self) -> PETSc.Vec:  # type: ignore[no-any-unimported]
         """
@@ -298,15 +298,11 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
 
     def R_snes(self, snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
         (p1,p2) = (self.p1,self.p2)
-        # TODO: Make it so that the residual is assembled into R_vec
         self.update_solution(x)
-        #self.p1.u.interpolate(lambda x : x[0])
-        #self.p2.u.interpolate(lambda x : x[0])
         for p, R_sub_vec in zip([p1, p2], R_vec.getNestSubVecs()):
             p.assemble_residual(R_sub_vec)
         # TODO: Check if expensive
         self.assemble_robin_residual(R_vec)
-        R_vec.scale(-1)
 
     def obj_snes(  # type: ignore[no-any-unimported]
             self, snes: PETSc.SNES, x: PETSc.Vec

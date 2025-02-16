@@ -172,7 +172,7 @@ def run(dim, els_side, el_type, writepos=False):
         ds = ufl.Measure('ds')
         n = ufl.FacetNormal(p.domain)
         v = ufl.TestFunction(p.v)
-        p.l_ufl += +p.k * ufl.inner(n, grad_exact_sol(p.domain)) * v * ds(neumann_tag)
+        p.l_ufl += +p.materials[0].k.Ys[0] * ufl.inner(n, grad_exact_sol(p.domain)) * v * ds(neumann_tag)
 
         p.compile_create_forms()
         # Pre-assemble

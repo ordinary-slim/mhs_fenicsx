@@ -8,27 +8,38 @@ from mhs_fenicsx.drivers import StaggeredRRDriver, MonolithicRRDriver
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-ul, ur = 2.0, 7.0
-L = 2.0
-beta = 1.0
-c2 = ul*(ul+2)
-c1 = (ur*(ur+2) - ul*(ul+2)) / 2.0
-u_exact = lambda x : -1 + np.sqrt(1 + c2 + c1*x[0])
+u_hot = 7.0
+u_cold = 2.0
+kl = 1.0
+kr = 10.0
+c1 = (u_hot - u_cold) / (0.5 + (kl / kr)*0.5)
+c2 = kl / kr * c1
+d2 = u_cold + 0.5 * (c1 - c2)
+
+def u_exact(x):
+    left = np.array(x[0] <= 0.5, dtype=np.float64)*(u_cold + c1 * x[0])
+    right = np.array(x[0] > 0.5, dtype=np.float64)*(d2 + c2*x[0])
+    return (left + right)
 
 def get_mesh():
-    nelems = 20
-    return mesh.create_interval(comm,
-                                nelems,
-                                [0.0, L])
+    nelems_side = 20
+    return mesh.create_unit_square(comm,
+                                   nelems_side, nelems_side,
+                                   )
 
 def ref(params):
     domain = get_mesh()
-    p = Problem(domain, params, "nnlinearconduc")
-    marker  = lambda x : np.logical_or(np.isclose(x[0],0),
-                                       np.isclose(x[0],L))
+    p = Problem(domain, params, "2mat_difussing")
+    marker  = lambda x : np.logical_or(np.isclose(x[0],0.0),
+                                       np.isclose(x[0],1.0))
     u_d = fem.Function(p.v,name="exact")
+    u_d.interpolate(u_exact)
     bdofs_dir  = fem.locate_dofs_geometrical(p.v,marker)
     p.dirichlet_bcs = [fem.dirichletbc(u_d, bdofs_dir)]
+
+    # Set materials
+    right_els = fem.locate_dofs_geometrical(p.dg0, lambda x : x[0] >= 0.5 )
+    p.update_material_at_cells(right_els, p.materials[1])
 
     # Solve
     p.set_forms()
@@ -39,22 +50,23 @@ def ref(params):
     p.writepos(extra_funcs=[u_d])
     return p
 
-
 def set_bc(pright,pleft):
     # Set outside Dirichlet
-    pright.add_dirichlet_bc(u_exact, marker=(lambda x : np.isclose(x[0],L)), reset=True)
     pleft.add_dirichlet_bc(u_exact, marker=(lambda x : np.isclose(x[0],0)), reset=True)
+    pright.add_dirichlet_bc(u_exact, marker=(lambda x : np.isclose(x[0],1.0)), reset=True)
     for p in (pright, pleft):
         p.dirichlet_bcs[0].g.name = "exact"
 
 def staggered_robin(params):
     domain = get_mesh()
-    p_left = Problem(domain, params, "nnlinearconduc_Left_stag_robin")
-    p_right = p_left.copy(name="nnlinearconduc_Right_stag_robin")
+    p_left = Problem(domain, params, "2mat_diffusion_Left_stag_robin")
+    right_els = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] >= 0.5 )
+    p_left.update_material_at_cells(right_els, p_left.materials[1])
+    p_right = p_left.copy(name="2mat_diffusion_Right_stag_robin")
     # Activation
     active_els = dict()
-    active_els[p_left] = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] <= L/2.0 )
-    active_els[p_right] = fem.locate_dofs_geometrical(p_right.dg0, lambda x : x[0] >= L/2.0 )
+    active_els[p_left] = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] <= 0.5)
+    active_els[p_right] = fem.locate_dofs_geometrical(p_right.dg0, lambda x : x[0] >= 0.5)
     for p in [p_left,p_right]:
         p.set_activation(active_els[p])
     set_same_mesh_interface(p_left, p_right)
@@ -70,18 +82,20 @@ def staggered_robin(params):
         if driver.convergence_crit < driver.convergence_threshold:
             break
     driver.post_loop()
-    return driver
+    return p_left, p_right
 
 def monolithic_robin(params):
     domain = get_mesh()
-    p_left = Problem(domain, params, "nnlinearconduc_Left_mono_robin")
+    p_left = Problem(domain, params, "2mat_diffusion_Left_mono_robin")
+    right_els = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] >= 0.5 )
+    p_left.update_material_at_cells(right_els, p_left.materials[1])
     #p_left.u.interpolate(u_exact)
-    p_right = p_left.copy(name="nnlinearconduc_Right_mono_robin")
+    p_right = p_left.copy(name="2mat_diffusion_Right_mono_robin")
     #p_right.u.interpolate(u_exact)
     # Activation
     active_els = dict()
-    active_els[p_left] = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] <= L/2.0 )
-    active_els[p_right] = fem.locate_dofs_geometrical(p_right.dg0, lambda x : x[0] >= L/2.0 )
+    active_els[p_left] = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] <= 0.5 )
+    active_els[p_right] = fem.locate_dofs_geometrical(p_right.dg0, lambda x : x[0] >= 0.5 )
     for p in [p_left,p_right]:
         p.set_activation(active_els[p])
     set_same_mesh_interface(p_left, p_right)
@@ -96,6 +110,7 @@ def monolithic_robin(params):
     for p in [p_left, p_right]:
         p.post_iterate()
         p.writepos(extra_funcs=[p.dirichlet_bcs[0].g])
+    return p_left, p_right
 
 if __name__=="__main__":
     with open("input.yaml", 'r') as f:

@@ -235,23 +235,14 @@ class Problem:
         self.material_id = fem.Function(self.dg0,name="material_id")
         self.material_id.x.array.fill(1.0)# Everything initialized to first material
         # Initialize material funcs
-        self.k   = fem.Function(self.dg0,name="conductivity")
         smoothing_cte_phase_change = parameters["smoothing_cte_phase_change"] \
                 if "smoothing_cte_phase_change" in parameters else 0.0
         self.smoothing_cte_phase_change = fem.Constant(self.domain, np.float64(smoothing_cte_phase_change))
-        self.set_material_funcs()
     
-    def _update_mat_at_cells(self, mat:Material, cells):
-        self.k.x.array[cells] = mat.k.Ys[0]
-
-    def update_material_funcs(self, cells, mat : Material):
+    def update_material_at_cells(self, cells, mat : Material, finalize=True):
         self.material_id.x.array[cells] = self.material_to_tag[mat]
-        self._update_mat_at_cells(mat, cells)
-
-    def set_material_funcs(self):
-        for mat, tag in self.material_to_tag.items():
-            cells = np.flatnonzero(abs(self.material_id.x.array-tag)<1e-7)
-            self._update_mat_at_cells(mat, cells)
+        if finalize:
+            self.set_form_subdomain_data()
 
     def compute_advected_el_size(self):
         if self.advected_el_size is None:
@@ -674,7 +665,6 @@ class Problem:
                  self.active_nodes_func,
                  self.material_id,
                  self.source.fem_function,
-                 #self.k,
                  ]
         for f in self.gamma_nodes.values():
             funcs.append(f)

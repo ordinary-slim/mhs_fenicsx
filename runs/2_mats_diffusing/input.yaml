@@ -1,0 +1,23 @@
+# BEG_ESSENTIAL
+isSteady: True
+dt: -1.0
+heat_source : {
+  type : 1,
+  initial_position : [0.0, 0, 0],
+  initial_speed : [0, 0, 0],
+  radius : 10.0,
+  power : 0,
+}
+# PROPS
+material_powder : {
+  density : 1,
+  conductivity : 1.0,
+  specific_heat : 1,
+}
+material_metal : {
+  density : 1,
+  conductivity : 10.0,
+  specific_heat : 1,
+}
+environment_temperature: 20
+# END_ESSENTIAL

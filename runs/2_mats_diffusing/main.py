@@ -78,7 +78,8 @@ def staggered_robin(params):
         driver.pre_iterate()
         driver.iterate()
         driver.post_iterate(verbose=True)
-        driver.writepos()
+        driver.writepos(extra_funcs_p1=[driver.p1.dirichlet_bcs[0].g],
+                        extra_funcs_p2=[driver.p2.dirichlet_bcs[0].g])
         if driver.convergence_crit < driver.convergence_threshold:
             break
     driver.post_loop()
@@ -89,9 +90,7 @@ def monolithic_robin(params):
     p_left = Problem(domain, params, "2mat_diffusion_Left_mono_robin")
     right_els = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] >= 0.5 )
     p_left.update_material_at_cells(right_els, p_left.materials[1])
-    #p_left.u.interpolate(u_exact)
     p_right = p_left.copy(name="2mat_diffusion_Right_mono_robin")
-    #p_right.u.interpolate(u_exact)
     # Activation
     active_els = dict()
     active_els[p_left] = fem.locate_dofs_geometrical(p_left.dg0, lambda x : x[0] <= 0.5 )
@@ -116,5 +115,5 @@ if __name__=="__main__":
     with open("input.yaml", 'r') as f:
         params = yaml.safe_load(f)
     #ref(params)
-    #staggered_robin(params)
-    monolithic_robin(params)
+    staggered_robin(params)
+    #monolithic_robin(params)

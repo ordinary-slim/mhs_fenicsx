@@ -43,6 +43,7 @@ class StaggeredDomainDecompositionDriver(ABC):
         for relaxation,p in zip(initial_relaxation_factors,[p1,p2]):
             if relaxation<1.0:
                 self.relaxation_coeff[p].value = relaxation
+        self.ext_material_gamma = dict()
         self.ext_flux = dict()
         self.net_ext_flux = dict()
         self.ext_sol = dict()
@@ -215,6 +216,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         (pd,pn) = plist = (self.p_dirichlet,self.p_neumann)
         for p in plist:
             # Neumann Gamma funcs
+            self.ext_material_gamma[pn] = fem.Function(pn.dg0,name="ext_material")
             self.ext_sol[pn] = fem.Function(pn.v,name="ext_sol")
             self.ext_flux[pn] = fem.Function(pn.dg0_vec,name="ext_grad")
             self.net_ext_flux[pn] = fem.Function(pn.dg0_vec,name="net_ext_flux")
@@ -345,7 +347,9 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         n = ufl.FacetNormal(p.domain)
         l_ufl = []
         for mat in p.materials:
-            neumann_con = +ufl.inner(n, mat.k.ufl(self.ext_sol[p])*self.net_ext_flux[p])
+            neumann_con = +ufl.inner(n,
+                    p.ext_conductivity(self.ext_material_gamma[p], self.ext_sol[p]) * \
+                            self.net_ext_flux[p])
             l_ufl.append(neumann_con * v * dS(self.gamma_integration_tags[mat]))
         p.l_ufl += sum(l_ufl)
 
@@ -355,8 +359,8 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         p_ext.compute_gradient(cells=self.active_gamma_cells[p_ext])
         # Update functions
         if self.is_chimera:
-            interpolate_dg0_at_facets([p_ext.grad_u._cpp_object],
-                                      [self.ext_flux[p]._cpp_object],
+            interpolate_dg0_at_facets([p_ext.grad_u._cpp_object,p_ext.material_id._cpp_object],
+                                      [self.ext_flux[p]._cpp_object,self.ext_material_gamma[p]._cpp_object],
                                       p.active_els_func._cpp_object,
                                       p.gamma_facets[p_ext]._cpp_object,
                                       self.active_gamma_cells[p],
@@ -371,6 +375,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
             self.ext_sol[p].x.scatter_forward()
         else:
             propagate_dg0_at_facets_same_mesh(p_ext, p_ext.grad_u, p, self.ext_flux[p])
+            propagate_dg0_at_facets_same_mesh(p_ext, p_ext.material_id, p, self.ext_material_gamma[p])
             self.ext_sol[p].x.array[:] = p_ext.u.x.array[:]
 
         self.net_ext_flux[p].x.array[:] = self.ext_flux[p].x.array[:]
@@ -409,6 +414,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         for p in plist:
             self.ext_flux[p] = fem.Function(p.dg0_vec,name="ext_grad")
             self.net_ext_flux[p] = fem.Function(p.dg0_vec,name="net_ext_flux")
+            self.ext_material_gamma[p] = fem.Function(p.dg0,name="ext_material")
             self.ext_sol[p] = fem.Function(p.v,name="ext_sol")
             self.net_ext_sol[p] = fem.Function(p.v,name="net_ext_sol")
             self.prev_ext_flux[p] = fem.Function(p.dg0_vec,name="prev_ext_grad")
@@ -434,7 +440,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         if not(self.writers):
             self.initialize_post()
         for p in [p1,p2]:
-            extra_funcs[p] = [p.grad_u, self.ext_sol[p], self.ext_flux[p]] + extra_funcs[p]
+            extra_funcs[p] = [p.grad_u, self.ext_sol[p], self.ext_flux[p], self.ext_material_gamma[p]] + extra_funcs[p]
         StaggeredDomainDecompositionDriver.write_results(self,extra_funcs_p1=extra_funcs[p1],extra_funcs_p2=extra_funcs[p2])
 
     def pre_iterate(self):
@@ -494,7 +500,8 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         for mat in p.materials:
             a_ufl.append(+ self.dirichlet_coeff[p] * u * v * dS(self.gamma_integration_tags[mat]))
             robin_con = self.dirichlet_coeff[p]*self.net_ext_sol[p] + \
-                    mat.k.ufl(self.net_ext_sol[p]) * ufl.inner(n, self.net_ext_flux[p])
+                    p.ext_conductivity(self.ext_material_gamma[p], self.net_ext_sol[p]) * \
+                    ufl.inner(n, self.net_ext_flux[p])
             l_ufl.append(robin_con * v * dS(self.gamma_integration_tags[mat]))
         p.a_ufl += sum(a_ufl)
         p.l_ufl += sum(l_ufl)
@@ -508,8 +515,10 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         p_ext.compute_gradient(cells=self.active_gamma_cells[p_ext])
         if self.is_chimera:
             # Update flux
-            interpolate_dg0_at_facets([p_ext.grad_u._cpp_object],
-                                      [self.ext_flux[p]._cpp_object],
+            interpolate_dg0_at_facets([p_ext.grad_u._cpp_object,
+                                       p_ext.material_id._cpp_object],
+                                      [self.ext_flux[p]._cpp_object,
+                                       self.ext_material_gamma[p]._cpp_object],
                                       p.active_els_func._cpp_object,
                                       p.gamma_facets[p_ext]._cpp_object,
                                       self.active_gamma_cells[p],
@@ -523,6 +532,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
             self.ext_sol[p].x.scatter_forward()
         else:
             propagate_dg0_at_facets_same_mesh(p_ext, p_ext.grad_u, p, self.ext_flux[p])
+            propagate_dg0_at_facets_same_mesh(p_ext, p_ext.material_id, p, self.ext_material_gamma[p])
             # If this is expensive, consider `self.ext_sol[p] = p_ext.u`
             self.ext_sol[p].x.array[:] = p_ext.u.x.array[:]
 

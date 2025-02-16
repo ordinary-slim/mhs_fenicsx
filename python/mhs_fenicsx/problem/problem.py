@@ -470,6 +470,17 @@ class Problem:
     def get_facet_integrations_entities(self, facet_indices):
         return get_facet_integration_entities(self.domain,facet_indices,self.active_els_func)
 
+    def ext_conductivity(self, ext_mat : fem.Function, ext_sol : fem.Function):
+        mats = self.materials
+        mat_to_tag = self.material_to_tag 
+        if len(self.materials) == 1:
+            return mats[0].k.ufl(ext_sol)
+        else:
+            k = ufl.conditional(ufl.eq(mat_to_tag[mats[1]], ext_mat), mats[1].k.ufl(ext_sol), mats[0].k.ufl(ext_sol))
+            for i in range(1, len(mats) - 1):
+                k = ufl.conditional(ufl.eq(mat_to_tag[mats[i+1]], ext_mat), mats[i+1].k.ufl(ext_sol), k)
+            return k
+
     def set_forms(self, material_indices={}):
         dx = ufl.Measure("dx", metadata=self.quadrature_metadata)
         u = self.u

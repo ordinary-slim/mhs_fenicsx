@@ -15,4 +15,5 @@ material_metal : {
   specific_heat : 1,
 }
 environment_temperature: 20
+L: 2.0
 # END_ESSENTIAL

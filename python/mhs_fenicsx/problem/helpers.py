@@ -16,13 +16,14 @@ def interpolate(sf : dolfinx.fem.Function,
                 rf : dolfinx.fem.Function,
                 scells : npt.NDArray[np.int32],
                 rdofs : npt.NDArray[np.int32],
-                coords_rdofs : npt.NDArray[np.float64]):
+                coords_rdofs : npt.NDArray[np.float64],
+                padding=1e-6):
     mhs_fenicsx_cpp.interpolate_cg1_affine(sf._cpp_object,
                                            rf._cpp_object,
                                            scells,
                                            rdofs,
                                            coords_rdofs,
-                                           1e-6)
+                                           padding)
 
 def l2_squared(f : dolfinx.fem.Function,active_els_tag):
     dx = ufl.Measure("dx")(subdomain_data=active_els_tag)

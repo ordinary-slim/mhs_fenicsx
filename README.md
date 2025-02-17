@@ -19,7 +19,8 @@ CHECKPOINTS
 - [ ] Lumped heat source PREDICTOR (high priority)
 - [ ] 2 staggered iterations at most
 - [x] Phase change
-- [ ] Temperature dependent parameters
+- [ ] Melting of powder into bulk
+- [x] Temperature dependent parameters
 - [x] 5 tests
 - [x] 10 tests
 - [x] Chimera inside of substepper (difficult)
@@ -39,14 +40,14 @@ TODO
 - [x] Add test for get_active_dofs_external! (low priority)
 - [x] (VERY IMPORTANT) Update SUPG with phase change
 - [x] On delete of substepper, set activation to physical (high priority)
-- [ ] Stop storing ext_conductivity (low priority)
+- [x] Stop storing ext_conductivity (low priority)
 - [ ] Unify extract_cell_geo of get_active_dofs_external and geometry_utils (low priority)
 - [ ] h for Robin's gamma not computed explicitly
 - [ ] (IMPORTANT) Substepper + Dirichlet conditions
 - [ ] In substepper, update physical domain restriction where relevant
 - [ ] Material rework to subdomains
-- [ ] Store material properties as functions of Temperature
+- [x] Store material properties as functions of Temperature
 - [ ] Move Chimera problem to initial position in pre_loop of substepper
 - [ ] Mesh independent forms in monolithic robin driver
-- [ ] Set explicit linear solve in SNES where it matters
+- [x] Set explicit linear solve in SNES where it matters
 - [ ] In micro_pre_iterate, abort if end of path and set t1_macro and ps.dt to diff values

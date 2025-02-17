@@ -70,12 +70,6 @@ def run_staggered_RR(params, writepos=True):
             if staggered_driver.convergence_crit < staggered_driver.convergence_threshold:
                 break
         substeppin_driver.post_loop()
-        # Interpolate solution to inactive ps
-        ps.u.x.array[substeppin_driver.dofs_fast] = pf.u.x.array[substeppin_driver.dofs_fast]
-        ps.u.x.scatter_forward()
-        ps.is_grad_computed = False
-        pf.u.x.array[:] = ps.u.x.array[:]
-        pf.is_grad_computed = False
         if writepos:
             ps.writepos()
     return ps

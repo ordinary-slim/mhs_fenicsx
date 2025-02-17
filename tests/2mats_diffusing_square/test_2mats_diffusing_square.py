@@ -109,7 +109,8 @@ def monolithic_robin(params, writepos=True):
     driver.post_iterate()
     for p in [p_left, p_right]:
         p.post_iterate()
-        p.writepos(extra_funcs=[p.dirichlet_bcs[0].g])
+        if writepos:
+            p.writepos(extra_funcs=[p.dirichlet_bcs[0].g])
     return p_left, p_right
 
 def test_2mats_diffusing_square_ref():

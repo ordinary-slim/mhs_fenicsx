@@ -82,6 +82,7 @@ class MHSSubstepper(ABC):
         self.macro_iter = 0
         self.prev_iter = {p:p.iter for p in self.plist}
         self.u_prev = {p:p.u.copy() for p in self.plist}
+        self.material_id_prev = {p:p.material_id.copy() for p in self.plist}
         for u in self.u_prev.values():
             u.name = "u_prev_driver"
         self.initialize_post()
@@ -105,6 +106,7 @@ class MHSSubstepper(ABC):
             p.time = self.t0_macro_step
             p.iter = self.prev_iter[p]
             p.u_prev.x.array[:] = self.u_prev[p].x.array[:]
+            p.material_id.x.array[:] = self.material_id_prev[p].x.array[:]
 
     def find_subproblem_els(self):
         ps = self.ps
@@ -186,7 +188,12 @@ class MHSSubstepper(ABC):
 
     def post_loop(self):
         #TODO: Change this!
+        (ps,pf) = (self.ps,self.pf)
         self.ps.set_activation(self.initial_active_els)
+        # Update material composition
+        ps.material_id.x.array[pf.active_els] = pf.material_id.x.array[pf.active_els]
+        ps.material_id.x.scatter_forward()
+        pf.material_id.x.array[:] = ps.material_id.x.array[:]
 
 class MHSSemiMonolithicSubstepper(MHSSubstepper):
     def __init__(self,slow_problem: Problem ,writepos=True,
@@ -396,7 +403,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
             p, p_ext = (ps, pf)
             time = (self.macro_iter-1) + self.fraction_macro_step
         funs = [p.u, p.gamma_nodes[p_ext],p.source.fem_function,p.active_els_func,p.grad_u,
-                p.u_prev,self.u_prev[p]]
+                p.u_prev,self.u_prev[p], p.material_id]
         funs += extra_funs
 
         p.compute_gradient()
@@ -438,8 +445,8 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         else:
             p, p_ext = (ps, pf)
             time = (self.macro_iter-1) + self.fraction_macro_step
-        funs = [p.u,p.gamma_nodes[p_ext],p.source.fem_function,p.active_els_func,p.grad_u,
-                p.u_prev,self.u_prev[p]]
+        funs = [p.u,p.gamma_nodes[p_ext], p.source.fem_function, p.active_els_func, p.grad_u,
+                p.u_prev, self.u_prev[p], p.material_id]
         for fun_dic in [sd.ext_flux,sd.net_ext_flux,sd.ext_sol,
                         sd.prev_ext_flux,sd.prev_ext_sol]:
             try:
@@ -557,3 +564,13 @@ class MHSStaggeredSubstepper(MHSSubstepper):
                 self.ext_sol_tn[p].x.array[:] = p_ext.u.x.array[:]
             else:
                 propagate_dg0_at_facets_same_mesh(p_ext, p_ext.grad_u, p, self.ext_flux_tn[p])
+
+    def post_loop(self):
+        super().post_loop()
+        (ps,pf) = (self.ps,self.pf)
+        # Update solution
+        ps.u.x.array[self.dofs_fast] = pf.u.x.array[self.dofs_fast]
+        ps.u.x.scatter_forward()
+        ps.is_grad_computed = False
+        pf.u.x.array[:] = ps.u.x.array[:]
+        pf.is_grad_computed = False

@@ -70,6 +70,7 @@ class Problem:
 
         # BCs / Interface
         self.ext_nodal_activation : dict['Problem', npt.NDArray[np.bool]] = {}
+        self.ext_owned_els : dict['Problem', npt.NDArray[np.int32]] = {}
         self.gamma_nodes : dict['Problem', fem.Function] = {}
         self.gamma_facets : dict['Problem', mesh.MeshTags] = {}
         self.gamma_facets_index_map : dict['Problem', dolfinx.common.IndexMap] = {}
@@ -158,6 +159,9 @@ class Problem:
             "form_subdomain_data",
             ])
         to_be_reset = set([
+            "local_cells",
+            "ext_nodal_activation",
+            "ext_owned_els",
             "gamma_nodes",
             "gamma_facets",
             "gamma_facets_index_map",
@@ -220,12 +224,21 @@ class Problem:
             self.convection_coeff = None
 
         self.materials = []
-        self.phase_change = False
+        self.phase_change, self.melting = False, False
         for key in parameters.keys():
             if key.startswith("material"):
-                material = Material(parameters[key])
+                name = key.split('_')[-1]
+                material = Material(parameters[key], name=name)
                 self.materials.append(material)
                 self.phase_change = (self.phase_change or material.phase_change)
+                self.melting = (self.melting or (material.melts_to is not None))
+        self.material_library = {mat.name : mat for mat in self.materials}
+        self.local_cells = {mat: np.array([], dtype=np.int32) for mat in self.materials}
+        self.material_library[None] = None
+        if self.melting:
+            self.u_av = fem.Function(self.dg0, name="u_av")
+            for mat in self.materials:
+                mat.melts_to = self.material_library[mat.melts_to]
 
         assert len(self.materials) > 0, "No materials defined!"
         self.material_to_tag  = {mat: (idx+1) for idx, mat in enumerate(self.materials)}
@@ -242,6 +255,7 @@ class Problem:
     def update_material_at_cells(self, cells, mat : Material, finalize=True):
         self.material_id.x.array[cells] = self.material_to_tag[mat]
         if finalize:
+            self.material_id.x.scatter_forward()
             self.set_form_subdomain_data()
 
     def compute_advected_el_size(self):
@@ -280,10 +294,30 @@ class Problem:
         if not(forced_time_derivative):
             self.u_prev.x.array[:] = self.u.x.array
 
-    def post_iterate(self):
+    def post_modify_solution(self):
+        self.is_grad_computed = False
+        self.melt()
+
+    def melt(self):
+        '''Post-iterate op'''
+        self.melted = False
+        if self.melting:
+            self.u_av.interpolate(self.u)
+            self.u_av.x.scatter_forward()
+            for mat in self.materials:
+                if mat.melts_to is not None:
+                    indices_cells_to_melt = (self.u_av.x.array[self.local_cells[mat]] >= mat.T_m.value).nonzero()[0]
+                    cells_to_melt = self.local_cells[mat][indices_cells_to_melt]
+                    if cells_to_melt.size:
+                        self.melted = True
+                        self.update_material_at_cells(cells_to_melt, mat.melts_to, finalize=False)
+            self.material_id.x.scatter_forward()
+
+    def post_iterate(self, finalize=True):
         self._destroy()
         self.has_preassembled = False
-        self.is_grad_computed = False
+        if finalize:
+            self.set_form_subdomain_data()
 
     def is_path_over(self):
         return (self.source.path.tracks[-1].t1 - self.time) < 1e-7
@@ -357,11 +391,8 @@ class Problem:
             # Cell data
             mat_els_d = np.logical_and((self.material_id.x.array == tag),
                                      self.active_els_func.x.array).nonzero()[0]
-            mat_els_d = mat_els_d[:np.searchsorted(mat_els_d, self.cell_map.size_local)]
-            cell_subdomain_data.append((self.material_to_itag[mat], mat_els_d))
-            # Facet data
-            # Find which facets have which material
-
+            self.local_cells[mat] = mat_els_d[:np.searchsorted(mat_els_d, self.cell_map.size_local)]
+            cell_subdomain_data.append((self.material_to_itag[mat], self.local_cells[mat]))
 
         self.form_subdomain_data = {
                 fem.IntegralType.cell : cell_subdomain_data,
@@ -400,19 +431,19 @@ class Problem:
 
     def subtract_problem(self, p_ext : 'Problem', finalize=True):
         self.ext_nodal_activation[p_ext] = self.get_active_in_external(p_ext)
-        new_active_els = mhs_fenicsx_cpp.deactivate_from_nodes(self.domain._cpp_object,
-                                                               self.active_els_func._cpp_object,
-                                                               self.ext_nodal_activation[p_ext])
-        self.set_activation(new_active_els, finalize=finalize)
+        active_els, self.ext_owned_els[p_ext] = mhs_fenicsx_cpp.deactivate_from_nodes(self.domain._cpp_object,
+                                                                                      self.active_els_func._cpp_object,
+                                                                                      self.ext_nodal_activation[p_ext])
+        self.set_activation(active_els, finalize=finalize)
         if finalize:
             self.find_gamma(p_ext, self.ext_nodal_activation[p_ext])
 
     def intersect_problem(self, p_ext : 'Problem', finalize=True):
         self.ext_nodal_activation[p_ext] = self.get_active_in_external(p_ext)
-        new_active_els = mhs_fenicsx_cpp.intersect_from_nodes(self.domain._cpp_object,
-                                                              self.active_els_func._cpp_object,
-                                                              self.ext_nodal_activation[p_ext])
-        self.set_activation(new_active_els, finalize=finalize)
+        active_els = mhs_fenicsx_cpp.intersect_from_nodes(self.domain._cpp_object,
+                                                          self.active_els_func._cpp_object,
+                                                          self.ext_nodal_activation[p_ext])
+        self.set_activation(active_els, finalize=finalize)
         if finalize:
             self.find_gamma(p_ext, self.ext_nodal_activation[p_ext])
 
@@ -671,7 +702,6 @@ class Problem:
         if not(self.is_post_initialized):
             self.initialize_post()
         funcs = [self.u,
-                 #self.u_prev,
                  self.active_els_func,
                  self.active_nodes_func,
                  self.material_id,
@@ -763,7 +793,7 @@ class Problem:
         snes.destroy()
         [opts.__delitem__(k) for k in opts.getAll().keys()] # Clear options data-base
         opts.destroy()
-        self.is_grad_computed = False#dubious line
+        self.post_modify_solution()
 
 class GammaL2Dotter:
     def __init__(self, p:Problem):

@@ -345,7 +345,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         opts.destroy()
 
         for p in [p1, p2]:
-            p.is_grad_computed = False
+            p.post_modify_solution()
 
     def _destroy(self):
         for attr in ["x", "A12", "A21", "obj_vec"]:

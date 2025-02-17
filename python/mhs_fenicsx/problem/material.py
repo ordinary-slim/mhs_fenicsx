@@ -6,16 +6,21 @@ import numba
 import ctypes
 
 class Material:
-    def __init__(self, params: typing.Dict):
+    def __init__(self, params: typing.Dict, name="mat"):
+        self.name = name
         self.k   = to_piecewise_linear(params["conductivity"], compile=True)
         self.rho = to_piecewise_linear(params["density"])
         self.cp  = to_piecewise_linear(params["specific_heat"])
         self.phase_change = False
+        self.melts_to = None
         if "phase_change" in params:
             self.phase_change = True
             self.L   = to_piecewise_linear(params["phase_change"]["latent_heat"])
             self.T_s = Constant(params["phase_change"]["solidus_temperature"])
             self.T_l = Constant(params["phase_change"]["liquidus_temperature"])
+            self.T_m = Constant((self.T_l.value + self.T_s.value) / 2.0)
+            if "melts_to" in params["phase_change"]:
+                self.melts_to = params["phase_change"]["melts_to"]
         all_scalars = []
         for key in self.__dict__.keys():
             attr = self.__dict__[key]

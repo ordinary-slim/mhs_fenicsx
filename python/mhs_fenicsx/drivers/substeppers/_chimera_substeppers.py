@@ -1,4 +1,5 @@
 from mhs_fenicsx.problem import Problem
+from mhs_fenicsx.problem.helpers import interpolate
 from mhs_fenicsx.drivers.substeppers import MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper
 from mhs_fenicsx.drivers._monolithic_drivers import MonolithicRRDriver
 import mhs_fenicsx_cpp
@@ -97,12 +98,13 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
             pf.non_linear_solve()
             local_ext_dofs = pm.ext_nodal_activation[pf].nonzero()[0]
             local_ext_dofs = local_ext_dofs[:np.searchsorted(local_ext_dofs, pm.domain.topology.index_map(0).size_local)]
-            mhs_fenicsx_cpp.interpolate_cg1_affine(pf.u._cpp_object,
-                                                   pm.u._cpp_object,
-                                                   np.arange(pf.cell_map.size_local),
-                                                   local_ext_dofs,
-                                                   pm.dof_coords[local_ext_dofs],
-                                                   1e-6)
+            interpolate(pf.u,
+                        pm.u,
+                        np.arange(pf.cell_map.size_local),
+                        local_ext_dofs,
+                        pm.dof_coords[local_ext_dofs],
+                        1e-6)
+            pm.post_modify_solution()
 
 
     def writepos(self,case="macro",extra_funs=[]):
@@ -122,7 +124,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
         else:
             p, p_ext = (ps, pf)
             time = (self.macro_iter-1) + self.fraction_macro_step
-        get_funs = lambda p : [p.u,p.source.fem_function,p.active_els_func,p.grad_u, p.u_prev,self.u_prev[p]] + [gn for gn in p.gamma_nodes.values()]
+        get_funs = lambda p : [p.u,p.source.fem_function,p.active_els_func,p.grad_u, p.u_prev,self.u_prev[p], p.material_id] + [gn for gn in p.gamma_nodes.values()]
         p_funs = get_funs(p)
         for fun_dic in [sd.ext_flux,sd.net_ext_flux,sd.ext_sol,
                         sd.prev_ext_flux,sd.prev_ext_sol]:
@@ -189,19 +191,19 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
         if not(self.chimera_off):
             self.instantiate_forms(pm)
             pm.pre_assemble()
-
             cd.non_linear_solve()
             interpolate_solution_to_inactive(pf,pm)
         else:
             pf.non_linear_solve()
             local_ext_dofs = pm.ext_nodal_activation[pf].nonzero()[0]
             local_ext_dofs = local_ext_dofs[:np.searchsorted(local_ext_dofs, pm.domain.topology.index_map(0).size_local)]
-            mhs_fenicsx_cpp.interpolate_cg1_affine(pf.u._cpp_object,
-                                                   pm.u._cpp_object,
-                                                   np.arange(pf.cell_map.size_local),
-                                                   local_ext_dofs,
-                                                   pm.dof_coords[local_ext_dofs],
-                                                   1e-6)
+            interpolate(pf.u,
+                        pm.u,
+                        np.arange(pf.cell_map.size_local),
+                        local_ext_dofs,
+                        pm.dof_coords[local_ext_dofs],
+                        1e-6)
+            pm.post_modify_solution()
 
     def monolithic_step(self):
         (ps, pf, pm) = (self.ps, self.pf, self.pm)
@@ -262,7 +264,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
             pm.u.x.scatter_forward()
             pf.u.x.scatter_forward()
             if interpolate:
-                interpolate_solution_to_inactive(pf,pm)
+                interpolate_solution_to_inactive(pf, pm, finalize=False)
             ps.u.x.array[:] = pf.u.x.array[:]
 
         def J_snes(
@@ -324,6 +326,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
 
         ## POST-ITERATE
         for p in self.plist:
+            p.post_modify_solution()
             p.post_iterate()
         ps.set_dt(ps.dt.value)
         pf.dirichlet_bcs = [self.fast_dirichlet_tcon]
@@ -349,7 +352,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
             Ps = [ps, pf]
             time = (self.macro_iter-1) + self.fraction_macro_step
         get_funs = lambda p : [p.u, p.source.fem_function,p.active_els_func,p.grad_u,
-                p.u_prev,self.u_prev[p]] + list(p.gamma_nodes.values())
+                p.u_prev,self.u_prev[p], p.material_id] + list(p.gamma_nodes.values())
 
         for p in Ps:
             p.compute_gradient()
@@ -358,6 +361,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
             self.writers[self.pm].write_function(get_funs(self.pm),t=time)
 
 
+# TODO: Move this into a class
 chimera_type = typing.Union[MHSSemiMonolithicSubstepper, MHSStaggeredChimeraSubstepper]
 def chimera_post_init(substepper : chimera_type, chimera_always_on):
     substepper.chimera_driver = MonolithicRRDriver(substepper.pf, substepper.pm,

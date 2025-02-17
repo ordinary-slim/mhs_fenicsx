@@ -1,0 +1,65 @@
+# BEG_ESSENTIAL
+isSteady: False
+heat_source : {
+  initial_position : [-5.0, 0.0, 0.0],
+  initial_speed : [1000.0, 0.0, 0],
+  radius : 0.05,
+  power : 500,
+}
+# PROPS
+material_powder : {
+  density : &density 4.3E-06, # kg / mm3
+  conductivity :  [[25, 1.0E-03], [1625, 10.0E-03]], # W / mm / K
+  specific_heat : &specific_heat 700, # J / kg / K
+  phase_change : {
+    latent_heat : &latent_heat 350.0E+03,
+    solidus_temperature : &solidus_temperature 1600.0,
+    liquidus_temperature : &liquidus_temperature 1650.0,
+    melts_to : "metal",
+  }
+}
+material_metal : {
+  density : *density, # kg / mm3
+  conductivity : 10.0E-03, # W / mm / K
+  specific_heat : *specific_heat, # J / kg / K
+  phase_change : {
+    latent_heat : *latent_heat,
+    solidus_temperature : *solidus_temperature,
+    liquidus_temperature : *liquidus_temperature,
+  }
+}
+smoothing_cte_phase_change : 1.0
+#convection_coeff : 1.0E-00
+environment_temperature : 25
+# END_ESSENTIAL
+petsc_opts_micro: {
+  "ksp_type" : "cg",
+  "ksp_rtol" : 1e-14,
+  "pc_type" : "jacobi",
+}
+petsc_opts_macro: {
+  "ksp_type" : "cg",
+  "ksp_rtol" : 1e-14,
+  "pc_type" : "jacobi",
+}
+domain_width: 1
+domain_height: 0.5
+path: "Path.gcode"
+els_per_radius: 4
+max_staggered_iters: 1
+
+max_timesteps: 2
+micro_adim_dt: 0.5
+macro_adim_dt: 5
+
+driver_type: "robin"
+initial_condition: False
+predictor_step: True
+substepper_writepos: True
+quadrature_metadata: {}
+supg: 1
+
+max_nr_iters: 30
+max_ls_iters: 5
+
+chimera_always_on: False

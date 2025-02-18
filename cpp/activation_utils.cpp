@@ -51,33 +51,42 @@ std::vector<int> locate_active_boundary(const dolfinx::mesh::Mesh<T> &domain,
 }
 
 template <std::floating_point T>
-la::Vector<std::int8_t> node_mask_to_el_mask(const dolfinx::mesh::Mesh<T> &domain,
+std::tuple<la::Vector<std::int8_t>,
+  la::Vector<std::int8_t>> node_mask_to_el_mask(const dolfinx::mesh::Mesh<T> &domain,
                                       const std::span<const bool> node_mask) {
   // 1. Make vector
   auto topology = domain.topology();
   auto dofmap_x = domain.geometry().dofmap();
   auto cell_map = topology->index_map(topology->dim());
   const std::int32_t num_local_cells = cell_map->size_local();
-  la::Vector els_mask = la::Vector<std::int8_t>(cell_map, 1);
+  la::Vector<std::int8_t> els_mask(cell_map, 1), colliding_els_mask(cell_map, 1);
   els_mask.set(0);
+  colliding_els_mask.set(0);
   auto els_mask_vals = els_mask.mutable_array();
+  auto colliding_els_mask_vals = colliding_els_mask.mutable_array();
   // 2. Loop over els
   for (int icell = 0; icell < num_local_cells; ++icell) {
     auto xdofs = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
         dofmap_x, icell, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
     bool all_el_nodes_active = true;
-    for (int i = 0; i < dofmap_x.extent(1); ++i) {
-      if (node_mask[xdofs[i]]!=1) {
+    bool one_el_nodes_active = false;
+    for (size_t i = 0; i < dofmap_x.extent(1); ++i) {
+      bool is_node_inactive = (node_mask[xdofs[i]]!=1);
+      one_el_nodes_active = (one_el_nodes_active || not(is_node_inactive));
+      if (is_node_inactive) {
         all_el_nodes_active = false;
         break;
       }
     }
     if (all_el_nodes_active)
       els_mask_vals[icell] = 1;
+    if (one_el_nodes_active)
+      colliding_els_mask_vals[icell] = 1;
   }
   // 3. Scatter
   els_mask.scatter_fwd();
-  return els_mask;
+  colliding_els_mask.scatter_fwd();
+  return std::tuple(els_mask, colliding_els_mask);
 }
 
 template <std::floating_point T>
@@ -88,19 +97,20 @@ std::tuple<std::vector<std::int32_t>,
   auto topology = domain.topology();
   auto cell_map = topology->index_map(topology->dim());
   const std::int32_t num_local_cells = cell_map->size_local(), num_ghost_cells = cell_map->num_ghosts();
-  la::Vector<std::int8_t> ext_active_els_mask = node_mask_to_el_mask(domain, nodes_to_subtract);
+  auto [ext_active_els_mask, _colliding_els_mask] = node_mask_to_el_mask(domain, nodes_to_subtract);
   std::span<const std::int8_t> ext_active_els_mask_vals = ext_active_els_mask.array();
+  std::span<const std::int8_t> colliding_els_mask = _colliding_els_mask.array();
 
   auto curr_active_els_mask = active_els_func.x()->array();
-  std::vector<std::int32_t> active_els, deactivated_els;
+  std::vector<std::int32_t> active_els, colliding_els;
   for (int icell = 0; icell < (num_local_cells+num_ghost_cells); ++icell) {
     if ((curr_active_els_mask[icell]) and (not(ext_active_els_mask_vals[icell]))) {
       active_els.push_back(icell);
-    } else if ((curr_active_els_mask[icell]) and (ext_active_els_mask_vals[icell])) {
-      deactivated_els.push_back(icell);
+    } else if (colliding_els_mask[icell]) {
+      colliding_els.push_back(icell);
     }
   }
-  return {active_els, deactivated_els};
+  return {active_els, colliding_els};
 }
 
 template <std::floating_point T>
@@ -111,7 +121,7 @@ std::vector<std::int32_t> intersect_from_nodes(const dolfinx::mesh::Mesh<T> &dom
   auto topology = domain.topology();
   auto cell_map = topology->index_map(topology->dim());
   const std::int32_t num_local_cells = cell_map->size_local(), num_ghost_cells = cell_map->num_ghosts();
-  la::Vector<std::int8_t> ext_active_els_mask = node_mask_to_el_mask(domain, nodes_to_intersect);
+  auto [ext_active_els_mask, _colliding_els_mask] = node_mask_to_el_mask(domain, nodes_to_intersect);
   std::span<const std::int8_t> ext_active_els_mask_vals = ext_active_els_mask.array();
 
   auto curr_active_els_mask = active_els_func.x()->array();
@@ -176,14 +186,14 @@ void templated_declare_activation_utils(nb::module_ &m) {
          const dolfinx::fem::Function<T> &active_els_func,
          nb::ndarray<const bool, nb::ndim<1>, nb::c_contig> nodes_to_subtract)
       {
-      auto [active_els, deactivated_els] = deactivate_from_nodes<T>(domain,
+      auto [active_els, colliding_els] = deactivate_from_nodes<T>(domain,
           active_els_func,
           std::span(nodes_to_subtract.data(),nodes_to_subtract.size()));
       return std::tuple(
           nb::ndarray<const std::int32_t, nb::numpy>(active_els.data(),
             {active_els.size()}).cast(),
-          nb::ndarray<const std::int32_t, nb::numpy>(deactivated_els.data(),
-            {deactivated_els.size()}).cast());
+          nb::ndarray<const std::int32_t, nb::numpy>(colliding_els.data(),
+            {colliding_els.size()}).cast());
 
       }
       );

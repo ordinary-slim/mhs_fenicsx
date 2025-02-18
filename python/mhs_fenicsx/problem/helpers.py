@@ -12,18 +12,30 @@ import typing
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-def interpolate(sf : dolfinx.fem.Function,
-                rf : dolfinx.fem.Function,
-                scells : npt.NDArray[np.int32],
-                rdofs : npt.NDArray[np.int32],
-                coords_rdofs : npt.NDArray[np.float64],
-                padding=1e-6):
+def interpolate_cg1(sf : dolfinx.fem.Function,
+                    rf : dolfinx.fem.Function,
+                    scells : npt.NDArray[np.int32],
+                    rdofs : npt.NDArray[np.int32],
+                    coords_rdofs : npt.NDArray[np.float64],
+                    padding=1e-6):
     mhs_fenicsx_cpp.interpolate_cg1_affine(sf._cpp_object,
                                            rf._cpp_object,
                                            scells,
                                            rdofs,
                                            coords_rdofs,
                                            padding)
+
+def interpolate_dg0(sf : dolfinx.fem.Function,
+                    rf : dolfinx.fem.Function,
+                    scells : npt.NDArray[np.int32],
+                    rcells : npt.NDArray[np.int32],
+                    padding = 1e-6,
+                    ):
+    mhs_fenicsx_cpp.interpolate_dg0(sf._cpp_object,
+                                    rf._cpp_object,
+                                    scells,
+                                    rcells,
+                                    padding)
 
 def l2_squared(f : dolfinx.fem.Function,active_els_tag):
     dx = ufl.Measure("dx")(subdomain_data=active_els_tag)
@@ -151,8 +163,10 @@ def propagate_dg0_at_facets_same_mesh(ps:Problem, sf:fem.Function, pr:Problem, r
             ps.gamma_imap_to_global_imap[pr]
             )
 
-def assert_pointwise_vals(p:Problem, points, ref_vals, rtol=1.e-5):
+def assert_pointwise_vals(p:Problem, points, ref_vals, f = None, rtol=1.e-5):
     '''Test util'''
+    if f is None:
+        f = p.u
     po = mhs_fenicsx_cpp.cellwise_determine_point_ownership(
             p.domain._cpp_object,
             points,
@@ -161,7 +175,7 @@ def assert_pointwise_vals(p:Problem, points, ref_vals, rtol=1.e-5):
     indices_points_found = (po.src_owner == rank).nonzero()[0]
     rindices_points_found = (po.dest_owners == rank).nonzero()[0]
 
-    vals = p.u.eval(po.dest_points[rindices_points_found], po.dest_cells[rindices_points_found]).reshape(-1)
+    vals = f.eval(po.dest_points[rindices_points_found], po.dest_cells[rindices_points_found]).reshape(-1)
     assert np.isclose(ref_vals[indices_points_found], vals, rtol=rtol).all()
 
 def print_vals(p:Problem, points, only_print=False):

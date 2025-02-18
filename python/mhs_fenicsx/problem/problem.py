@@ -64,13 +64,14 @@ class Problem:
 
         self.u   = fem.Function(self.v, name="uh")   # Solution
         self.u_prev = fem.Function(self.v, name="uh_n") # Previous solution
+        self.u_av = fem.Function(self.dg0, name="u_av") # Average @ cells
         self.grad_u = fem.Function(self.dg0_vec,name="grad")
         self.is_grad_computed = False
         self.dirichlet_bcs = []
 
         # BCs / Interface
         self.ext_nodal_activation : dict['Problem', npt.NDArray[np.bool]] = {}
-        self.ext_owned_els : dict['Problem', npt.NDArray[np.int32]] = {}
+        self.ext_colliding_els : dict['Problem', npt.NDArray[np.int32]] = {}
         self.gamma_nodes : dict['Problem', fem.Function] = {}
         self.gamma_facets : dict['Problem', mesh.MeshTags] = {}
         self.gamma_facets_index_map : dict['Problem', dolfinx.common.IndexMap] = {}
@@ -161,7 +162,7 @@ class Problem:
         to_be_reset = set([
             "local_cells",
             "ext_nodal_activation",
-            "ext_owned_els",
+            "ext_colliding_els",
             "gamma_nodes",
             "gamma_facets",
             "gamma_facets_index_map",
@@ -236,7 +237,6 @@ class Problem:
         self.local_cells = {mat: np.array([], dtype=np.int32) for mat in self.materials}
         self.material_library[None] = None
         if self.melting:
-            self.u_av = fem.Function(self.dg0, name="u_av")
             for mat in self.materials:
                 mat.melts_to = self.material_library[mat.melts_to]
 
@@ -294,20 +294,26 @@ class Problem:
         if not(forced_time_derivative):
             self.u_prev.x.array[:] = self.u.x.array
 
-    def post_modify_solution(self):
+    def post_modify_solution(self, cells=None):
         self.is_grad_computed = False
-        self.melt()
+        self.melt(cells=cells)
 
-    def melt(self):
+    def melt(self, cells=None):
         '''Post-iterate op'''
         self.melted = False
         if self.melting:
-            self.u_av.interpolate(self.u)
+            if cells is None:
+                cells = self.local_active_els
+                mat_dic = self.local_cells
+            else:
+                mat_dic = {}
+                self.divide_domain_by_materials(cells, mat_dic)
+            self.u_av.interpolate(self.u, cells0=cells)
             self.u_av.x.scatter_forward()
             for mat in self.materials:
                 if mat.melts_to is not None:
-                    indices_cells_to_melt = (self.u_av.x.array[self.local_cells[mat]] >= mat.T_m.value).nonzero()[0]
-                    cells_to_melt = self.local_cells[mat][indices_cells_to_melt]
+                    indices_cells_to_melt = (self.u_av.x.array[mat_dic[mat]] >= mat.T_m.value).nonzero()[0]
+                    cells_to_melt = mat_dic[mat][indices_cells_to_melt]
                     if cells_to_melt.size:
                         self.melted = True
                         self.update_material_at_cells(cells_to_melt, mat.melts_to, finalize=False)
@@ -385,15 +391,18 @@ class Problem:
                                          facets_integration_data[indices_integration_data]))
         return facet_subdomain_data
 
-    def set_form_subdomain_data(self):
-        cell_subdomain_data = []
+    def divide_domain_by_materials(self, els=None, dic=None):
+        if dic is None:
+            dic = self.local_cells
+        if els is None:
+            els = self.local_active_els
         for mat, tag in self.material_to_tag.items():
-            # Cell data
-            mat_els_d = np.logical_and((self.material_id.x.array == tag),
-                                     self.active_els_func.x.array).nonzero()[0]
-            self.local_cells[mat] = mat_els_d[:np.searchsorted(mat_els_d, self.cell_map.size_local)]
-            cell_subdomain_data.append((self.material_to_itag[mat], self.local_cells[mat]))
+            dic[mat] = els[(self.material_id.x.array[els] == tag).nonzero()[0]]
+        return dic
 
+    def set_form_subdomain_data(self):
+        self.divide_domain_by_materials()
+        cell_subdomain_data = [(self.material_to_itag[mat], self.local_cells[mat]) for mat in self.materials]
         self.form_subdomain_data = {
                 fem.IntegralType.cell : cell_subdomain_data,
                 fem.IntegralType.exterior_facet : self.get_facets_subdomain_data(),
@@ -431,9 +440,10 @@ class Problem:
 
     def subtract_problem(self, p_ext : 'Problem', finalize=True):
         self.ext_nodal_activation[p_ext] = self.get_active_in_external(p_ext)
-        active_els, self.ext_owned_els[p_ext] = mhs_fenicsx_cpp.deactivate_from_nodes(self.domain._cpp_object,
+        active_els, self.ext_colliding_els[p_ext] = mhs_fenicsx_cpp.deactivate_from_nodes(self.domain._cpp_object,
                                                                                       self.active_els_func._cpp_object,
                                                                                       self.ext_nodal_activation[p_ext])
+        self.ext_colliding_els[p_ext] = self.ext_colliding_els[p_ext][:np.searchsorted(self.ext_colliding_els[p_ext], self.cell_map.size_local)]
         self.set_activation(active_els, finalize=finalize)
         if finalize:
             self.find_gamma(p_ext, self.ext_nodal_activation[p_ext])

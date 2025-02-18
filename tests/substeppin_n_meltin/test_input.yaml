@@ -45,7 +45,7 @@ petsc_opts_macro: {
 domain_width: 1
 domain_height: 0.5
 path: "Path.gcode"
-els_per_radius: 4
+els_per_radius: 2
 max_staggered_iters: 1
 
 max_timesteps: 2
@@ -55,7 +55,7 @@ macro_adim_dt: 5
 driver_type: "robin"
 initial_condition: False
 predictor_step: True
-substepper_writepos: True
+substepper_writepos: False
 quadrature_metadata: {}
 supg: 1
 

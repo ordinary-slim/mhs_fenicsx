@@ -269,6 +269,56 @@ void interpolate_cg1_affine(const dolfinx::fem::Function<T> &sending_f,
   receiving_f.x()->scatter_fwd();
 }
 
+template <std::floating_point T>
+void interpolate_dg0(const dolfinx::fem::Function<T> &sending_f,
+                    dolfinx::fem::Function<T> &receiving_f,
+                    std::span<const std::int32_t> sending_cells,
+                    std::span<const std::int32_t> receiving_cells,
+                    T padding = 1e-7) {
+    std::shared_ptr smesh = sending_f.function_space()->mesh();//sending mesh
+    std::shared_ptr rmesh = receiving_f.function_space()->mesh();//receiving mesh
+    MPI_Comm comm = smesh->comm();
+    {
+      int result;
+      MPI_Comm_compare(comm, rmesh->comm(), &result);
+      if (result == MPI_UNEQUAL)
+      {
+        throw std::runtime_error("Interpolation on different meshes is only "
+                                 "supported on the same communicator.");
+      }
+    }
+    // Compute midpoints of rcells
+    int cdim = rmesh->topology()->dim();
+    const std::vector<T> midpoints = mesh::compute_midpoints(*rmesh, cdim, receiving_cells);
+    // Point ownership with midpoints and scells
+    dolfinx::geometry::PointOwnershipData<T> interpolation_data =
+      my_determine_point_ownership(*smesh,
+          std::span<const T>(midpoints.data(), midpoints.size()),
+          sending_cells,
+          padding);
+    // Gather sf info at cells
+    auto s_x = sending_f.x()->array();
+    std::vector<T> rvals(interpolation_data.src_owner.size());
+    std::vector<T> _svals(interpolation_data.dest_cells.size());
+    std::transform(interpolation_data.dest_cells.begin(), interpolation_data.dest_cells.end(),
+        _svals.begin(),
+        [s_x](auto& icell){ return s_x[icell]; });
+    using dextents2 = MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>;
+    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<const T, dextents2> svals(
+        _svals.data(), _svals.size(), 1);
+    scatter_values(comm,
+        interpolation_data.dest_owners,
+        interpolation_data.src_owner,
+        svals,
+        std::span(rvals));
+    // Unpack info
+    auto r_x = receiving_f.x()->mutable_array();
+    for (size_t i = 0; i < rvals.size(); ++i)
+      r_x[receiving_cells[i]] = rvals[i];
+    receiving_f.x()->scatter_fwd();
+}
+
+
 namespace nb = nanobind;
 template <std::floating_point T>
 void templated_declare_interpolate(nb::module_ &m) {
@@ -326,12 +376,28 @@ void templated_declare_interpolate(nb::module_ &m) {
         nb::ndarray<const T, nb::ndim<2>, nb::c_contig> coords_dofs_to_interpolate,
         T padding
       ) {
-        return interpolate_cg1_affine<T>(sending_f,
-                                         receiving_f,
-                                         std::span(sending_cells.data(), sending_cells.size()),
-                                         std::span(dofs_to_interpolate.data(), dofs_to_interpolate.size()),
-                                         std::span(coords_dofs_to_interpolate.data(), coords_dofs_to_interpolate.size()),
-                                         padding);
+        interpolate_cg1_affine<T>(sending_f,
+            receiving_f,
+            std::span(sending_cells.data(), sending_cells.size()),
+            std::span(dofs_to_interpolate.data(), dofs_to_interpolate.size()),
+            std::span(coords_dofs_to_interpolate.data(), coords_dofs_to_interpolate.size()),
+            padding);
+      }
+      );
+  m.def(
+      "interpolate_dg0",
+      [](
+        const dolfinx::fem::Function<T> &sending_f,
+        dolfinx::fem::Function<T> &receiving_f,
+        nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> sending_cells,
+        nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> receiving_cells,
+        T padding
+      ) {
+        interpolate_dg0<T>(sending_f,
+            receiving_f,
+            std::span(sending_cells.data(), sending_cells.size()),
+            std::span(receiving_cells.data(), receiving_cells.size()),
+            padding);
       }
       );
 }

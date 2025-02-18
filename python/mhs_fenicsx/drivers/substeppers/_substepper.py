@@ -59,12 +59,12 @@ class MHSSubstepper(ABC):
             p.clear_gamma_data()
         # Store this and use it for deactivation?
         if not(subproblem_els):
-            subproblem_els = self.find_subproblem_els()
+            self.subproblem_els = self.find_subproblem_els()
         hs_radius = pf.source.R
         self.track = pf.source.path.get_track(self.t0_macro_step)
         hs_speed  = self.track.speed# TODO: Can't use this speed only!
         pf.set_dt( ps.input_parameters["micro_adim_dt"] * (hs_radius / hs_speed) )
-        pf.set_activation(subproblem_els)
+        pf.set_activation(self.subproblem_els)
         pf.set_linear_solver(pf.input_parameters["petsc_opts_micro"])
         # Subtract fast
         ps.set_activation(np.logical_not(pf.active_els_func.x.array).nonzero()[0], finalize=not(self.do_predictor))
@@ -72,7 +72,7 @@ class MHSSubstepper(ABC):
             ps.update_boundary()
             ps.set_form_subdomain_data()
         set_same_mesh_interface(ps, pf)
-        self.dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim, subproblem_els)
+        self.dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim, self.subproblem_els)
         mask_dofs_slow = np.ones(ps.v.dofmap.index_map.size_local + ps.v.dofmap.index_map.num_ghosts, np.bool)
         mask_dofs_slow[self.dofs_fast] = np.False_
         self.dofs_slow = mask_dofs_slow.nonzero()[0]
@@ -191,7 +191,7 @@ class MHSSubstepper(ABC):
         (ps,pf) = (self.ps,self.pf)
         self.ps.set_activation(self.initial_active_els)
         # Update material composition
-        ps.material_id.x.array[pf.active_els] = pf.material_id.x.array[pf.active_els]
+        ps.material_id.x.array[self.subproblem_els] = pf.material_id.x.array[self.subproblem_els]
         ps.material_id.x.scatter_forward()
         pf.material_id.x.array[:] = ps.material_id.x.array[:]
 

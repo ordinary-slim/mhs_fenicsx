@@ -2,20 +2,19 @@ import dolfinx.mesh
 import numpy as np
 from mpi4py import MPI
 from mhs_fenicsx.problem import Problem, HeatSource
-from mhs_fenicsx.problem.helpers import interpolate
+from mhs_fenicsx.problem.helpers import interpolate_cg1
 
 def interpolate_solution_to_inactive(p:Problem, p_ext:Problem, finalize=True):
-    # Solution
     local_ext_inactive_dofs = np.logical_and((p.active_nodes_func.x.array == 0), p.ext_nodal_activation[p_ext]).nonzero()[0]
     local_ext_inactive_dofs = local_ext_inactive_dofs[:np.searchsorted(local_ext_inactive_dofs, p.domain.topology.index_map(0).size_local)]
-    interpolate(p_ext.u,
-                p.u,
-                np.arange(p_ext.cell_map.size_local),
-                local_ext_inactive_dofs,
-                p.dof_coords[local_ext_inactive_dofs],
-                1e-6)
+    interpolate_cg1(p_ext.u,
+                    p.u,
+                    np.arange(p_ext.cell_map.size_local),
+                    local_ext_inactive_dofs,
+                    p.dof_coords[local_ext_inactive_dofs],
+                    1e-6)
     if finalize:
-        p.post_modify_solution()
+        p.post_modify_solution(cells=p.ext_colliding_els[p_ext])
 
 def build_moving_problem(p_fixed:Problem,els_per_radius=2):
     moving_domain = mesh_around_hs(p_fixed.source,p_fixed.domain.topology.dim,els_per_radius)

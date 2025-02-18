@@ -1,5 +1,5 @@
 from mhs_fenicsx.problem import Problem
-from mhs_fenicsx.problem.helpers import interpolate
+from mhs_fenicsx.problem.helpers import interpolate_cg1, interpolate_dg0
 from mhs_fenicsx.drivers.substeppers import MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper
 from mhs_fenicsx.drivers._monolithic_drivers import MonolithicRRDriver
 import mhs_fenicsx_cpp
@@ -10,11 +10,59 @@ from mhs_fenicsx.chimera import interpolate_solution_to_inactive
 import multiphenicsx
 from petsc4py import PETSc
 import typing
+import numpy.typing as npt
+from abc import ABC, abstractmethod
 
 def check_assumptions(ps, pf, pm):
     return not(np.logical_and(pf.gamma_facets[pm].values, ps.bfacets_tag.values).all())
 
-class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
+class ChimeraSubstepper(ABC):
+    @abstractmethod
+    def __init__(self):
+        self.pf : Problem
+        self.pm : Problem
+        self.quadrature_degree : int
+        self.fast_subproblem_els : npt.NDArray[np.int32]
+
+    @abstractmethod
+    def micro_pre_iterate(self):
+        pass
+
+    def chimera_post_init(self, chimera_always_on):
+        self.chimera_driver = MonolithicRRDriver(self.pf, self.pm,
+                                                 quadrature_degree=self.quadrature_degree)
+        self.chimera_off = False
+        self.chimera_always_on = chimera_always_on
+
+    def chimera_micro_pre_iterate(self):
+        pf = self.pf
+        super(type(self), self).micro_pre_iterate()
+        if not(self.chimera_always_on):
+            next_track = self.pf.source.path.get_track(pf.time)
+            if ((pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) < 0.15:
+                self.chimera_off = True
+            else:
+                self.chimera_off = False
+
+    def chimera_micro_post_iterate(self):
+        '''
+        post_iterate of micro_step
+        TODO: Maybe refactor? Seems like ps needs the same thing
+        '''
+        (pf, pm) = (self.pf, self.pm)
+        for p in (pf, pm):
+            current_track = p.source.path.get_track(p.time)
+            dt2track_end = current_track.t1 - p.time
+            if abs(p.dt.value - dt2track_end) < 1e-9:
+                p.set_dt(dt2track_end)
+        self.pf.set_activation(self.fast_subproblem_els, finalize=False)
+
+    def chimera_interpolate_material_id(self):
+        (pf, pm) = (self.pf, self.pm)
+        interpolate_dg0(pf.material_id, pm.material_id,
+                        pf.ext_colliding_els[pm], pm.local_active_els)
+
+class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
     def __init__(self,slow_problem:Problem, moving_problem : Problem,
                  writepos=True,
                  max_nr_iters=25,max_ls_iters=5,
@@ -29,7 +77,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
         self.plist.append(self.pm)
         self.quadrature_degree = 2 # Gamma Chimera
         self.name = "staggered_chimera_substepper"
-        chimera_post_init(self, chimera_always_on)
+        self.chimera_post_init(chimera_always_on)
 
     def compile_forms(self):
         ps, pm = (self.ps, self.pm)
@@ -53,10 +101,10 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
             p.post_iterate()
 
     def micro_pre_iterate(self):
-        chimera_micro_pre_iterate(self)
+        self.chimera_micro_pre_iterate()
 
     def micro_post_iterate(self):
-        chimera_micro_post_iterate(self)
+        self.chimera_micro_post_iterate()
 
     def micro_step(self):
         (ps,pf,pm) = plist = (self.ps,self.pf,self.pm)
@@ -72,6 +120,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
 
         if not(self.chimera_off):
             pf.subtract_problem(pm, finalize=False)# Can I finalize here?
+            self.chimera_interpolate_material_id()
 
         for p, p_ext in [(pm, pf), (pf, pm)]:
             p.finalize_activation()
@@ -93,19 +142,17 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
             self.instantiate_forms(pm)
             pm.pre_assemble()
             cd.non_linear_solve()
-            interpolate_solution_to_inactive(pf,pm)
+            interpolate_solution_to_inactive(pf, pm)
         else:
             pf.non_linear_solve()
             local_ext_dofs = pm.ext_nodal_activation[pf].nonzero()[0]
             local_ext_dofs = local_ext_dofs[:np.searchsorted(local_ext_dofs, pm.domain.topology.index_map(0).size_local)]
-            interpolate(pf.u,
-                        pm.u,
-                        np.arange(pf.cell_map.size_local),
-                        local_ext_dofs,
-                        pm.dof_coords[local_ext_dofs],
-                        1e-6)
-            pm.post_modify_solution()
-
+            interpolate_cg1(pf.u,
+                            pm.u,
+                            np.arange(pf.cell_map.size_local),
+                            local_ext_dofs,
+                            pm.dof_coords[local_ext_dofs],
+                            1e-6)
 
     def writepos(self,case="macro",extra_funs=[]):
         if not(self.do_writepos):
@@ -124,7 +171,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
         else:
             p, p_ext = (ps, pf)
             time = (self.macro_iter-1) + self.fraction_macro_step
-        get_funs = lambda p : [p.u,p.source.fem_function,p.active_els_func,p.grad_u, p.u_prev,self.u_prev[p], p.material_id] + [gn for gn in p.gamma_nodes.values()]
+        get_funs = lambda p : [p.u,p.source.fem_function,p.active_els_func,p.grad_u, p.u_prev,self.u_prev[p], p.material_id, p.u_av] + [gn for gn in p.gamma_nodes.values()]
         p_funs = get_funs(p)
         for fun_dic in [sd.ext_flux,sd.net_ext_flux,sd.ext_sol,
                         sd.prev_ext_flux,sd.prev_ext_sol]:
@@ -138,7 +185,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper):
         if case=="micro":
             self.writers[pm].write_function(get_funs(pm),t=time)
 
-class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
+class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSubstepper):
     def __init__(self,slow_problem:Problem, moving_problem : Problem,
                  writepos=True,
                  max_nr_iters=25,max_ls_iters=5,
@@ -150,17 +197,17 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
         self.compile_forms()
         self.quadrature_degree = 2 # Gamma Chimera
         self.name = "semi_monolithic_chimera_substepper"
-        chimera_post_init(self, chimera_always_on)
+        self.chimera_post_init(chimera_always_on)
 
     def pre_loop(self, prepare_fast_problem=False):
         super().pre_loop(prepare_fast_problem)
         self.pm.set_dt(self.pf.dt.value)
 
     def micro_pre_iterate(self):
-        chimera_micro_pre_iterate(self)
+        self.chimera_micro_pre_iterate()
 
     def micro_post_iterate(self):
-        chimera_micro_post_iterate(self)
+        self.chimera_micro_post_iterate()
 
     def micro_step(self):
         (ps,pf,pm) = plist = (self.ps,self.pf,self.pm)
@@ -174,6 +221,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
 
         if not(self.chimera_off):
             pf.subtract_problem(pm, finalize=False)# Can I finalize here?
+            self.chimera_interpolate_material_id()
 
         for p, p_ext in [(pm, pf), (pf, pm)]:
             p.finalize_activation()
@@ -197,13 +245,12 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
             pf.non_linear_solve()
             local_ext_dofs = pm.ext_nodal_activation[pf].nonzero()[0]
             local_ext_dofs = local_ext_dofs[:np.searchsorted(local_ext_dofs, pm.domain.topology.index_map(0).size_local)]
-            interpolate(pf.u,
-                        pm.u,
-                        np.arange(pf.cell_map.size_local),
-                        local_ext_dofs,
-                        pm.dof_coords[local_ext_dofs],
-                        1e-6)
-            pm.post_modify_solution()
+            interpolate_cg1(pf.u,
+                            pm.u,
+                            np.arange(pf.cell_map.size_local),
+                            local_ext_dofs,
+                            pm.dof_coords[local_ext_dofs],
+                            1e-6)
 
     def monolithic_step(self):
         (ps, pf, pm) = (self.ps, self.pf, self.pm)
@@ -213,6 +260,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
         pm.pre_iterate()
         pm.intersect_problem(pf, finalize=False)
         pf.subtract_problem(pm, finalize=False)# Can I finalize here?
+        self.chimera_interpolate_material_id()
         for p, p_ext in [(pm, pf), (pf, pm)]:
             p.finalize_activation()
             p.find_gamma(p_ext)#TODO: Re-use previous data here
@@ -264,7 +312,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
             pm.u.x.scatter_forward()
             pf.u.x.scatter_forward()
             if interpolate:
-                interpolate_solution_to_inactive(pf, pm, finalize=False)
+                interpolate_solution_to_inactive(pf, pm)
             ps.u.x.array[:] = pf.u.x.array[:]
 
         def J_snes(
@@ -352,42 +400,10 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper):
             Ps = [ps, pf]
             time = (self.macro_iter-1) + self.fraction_macro_step
         get_funs = lambda p : [p.u, p.source.fem_function,p.active_els_func,p.grad_u,
-                p.u_prev,self.u_prev[p], p.material_id] + list(p.gamma_nodes.values())
+                p.u_prev,self.u_prev[p], p.material_id, p.u_av] + list(p.gamma_nodes.values())
 
         for p in Ps:
             p.compute_gradient()
             self.writers[p].write_function(get_funs(p),t=time)
         if not(case=="predictor"):
             self.writers[self.pm].write_function(get_funs(self.pm),t=time)
-
-
-# TODO: Move this into a class
-chimera_type = typing.Union[MHSSemiMonolithicSubstepper, MHSStaggeredChimeraSubstepper]
-def chimera_post_init(substepper : chimera_type, chimera_always_on):
-    substepper.chimera_driver = MonolithicRRDriver(substepper.pf, substepper.pm,
-                                             quadrature_degree=substepper.quadrature_degree)
-    substepper.chimera_off = False
-    substepper.chimera_always_on = chimera_always_on
-
-def chimera_micro_pre_iterate(substepper : chimera_type):
-    pf = substepper.pf
-    super(type(substepper), substepper).micro_pre_iterate()
-    if not(substepper.chimera_always_on):
-        next_track = substepper.pf.source.path.get_track(pf.time)
-        if ((pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) < 0.15:
-            substepper.chimera_off = True
-        else:
-            substepper.chimera_off = False
-
-def chimera_micro_post_iterate(substepper):
-    '''
-    post_iterate of micro_step
-    TODO: Maybe refactor? Seems like ps needs the same thing
-    '''
-    (pf, pm) = (substepper.pf, substepper.pm)
-    for p in (pf, pm):
-        current_track = p.source.path.get_track(p.time)
-        dt2track_end = current_track.t1 - p.time
-        if abs(p.dt.value - dt2track_end) < 1e-9:
-            p.set_dt(dt2track_end)
-    substepper.pf.set_activation(substepper.fast_subproblem_els, finalize=False)

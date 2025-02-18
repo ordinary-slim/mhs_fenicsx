@@ -4,9 +4,10 @@ from mpi4py import MPI
 import numpy as np
 import yaml
 import argparse
-from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, MHSStaggeredChimeraSubstepper, MHSSemiMonolithicChimeraSubstepper
+from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, MHSStaggeredChimeraSubstepper, MHSSemiMonolithicSubstepper, MHSSemiMonolithicChimeraSubstepper
 from mhs_fenicsx.drivers import MonolithicRRDriver, MonolithicDomainDecompositionDriver, StaggeredRRDriver
 from mhs_fenicsx.chimera import build_moving_problem
+from mhs_fenicsx.problem.helpers import assert_pointwise_vals, print_vals
 
 def write_gcode(params):
     (Lx, Ly) = (params["domain_width"], params["domain_height"])
@@ -31,12 +32,13 @@ def get_mesh(params, els_per_radius, radius, dim):
         return mesh.create_rectangle(MPI.COMM_WORLD,
                [box[:2], box[3:5]],
                [nx, ny],
-               #mesh.CellType.quadrilateral,
+               mesh.CellType.quadrilateral,
                )
     else:
         return mesh.create_box(MPI.COMM_WORLD,
                [box[:3], box[3:]],
                [nx, ny, nz],
+               mesh.CellType.hexahedron,
                )
 
 
@@ -51,14 +53,14 @@ def run_reference(params, writepos=True):
     macro_params = params.copy()
     macro_params["dt"] = get_dt(params["micro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    big_p = Problem(big_mesh, macro_params, name="big_melting")
+    big_p = Problem(big_mesh, macro_params, name="big_melting_melting")
 
     big_p.set_initial_condition(  params["environment_temperature"] )
 
     big_p.set_forms()
     big_p.compile_create_forms()
     itime_step = 0
-    while ((itime_step < params["max_timesteps"]) and not(big_p.is_path_over())):
+    while not(big_p.is_path_over()):
         itime_step += 1
         big_p.pre_iterate()
         big_p.pre_assemble()
@@ -75,7 +77,7 @@ def run_staggered(params, writepos=True):
     macro_params = params.copy()
     macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    big_p = Problem(big_mesh, macro_params, name=f"big_ss_RR")
+    big_p = Problem(big_mesh, macro_params, name=f"big_ss_RR_melting")
     big_p.set_initial_condition(  params["environment_temperature"] )
 
     max_timesteps = params["max_timesteps"]
@@ -125,7 +127,7 @@ def run_semi_monolithic(params, writepos=True):
     macro_params = params.copy()
     macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    big_p = Problem(big_mesh, macro_params, name=f"big_sms")
+    big_p = Problem(big_mesh, macro_params, name=f"big_sms_melting")
     big_p.set_initial_condition(  params["environment_temperature"] )
 
     max_timesteps = params["max_timesteps"]
@@ -160,7 +162,7 @@ def run_chimera_staggered(params, writepos=True):
     macro_params = params.copy()
     macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(big_mesh, macro_params, name=f"big_chimera_ss_RR")
+    ps = Problem(big_mesh, macro_params, name=f"big_chimera_ss_RR_melting")
     pm = build_moving_problem(ps, els_per_radius)
     ps.set_initial_condition(  params["environment_temperature"] )
     pm.set_initial_condition(  params["environment_temperature"] )
@@ -207,12 +209,139 @@ def run_chimera_staggered(params, writepos=True):
             ps.writepos()
     return ps
 
+def run_chimera_hodge(params, writepos=True):
+    els_per_radius = params["els_per_radius"]
+    radius = params["heat_source"]["radius"]
+    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    big_mesh = get_mesh(params, els_per_radius, radius, 2)
+
+    macro_params = params.copy()
+    macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
+    macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
+    ps = Problem(big_mesh, macro_params, name=f"big_chimera_sms_melting")
+    pm = build_moving_problem(ps, els_per_radius)
+    ps.set_initial_condition(  params["environment_temperature"] )
+    pm.set_initial_condition(  params["environment_temperature"] )
+
+    max_timesteps = params["max_timesteps"]
+
+    substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm,
+                                                           writepos=(params["substepper_writepos"] and writepos),
+                                                           do_predictor=params["predictor_step"],
+                                                           chimera_always_on=params["chimera_always_on"])
+    pf = substeppin_driver.pf
+    itime_step = 0
+    while ((itime_step < max_timesteps) and not(ps.is_path_over())):
+        itime_step += 1
+        substeppin_driver.update_fast_problem()
+        substeppin_driver.pre_loop(prepare_fast_problem=False)
+        if substeppin_driver.do_predictor:
+            substeppin_driver.predictor_step(writepos=substeppin_driver.do_writepos and writepos)
+        for _ in range(params["max_staggered_iters"]):
+            substeppin_driver.pre_iterate()
+            substeppin_driver.micro_steps()
+            substeppin_driver.monolithic_step()
+            substeppin_driver.post_iterate()
+        substeppin_driver.post_loop()
+        if writepos:
+            for p in [ps,pf]:
+                p.writepos(extra_funcs=[p.u_prev])
+    return ps
+
+def test_staggered_rr():
+    with open("test_input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    write_gcode(params)
+    p = run_staggered(params, writepos=False)
+    points = np.array([
+        [+0.06125, -0.1875, 0.0],
+        [-0.1000, -0.0875, 0.0],
+        [-0.4125, -0.1500, 0.0],
+        [-0.1500, -0.0125, 0.0],
+        ])
+    vals = np.array([
+        1660.6014,
+        49.40714,
+        180.00698,
+        24.863406,
+        ])
+    mats = np.array([ 2, 1, 1, 1, ])
+    assert_pointwise_vals(p, points, vals, f=p.u)
+    assert_pointwise_vals(p, points, mats, f=p.material_id)
+
+def test_hodge():
+    with open("test_input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    write_gcode(params)
+    p = run_semi_monolithic(params, writepos=False)
+    points = np.array([
+        [+0.06125, -0.1875, 0.0],
+        [-0.1000, -0.0875, 0.0],
+        [-0.4125, -0.1500, 0.0],
+        [-0.1500, -0.0125, 0.0],
+        ])
+    vals = np.array([
+        1660.6014,
+        49.410033,
+        170.04244,
+        25.000743,
+        ])
+    mats = np.array([ 2, 1, 1, 1, ])
+    assert_pointwise_vals(p, points, vals, f=p.u)
+    assert_pointwise_vals(p, points, mats, f=p.material_id)
+
+def test_chimera_staggered_rr():
+    with open("test_input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    params["heat_source"]["power"] = 1.05 * params["heat_source"]["power"]
+    write_gcode(params)
+    p = run_chimera_staggered(params, writepos=False)
+    points = np.array([
+        [+0.06125, -0.1875, 0.0],
+        [-0.1000, -0.0875, 0.0],
+        [-0.4125, -0.1500, 0.0],
+        [-0.1500, -0.0125, 0.0],
+        ])
+    vals = np.array([
+        1635.4386,
+        73.561951,
+        185.91693,
+        25.0703,
+        ])
+    mats = np.array([ 2, 1, 1, 1, ])
+    assert_pointwise_vals(p, points, vals, f=p.u)
+    assert_pointwise_vals(p, points, mats, f=p.material_id)
+
+def test_chimera_hodge():
+    with open("test_input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    params["heat_source"]["power"] = 1.05 * params["heat_source"]["power"]
+    write_gcode(params)
+    p = run_chimera_hodge(params, writepos=False)
+    points = np.array([
+        [+0.06125, -0.1875, 0.0],
+        [-0.1000, -0.0875, 0.0],
+        [-0.4125, -0.1500, 0.0],
+        [-0.1500, -0.0125, 0.0],
+        ])
+    vals = np.array([
+        1635.4386,
+        73.560962,
+        176.07948,
+        25.063764,
+        ])
+    mats = np.array([ 2, 1, 1, 1, ])
+    assert_pointwise_vals(p, points, vals, f=p.u)
+    assert_pointwise_vals(p, points, mats, f=p.material_id)
+
+
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-r','--run-ref',action='store_true')
     parser.add_argument('-ss','--run-sub-sta',action='store_true')
     parser.add_argument('-sms','--run-hodge',action='store_true')
     parser.add_argument('-css','--run-chimera-sub-sta',action='store_true')
+    parser.add_argument('-csms','--run-chimera-hodge',action='store_true')
     args = parser.parse_args()
     with open("input.yaml", 'r') as f:
         params = yaml.safe_load(f)
@@ -225,3 +354,5 @@ if __name__=="__main__":
         run_semi_monolithic(params)
     if args.run_chimera_sub_sta:
         run_chimera_staggered(params)
+    if args.run_chimera_hodge:
+        run_chimera_hodge(params)

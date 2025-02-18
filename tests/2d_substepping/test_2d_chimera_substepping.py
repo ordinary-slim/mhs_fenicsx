@@ -165,26 +165,26 @@ if __name__=="__main__":
     args = parser.parse_args()
     if args.run_sub_sta:
         from mhs_fenicsx.chimera import interpolate_solution_to_inactive
-        from mhs_fenicsx.problem.helpers import interpolate
+        from mhs_fenicsx.problem.helpers import interpolate_cg1
         lp.add_module(MHSStaggeredChimeraSubstepper)
         lp.add_module(MHSStaggeredSubstepper)
         lp.add_module(MHSSubstepper)
         lp.add_module(MonolithicDomainDecompositionDriver)
         lp.add_module(MonolithicRRDriver)
         lp.add_function(interpolate_solution_to_inactive)
-        lp.add_function(interpolate)
+        lp.add_function(interpolate_cg1)
         lp_wrapper = lp(run_staggered_RR)
         lp_wrapper(params,True)
         profiling_file = f"profiling_chimera_rss_{rank}.txt"
     if args.run_sub_mon:
         from mhs_fenicsx.chimera import interpolate_solution_to_inactive
-        from mhs_fenicsx.problem.helpers import interpolate
+        from mhs_fenicsx.problem.helpers import interpolate_cg1
         lp.add_module(MHSSubstepper)
         lp.add_module(MHSSemiMonolithicChimeraSubstepper)
         lp.add_module(MonolithicDomainDecompositionDriver)
         lp.add_module(MonolithicRRDriver)
         lp.add_function(interpolate_solution_to_inactive)
-        lp.add_function(interpolate)
+        lp.add_function(interpolate_cg1)
         lp_wrapper = lp(run_hodge)
         lp_wrapper(params,True)
         profiling_file = f"profiling_chimera_hodge_{rank}.txt"

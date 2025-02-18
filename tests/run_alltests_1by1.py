@@ -21,7 +21,7 @@ def main(nprocs):
         out = subprocess.run(["mpirun", "-n", f"{nprocs}", "pytest", test, '-q', '-s', '--verbose'])
         if out.returncode:
             raise Exception("A test FAILED")
-    print("All tests PASSED!")
+    print(f"All {len(tests)} tests PASSED!")
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser()

@@ -62,6 +62,17 @@ class ChimeraSubstepper(ABC):
         interpolate_dg0(pf.material_id, pm.material_id,
                         pf.ext_colliding_els[pm], pm.local_active_els)
 
+    def chimera_interpolate_to_moving(self):
+        (pf, pm) = (self.pf, self.pm)
+        local_ext_dofs = pm.ext_nodal_activation[pf].nonzero()[0]
+        local_ext_dofs = local_ext_dofs[:np.searchsorted(local_ext_dofs, pm.domain.topology.index_map(0).size_local)]
+        interpolate_cg1(pf.u,
+                        pm.u,
+                        np.arange(pf.cell_map.size_local),
+                        local_ext_dofs,
+                        pm.dof_coords[local_ext_dofs],
+                        1e-6)
+
 class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
     def __init__(self,slow_problem:Problem, moving_problem : Problem,
                  writepos=True,
@@ -145,14 +156,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
             interpolate_solution_to_inactive(pf, pm)
         else:
             pf.non_linear_solve()
-            local_ext_dofs = pm.ext_nodal_activation[pf].nonzero()[0]
-            local_ext_dofs = local_ext_dofs[:np.searchsorted(local_ext_dofs, pm.domain.topology.index_map(0).size_local)]
-            interpolate_cg1(pf.u,
-                            pm.u,
-                            np.arange(pf.cell_map.size_local),
-                            local_ext_dofs,
-                            pm.dof_coords[local_ext_dofs],
-                            1e-6)
+            self.chimera_interpolate_to_moving()
 
     def writepos(self,case="macro",extra_funs=[]):
         if not(self.do_writepos):
@@ -188,11 +192,12 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
 class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSubstepper):
     def __init__(self,slow_problem:Problem, moving_problem : Problem,
                  writepos=True,
+                 max_staggered_iters=1,
                  max_nr_iters=25,max_ls_iters=5,
                  do_predictor=False,
                  chimera_always_on=True):
         self.pm = moving_problem
-        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, do_predictor, compile_forms=False)
+        super().__init__(slow_problem,writepos, max_staggered_iters, max_nr_iters,max_ls_iters, do_predictor, compile_forms=False)
         self.plist.append(self.pm)
         self.compile_forms()
         self.quadrature_degree = 2 # Gamma Chimera
@@ -243,14 +248,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
             interpolate_solution_to_inactive(pf,pm)
         else:
             pf.non_linear_solve()
-            local_ext_dofs = pm.ext_nodal_activation[pf].nonzero()[0]
-            local_ext_dofs = local_ext_dofs[:np.searchsorted(local_ext_dofs, pm.domain.topology.index_map(0).size_local)]
-            interpolate_cg1(pf.u,
-                            pm.u,
-                            np.arange(pf.cell_map.size_local),
-                            local_ext_dofs,
-                            pm.dof_coords[local_ext_dofs],
-                            1e-6)
+            self.chimera_interpolate_to_moving()
 
     def monolithic_step(self):
         (ps, pf, pm) = (self.ps, self.pf, self.pm)

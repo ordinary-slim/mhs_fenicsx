@@ -32,6 +32,10 @@ class MHSSubstepper(ABC):
             pf.material_to_itag[mat] += len(ps.materials)
         if compile_forms:
             self.compile_forms()
+
+    @abstractmethod
+    def do_timestep(self):
+        pass
     
     @abstractmethod
     def compile_forms(self):
@@ -197,10 +201,24 @@ class MHSSubstepper(ABC):
 
 class MHSSemiMonolithicSubstepper(MHSSubstepper):
     def __init__(self,slow_problem: Problem ,writepos=True,
+                 max_staggered_iters=1,
                  max_nr_iters=25,max_ls_iters=5,
                  do_predictor=False, compile_forms=True):
         super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters,do_predictor,compile_forms)
         self.name = "semi_monolithic_substepper"
+        self.max_staggered_iters = max_staggered_iters
+
+    def do_timestep(self):
+        self.update_fast_problem()
+        self.pre_loop()
+        if self.do_predictor:
+            self.predictor_step(writepos=self.do_writepos)
+        for _ in range(self.max_staggered_iters):
+            self.pre_iterate()
+            self.micro_steps()
+            self.monolithic_step()
+            self.post_iterate()
+        self.post_loop()
 
     def compile_forms(self):
         (ps,pf) = (self.ps,self.pf)
@@ -418,6 +436,26 @@ class MHSStaggeredSubstepper(MHSSubstepper):
                  compile_forms=True):
         super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, do_predictor, compile_forms)
         self.name = "staggered_substepper"
+
+    def do_timestep(self):
+        staggered_driver = self.staggered_driver
+        self.update_fast_problem()
+        staggered_driver.pre_loop(prepare_subproblems=False)
+        self.pre_loop()
+        if self.do_predictor:
+            self.predictor_step(writepos=self.do_writepos and writepos)
+        staggered_driver.prepare_subproblems()
+        for _ in range(staggered_driver.max_staggered_iters):
+            self.pre_iterate()
+            staggered_driver.pre_iterate()
+            self.iterate()
+            self.post_iterate()
+            staggered_driver.post_iterate(verbose=True)
+            if self.do_writepos:
+                self.writepos(case="macro")
+            if staggered_driver.convergence_crit < staggered_driver.convergence_threshold:
+                break
+        self.post_loop()
 
     def compile_forms(self):
         ps = self.ps

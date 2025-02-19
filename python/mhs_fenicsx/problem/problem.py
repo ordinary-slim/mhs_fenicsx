@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 from mhs_fenicsx import gcode
 from mhs_fenicsx.problem.helpers import *
 from mhs_fenicsx.problem.heatsource import *
-from mhs_fenicsx.problem.printer import Printer
+from mhs_fenicsx.problem.printer import createPrinter, DEDPrinter, LPBFPrinter
 from mhs_fenicsx.problem.material import Material
 import mhs_fenicsx_cpp
 import typing
@@ -111,7 +111,7 @@ class Problem:
         self.rhs = None # For python functions
 
         # 3D printing
-        self.printer : typing.Optional[Printer] = Printer(self) if "printer" in parameters else None
+        self.printer : typing.Optional[Printer] = createPrinter(self) if "printer" in parameters else None
 
         # Motion
         self.domain_speed     = np.array(parameters["domain_speed"]) if "domain_speed" in parameters else None
@@ -263,7 +263,7 @@ class Problem:
             self.advected_el_size = fem.Function(self.dg0,name="supg_tau")
         mhs_fenicsx_cpp.compute_el_size_along_vector(self.advected_el_size._cpp_object,self.advection_speed._cpp_object)
 
-    def pre_iterate(self,forced_time_derivative=False,verbose=True):
+    def pre_iterate(self, forced_time_derivative=False, verbose=True, finalize_activation=True):
         # Pre-iterate source first, current track is tn's
         if rank==0 and verbose:
             print(f"\nProblem {self.name} about to solve for iter {self.iter+1}, time {self.time+self.dt.value}")
@@ -286,7 +286,7 @@ class Problem:
         self.source.set_fem_function(self.dof_coords)
         # Print
         if self.printer:
-            self.printer.deposit(self.time, self.dt.value)
+            self.printer.deposit(self.time, self.dt.value, finalize=finalize_activation)
 
         self.iter += 1
         self.time += self.dt.value
@@ -361,7 +361,7 @@ class Problem:
         if finalize:
             self.finalize_activation()
 
-    def finalize_activation(self):
+    def update_active_dofs(self):
         old_active_dofs_array  = self.active_nodes_func.x.array.copy()
         self.active_dofs = fem.locate_dofs_topological(self.v, self.dim, self.active_els, remote=True)
         self.active_nodes_func.x.array[:] = np.float64(0.0)
@@ -370,6 +370,8 @@ class Problem:
         just_active_dofs_array = self.active_nodes_func.x.array - old_active_dofs_array
         self.just_activated_nodes = np.flatnonzero(just_active_dofs_array)
 
+    def finalize_activation(self):
+        self.update_active_dofs()
         self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
         self.update_boundary()
         self.set_form_subdomain_data()

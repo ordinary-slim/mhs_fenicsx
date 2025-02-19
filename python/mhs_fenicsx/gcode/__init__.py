@@ -60,7 +60,7 @@ def get_infinite_track(p0:npt.NDArray[np.float64],
     return Track(p0, p1, t0, t1, TrackType.PRINTING, np.linalg.norm(speed), power)
 
 class Path:
-    def __init__(self,tracks:list[Track]):
+    def __init__(self, tracks:list[Track]):
         self.tracks = tracks
         self.times = np.empty(len(tracks)+1, dtype=np.float64)
         for idx in range(len(tracks)):

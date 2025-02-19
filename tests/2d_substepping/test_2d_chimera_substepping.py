@@ -42,6 +42,7 @@ def run_staggered_RR(params, writepos=True):
     staggered_driver = StaggeredRRDriver(pf,ps,
                                          max_staggered_iters=params["max_staggered_iters"],
                                          initial_relaxation_factors=initial_relaxation_factors,)
+    substeppin_driver.set_staggered_driver(staggered_driver)
 
     el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)
     h = 1.0 / el_density
@@ -51,25 +52,7 @@ def run_staggered_RR(params, writepos=True):
     itime_step = 0
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
         itime_step += 1
-        substeppin_driver.update_fast_problem()
-        substeppin_driver.set_staggered_driver(staggered_driver)
-        staggered_driver.pre_loop(prepare_subproblems=False)
-        substeppin_driver.pre_loop()
-        if substeppin_driver.do_predictor:
-            substeppin_driver.predictor_step(writepos=substeppin_driver.do_writepos and writepos)
-        staggered_driver.prepare_subproblems()
-        for _ in range(staggered_driver.max_staggered_iters):
-            substeppin_driver.pre_iterate()
-            staggered_driver.pre_iterate()
-            substeppin_driver.iterate()
-            substeppin_driver.post_iterate()
-            staggered_driver.post_iterate(verbose=True)
-            if writepos:
-                substeppin_driver.writepos(case="macro")
-
-            if staggered_driver.convergence_crit < staggered_driver.convergence_threshold:
-                break
-        substeppin_driver.post_loop()
+        substeppin_driver.do_timestep()
         if writepos:
             ps.writepos()
     return ps
@@ -93,22 +76,14 @@ def run_hodge(params, writepos=True):
 
     substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm,
                                                            writepos=(params["substepper_writepos"] and writepos),
+                                                           max_staggered_iters=params["max_staggered_iters"],
                                                            do_predictor=params["predictor_step"],
                                                            chimera_always_on=params["chimera_always_on"])
     pf = substeppin_driver.pf
     itime_step = 0
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
         itime_step += 1
-        substeppin_driver.update_fast_problem()
-        substeppin_driver.pre_loop(prepare_fast_problem=False)
-        if substeppin_driver.do_predictor:
-            substeppin_driver.predictor_step(writepos=substeppin_driver.do_writepos and writepos)
-        for _ in range(params["max_staggered_iters"]):
-            substeppin_driver.pre_iterate()
-            substeppin_driver.micro_steps()
-            substeppin_driver.monolithic_step()
-            substeppin_driver.post_iterate()
-        substeppin_driver.post_loop()
+        substeppin_driver.do_timestep()
         if writepos:
             for p in [ps,pf]:
                 p.writepos(extra_funcs=[p.u_prev])

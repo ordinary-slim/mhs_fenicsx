@@ -18,10 +18,11 @@ material_metal : {
 }
 convection_coeff: 10
 environment_temperature: 20
-deposition_temperature: 800
 printer: {
+  type : 'DED',
   reuse_heated_els : True,
   mdwidth  : 2.5e-3,
   mdheight : 2.5e-3,
+  deposition_temperature: 800
 }
 # END_ESSENTIAL

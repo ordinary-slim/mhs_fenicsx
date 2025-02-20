@@ -1,6 +1,6 @@
 # BEG_ESSENTIAL
 isSteady: True
-heat_source : {
+source_terms : {
   initial_position : [-5.0, 0.0, 0.0],
   initial_speed : [100.0, 0.0, 0],
   radius : 0.1,

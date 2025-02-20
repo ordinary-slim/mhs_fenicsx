@@ -1,5 +1,5 @@
 isSteady: False
-heat_source : {
+source_terms : {
   type : 0,
   radius : 0.1,
   power : 50,

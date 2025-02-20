@@ -14,18 +14,41 @@ if TYPE_CHECKING:
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
+def createHeatSources(p: 'Problem'):
+    sources = []
+    for hs in p.input_parameters["source_terms"]:
+        try:
+            hs_type = hs["type"]
+            if   hs_type == 1:
+                sources.append(Gaussian1D(p, hs))
+            elif hs_type == 2:
+                sources.append(Gaussian2D(p, hs))
+            elif hs_type == 3:
+                sources.append(Gaussian3D(p, hs))
+            elif hs_type == 4:
+                sources.append(LumpedHeatSource(p, hs))
+            else:
+                raise ValueError(f"Unknown heat source type {hs_type}.")
+        except KeyError:
+            if p.dim == 1:
+                sources.append(Gaussian1D(p, hs))
+            elif p.dim == 2:
+                sources.append(Gaussian2D(p, hs))
+            else:
+                sources.append(Gaussian3D(p, hs))
+    return sources
+
 class HeatSource(ABC):
-    def __init__(self,p:'Problem'):
+    def __init__(self, p: 'Problem', hs_params : dict):
         '''
         TODO: Unify interface so that only initialized with Path
         '''
-        params = p.input_parameters
-        self.x      = np.array(params["heat_source"]["initial_position"],dtype=np.float64)
-        self.R = params["heat_source"]["radius"]
-        self.power = params["heat_source"]["power"]
-        self.speed = np.array(params["heat_source"]["initial_speed"],dtype=np.float64)
-        if "path" in params:
-            self.path  = gcode_to_path(params["path"],default_power=self.power)
+        self.x      = np.array(hs_params["initial_position"],dtype=np.float64)
+        self.R = hs_params["radius"]
+        self.power = hs_params["power"]
+        self.speed = np.array(hs_params["initial_speed"],dtype=np.float64)
+        if "path" in hs_params:
+            self.path  = gcode_to_path(hs_params["path"],default_power=self.power)
             self.x     = self.path.tracks[0].p0
             self.speed = self.path.tracks[0].get_speed()
         else:
@@ -33,6 +56,7 @@ class HeatSource(ABC):
             self.path = Path([track])
         self.tn = self.path.tracks[0].t0
         self.initialize_fem_function(p)
+        self.attributes_to_reference = set() # attributes to reference upon copy
 
     @abstractmethod
     def __call__(self,x):
@@ -58,12 +82,18 @@ class HeatSource(ABC):
     def __deepcopy__(self,memo):
         result = self.__class__.__new__(self.__class__)
         memo[id(self)] = result
-        for k, v in self.__dict__.items():
+        all_attributes = set(self.__dict__.keys())
+        attributes_to_copy = all_attributes - self.attributes_to_reference
+        attributes_to_reference  = all_attributes.intersection(self.attributes_to_reference)
+        for k in attributes_to_copy:
+            v = self.__dict__[k]
             if isinstance(v, fem.Function):
                 setattr(result, k, v.copy())
                 result.__dict__[k].name = v.name
             else:
                 setattr(result, k, copy.deepcopy(v, memo))
+        for k in attributes_to_reference:
+            result.__dict__[k] = self.__dict__[k]
         return result
 
 class Gaussian1D(HeatSource):
@@ -85,14 +115,15 @@ class Gaussian3D(HeatSource):
             np.exp(-3*(r2)/self.R**2 )
 
 class LumpedHeatSource(HeatSource):
-    def __init__(self,p:'Problem'):
-        super().__init__(p)
-        params = p.input_parameters["heat_source"]
-        self.mdwidth = params["mdwidth"]
-        self.mdheight = params["mdheight"]
+    def __init__(self, p:'Problem', hs_params : dict):
+        super().__init__(p, hs_params)
+        self.mdwidth = hs_params["mdwidth"]
+        self.mdheight = hs_params["mdheight"]
         self.domain = p.domain
         self.bb_tree = p.bb_tree
         self.compile_volume_form()
+        # attributes to reference upon copy
+        self.attributes_to_reference = {"domain", "bb_tree", "volume_form_compiled"}
 
     def compile_volume_form(self):
         dV = ufl.Measure("dx", metadata={"quadrature_degree":1,})

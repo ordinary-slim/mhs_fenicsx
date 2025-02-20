@@ -1,11 +1,12 @@
 # BEG_ESSENTIAL
 isSteady: False
-heat_source : {
-  initial_position : [-5.0, 0.0, 0.0],
-  initial_speed : [1000.0, 0.0, 0],
-  radius : 0.05,
-  power : 500,
-}
+source_terms :
+  - initial_position : [-5.0, 0.0, 0.0]
+    initial_speed : [1000.0, 0.0, 0]
+    radius : 0.05
+    power : 500
+    path: "Path.gcode"
+dt : 1.0
 micro_adim_dt: 0.5
 macro_adim_dt: 5
 # PROPS
@@ -37,13 +38,14 @@ domain_width: 1
 domain_height: 1
 domain_depth: 0.05
 
-path: "Path.gcode"
 els_per_radius: 2
 max_staggered_iters: 1
 max_timesteps: 4
 driver_type: "robin"
 initial_condition: False
-predictor_step: True
+predictor_step: {
+  enabled :  True,
+}
 substepper_writepos: False
 quadrature_metadata: {}
 

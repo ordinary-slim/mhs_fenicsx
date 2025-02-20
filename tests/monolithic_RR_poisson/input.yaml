@@ -1,11 +1,10 @@
 # BEG_ESSENTIAL
 isSteady: True
-heat_source : {
-  initial_position : [-5.0, 0.0, 0.0],
-  initial_speed : [100.0, 0.0, 0],
-  radius : 0.1,
-  power : 100,
-}
+source_terms :
+  - initial_position : [-5.0, 0.0, 0.0]
+    initial_speed : [100.0, 0.0, 0]
+    radius : 0.1
+    power : 100
 # PROPS
 material : {
   density : 1,

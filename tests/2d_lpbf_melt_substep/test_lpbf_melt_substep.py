@@ -18,7 +18,7 @@ def write_gcode(params):
     t = params["printer"]["layer_thickness"]
     num_layers = np.rint(H / t).astype(np.int32)
     num_layers = 2
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     hlenx = + L / 2.0
     gcode_lines = []
     gcode_lines.append(f"G0 X{-hlenx} Y0.0 F{speed}")
@@ -28,7 +28,7 @@ def write_gcode(params):
         gcode_lines.append(f"G4 P1.0 R1")
         E += 0.1
         gcode_lines.append(f"G1 X{np.pow(-1, layer)*hlenx} E{E:2.2f}")
-    with open(params["path"],'w') as f:
+    with open(params["source_terms"][0]["path"],'w') as f:
         f.writelines("\n".join(gcode_lines))
 
 def get_mesh(params, els_per_radius, radius, dim):
@@ -57,8 +57,8 @@ def get_dt(adim_dt, radius, speed):
     return adim_dt * (radius / speed)
 
 def run_reference(params, writepos=True):
-    radius = params["heat_source"]["radius"]
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    radius = params["source_terms"][0]["radius"]
+    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
@@ -89,12 +89,11 @@ def run_reference(params, writepos=True):
             big_p.writepos(extra_funcs=[big_p.u_av])
 
 def run_staggered(params, writepos=True):
-    radius = params["heat_source"]["radius"]
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    radius = params["source_terms"][0]["radius"]
+    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
-    macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     big_p = Problem(big_mesh, macro_params, name=f"big_ss_RR_melting")
     big_p.set_activation(np.array([] ,dtype=np.int32))
@@ -102,12 +101,12 @@ def run_staggered(params, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos), do_predictor=params["predictor_step"])
+    substeppin_driver = MHSStaggeredSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos), predictor=params["predictor_step"])
     (ps,pf) = (substeppin_driver.ps,substeppin_driver.pf)
     staggered_driver = StaggeredRRDriver(pf,ps,
                                    max_staggered_iters=params["max_staggered_iters"],
                                    initial_relaxation_factors=[1.0, 1.0],)
-
+    substeppin_driver.set_staggered_driver(staggered_driver)
     el_density = np.round((1.0 / radius) * params["els_per_radius"]).astype(np.int32)
     h = 1.0 / el_density
     k = float(params["material_metal"]["conductivity"])

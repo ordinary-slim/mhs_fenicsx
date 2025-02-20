@@ -90,6 +90,7 @@ class Path:
 
     def get_track_interval(self, t0:np.float64, t1:np.float64):
         assert(t0 <= t1)
+        t1 = min(t1, self.times[-1])
         return self.tracks[self.get_track_idx(t0): self.get_track_idx(t1, pad=+1e-9)+1]
 
     def __repr__(self):

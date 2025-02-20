@@ -1,11 +1,10 @@
 # BEG_ESSENTIAL
 isSteady: False
-heat_source : {
-  initial_position : [-5.0, 0.0, 0.0],
-  initial_speed : [1000.0, 0.0, 0],
-  radius : 0.1,
-  power : 1000,
-}
+source_terms :
+  - initial_position : [-5.0, 0.0, 0.0]
+    initial_speed : [1000.0, 0.0, 0]
+    radius : 0.1
+    power : 1000
 adim_dt: 0.5
 # PROPS
 material_metal : {

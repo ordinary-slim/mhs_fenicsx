@@ -11,13 +11,13 @@ from mhs_fenicsx.problem.helpers import assert_pointwise_vals, print_vals
 
 def write_gcode(params):
     (Lx, Ly) = (params["domain_width"], params["domain_height"])
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     hlenx = + 3.0 * Lx / 8.0
     hleny = + 3.0 * Ly / 8.0
     gcode_lines = []
     gcode_lines.append(f"G0 F{speed} X-{hlenx} Y-{hleny} Z0\n")
     gcode_lines.append(f"G1 X+{hlenx} E0.1\n")
-    with open(params["path"],'w') as f:
+    with open(params["source_terms"][0]["path"],'w') as f:
         f.writelines(gcode_lines)
 
 def get_mesh(params, els_per_radius, radius, dim):
@@ -46,14 +46,14 @@ def get_dt(adim_dt, radius, speed):
     return adim_dt * (radius / speed)
 
 def run_reference(params, writepos=True):
-    radius = params["heat_source"]["radius"]
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    radius = params["source_terms"][0]["radius"]
+    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
     macro_params["dt"] = get_dt(params["micro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    big_p = Problem(big_mesh, macro_params, name="big_melting_melting")
+    big_p = Problem(big_mesh, macro_params, name="big_melting")
 
     big_p.set_initial_condition(  params["environment_temperature"] )
 
@@ -70,19 +70,18 @@ def run_reference(params, writepos=True):
             big_p.writepos(extra_funcs=[big_p.u_av])
 
 def run_staggered(params, writepos=True):
-    radius = params["heat_source"]["radius"]
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    radius = params["source_terms"][0]["radius"]
+    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
-    macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     big_p = Problem(big_mesh, macro_params, name=f"big_ss_RR_melting")
     big_p.set_initial_condition(  params["environment_temperature"] )
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos), do_predictor=params["predictor_step"])
+    substeppin_driver = MHSStaggeredSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos), predictor=params["predictor_step"])
     (ps,pf) = (substeppin_driver.ps,substeppin_driver.pf)
     staggered_driver = StaggeredRRDriver(pf,ps,
                                    max_staggered_iters=params["max_staggered_iters"],
@@ -102,12 +101,11 @@ def run_staggered(params, writepos=True):
     return big_p
 
 def run_semi_monolithic(params, writepos=True):
-    radius = params["heat_source"]["radius"]
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    radius = params["source_terms"][0]["radius"]
+    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
-    macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     big_p = Problem(big_mesh, macro_params, name=f"big_sms_melting")
     big_p.set_initial_condition(  params["environment_temperature"] )
@@ -115,7 +113,7 @@ def run_semi_monolithic(params, writepos=True):
     max_timesteps = params["max_timesteps"]
     substeppin_driver = MHSSemiMonolithicSubstepper(big_p,
                                                     max_staggered_iters=params["max_staggered_iters"],
-                                                    writepos=(params["substepper_writepos"] and writepos), do_predictor=params["predictor_step"])
+                                                    writepos=(params["substepper_writepos"] and writepos), predictor=params["predictor_step"])
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
 
     itime_step = 0
@@ -129,13 +127,12 @@ def run_semi_monolithic(params, writepos=True):
 
 def run_chimera_staggered(params, writepos=True):
     els_per_radius = params["els_per_radius"]
-    radius = params["heat_source"]["radius"]
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    radius = params["source_terms"][0]["radius"]
+    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     initial_relaxation_factors=[1.0,1.0]
     big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()
-    macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     ps = Problem(big_mesh, macro_params, name=f"big_chimera_ss_RR_melting")
     pm = build_moving_problem(ps, els_per_radius)
@@ -146,7 +143,7 @@ def run_chimera_staggered(params, writepos=True):
 
     substeppin_driver = MHSStaggeredChimeraSubstepper(ps, pm,
                                                       writepos=(params["substepper_writepos"] and writepos),
-                                                      do_predictor=params["predictor_step"],
+                                                      predictor=params["predictor_step"],
                                                       chimera_always_on=params["chimera_always_on"])
     pf = substeppin_driver.pf
     staggered_driver = StaggeredRRDriver(pf,ps,
@@ -169,12 +166,11 @@ def run_chimera_staggered(params, writepos=True):
 
 def run_chimera_hodge(params, writepos=True):
     els_per_radius = params["els_per_radius"]
-    radius = params["heat_source"]["radius"]
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    radius = params["source_terms"][0]["radius"]
+    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()
-    macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     ps = Problem(big_mesh, macro_params, name=f"big_chimera_sms_melting")
     pm = build_moving_problem(ps, els_per_radius)
@@ -186,7 +182,7 @@ def run_chimera_hodge(params, writepos=True):
     substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm,
                                                            max_staggered_iters=params["max_staggered_iters"],
                                                            writepos=(params["substepper_writepos"] and writepos),
-                                                           do_predictor=params["predictor_step"],
+                                                           predictor=params["predictor_step"],
                                                            chimera_always_on=params["chimera_always_on"])
     pf = substeppin_driver.pf
     itime_step = 0
@@ -243,7 +239,7 @@ def test_hodge():
 def test_chimera_staggered_rr():
     with open("test_input.yaml", 'r') as f:
         params = yaml.safe_load(f)
-    params["heat_source"]["power"] = 1.05 * params["heat_source"]["power"]
+    params["source_terms"][0]["power"] *= 1.05
     write_gcode(params)
     p = run_chimera_staggered(params, writepos=False)
     points = np.array([
@@ -265,7 +261,7 @@ def test_chimera_staggered_rr():
 def test_chimera_hodge():
     with open("test_input.yaml", 'r') as f:
         params = yaml.safe_load(f)
-    params["heat_source"]["power"] = 1.05 * params["heat_source"]["power"]
+    params["source_terms"][0]["power"] *= 1.05
     write_gcode(params)
     p = run_chimera_hodge(params, writepos=False)
     points = np.array([

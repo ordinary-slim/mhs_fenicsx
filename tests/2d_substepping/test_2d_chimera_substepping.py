@@ -18,13 +18,12 @@ rank = comm.Get_rank()
 
 def run_staggered_RR(params, writepos=True):
     els_per_radius = params["els_per_radius"]
-    radius = params["heat_source"]["radius"]
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    radius = params["source_terms"][0]["radius"]
+    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     initial_relaxation_factors=[1.0,1.0]
     big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()
-    macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     ps = Problem(big_mesh, macro_params, name=f"big_chimera_ss_RR")
     pm = build_moving_problem(ps, els_per_radius)
@@ -36,7 +35,7 @@ def run_staggered_RR(params, writepos=True):
 
     substeppin_driver = MHSStaggeredChimeraSubstepper(ps, pm,
                                                       writepos=(params["substepper_writepos"] and writepos),
-                                                      do_predictor=params["predictor_step"],
+                                                      predictor=params["predictor_step"],
                                                       chimera_always_on=params["chimera_always_on"])
     pf = substeppin_driver.pf
     staggered_driver = StaggeredRRDriver(pf,ps,
@@ -59,12 +58,11 @@ def run_staggered_RR(params, writepos=True):
 
 def run_hodge(params, writepos=True):
     els_per_radius = params["els_per_radius"]
-    radius = params["heat_source"]["radius"]
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    radius = params["source_terms"][0]["radius"]
+    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()
-    macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     ps = Problem(big_mesh, macro_params, name=f"big_chimera_sms")
     pm = build_moving_problem(ps, els_per_radius)
@@ -77,7 +75,7 @@ def run_hodge(params, writepos=True):
     substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm,
                                                            writepos=(params["substepper_writepos"] and writepos),
                                                            max_staggered_iters=params["max_staggered_iters"],
-                                                           do_predictor=params["predictor_step"],
+                                                           predictor=params["predictor_step"],
                                                            chimera_always_on=params["chimera_always_on"])
     pf = substeppin_driver.pf
     itime_step = 0

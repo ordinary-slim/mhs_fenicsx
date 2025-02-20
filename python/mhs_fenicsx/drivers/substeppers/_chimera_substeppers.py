@@ -24,9 +24,10 @@ class ChimeraSubstepper(ABC):
         self.quadrature_degree : int
         self.fast_subproblem_els : npt.NDArray[np.int32]
 
-    @abstractmethod
-    def micro_pre_iterate(self):
-        pass
+    def post_step_without_substepping(self):
+        pm = self.pm
+        super(type(self), self).post_step_without_substepping()
+        pm.pre_iterate()
 
     def chimera_post_init(self, chimera_always_on):
         self.chimera_driver = MonolithicRRDriver(self.pf, self.pm,
@@ -45,16 +46,6 @@ class ChimeraSubstepper(ABC):
                 self.chimera_off = False
 
     def chimera_micro_post_iterate(self):
-        '''
-        post_iterate of micro_step
-        TODO: Maybe refactor? Seems like ps needs the same thing
-        '''
-        (pf, pm) = (self.pf, self.pm)
-        for p in (pf, pm):
-            current_track = p.source.path.get_track(p.time)
-            dt2track_end = current_track.t1 - p.time
-            if abs(p.dt.value - dt2track_end) < 1e-9:
-                p.set_dt(dt2track_end)
         self.pf.set_activation(self.fast_subproblem_els, finalize=False)
 
     def chimera_interpolate_material_id(self):
@@ -77,15 +68,16 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
     def __init__(self,slow_problem:Problem, moving_problem : Problem,
                  writepos=True,
                  max_nr_iters=25,max_ls_iters=5,
-                 do_predictor=False,
+                 predictor={},
                  compile_forms=True,
                  chimera_always_on=True,
                  ):
         self.pm = moving_problem
         for mat in self.pm.material_to_itag:
             self.pm.material_to_itag[mat] += 2*len(slow_problem.materials)
-        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, do_predictor,compile_forms)
+        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, predictor,compile_forms)
         self.plist.append(self.pm)
+        self.fplist.append(self.pm)
         self.quadrature_degree = 2 # Gamma Chimera
         self.name = "staggered_chimera_substepper"
         self.chimera_post_init(chimera_always_on)
@@ -194,11 +186,12 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
                  writepos=True,
                  max_staggered_iters=1,
                  max_nr_iters=25,max_ls_iters=5,
-                 do_predictor=False,
+                 predictor={},
                  chimera_always_on=True):
         self.pm = moving_problem
-        super().__init__(slow_problem,writepos, max_staggered_iters, max_nr_iters,max_ls_iters, do_predictor, compile_forms=False)
+        super().__init__(slow_problem,writepos, max_staggered_iters, max_nr_iters,max_ls_iters, predictor, compile_forms=False)
         self.plist.append(self.pm)
+        self.fplist.append(self.pm)
         self.compile_forms()
         self.quadrature_degree = 2 # Gamma Chimera
         self.name = "semi_monolithic_chimera_substepper"

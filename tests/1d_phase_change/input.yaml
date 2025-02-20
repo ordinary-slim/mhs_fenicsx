@@ -1,11 +1,10 @@
 isSteady: False
-heat_source : {
-  type : 1,
-  initial_position : [0, 0, 0],
-  initial_speed : [0.0, 0.0, 0],
-  radius : 0.1,
-  power : 0.0,
-}
+source_terms :
+  - type : 1
+    initial_position : [0, 0, 0]
+    initial_speed : [0.0, 0.0, 0]
+    radius : 0.1
+    power : 0.0
 dt : 0.5
 # PROPS
 material : {

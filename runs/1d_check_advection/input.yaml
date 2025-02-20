@@ -1,5 +1,5 @@
 isSteady: False
-heat_source : {
+source_terms : {
   type : 0,
   initial_position : [0, 0, 0],
   initial_speed : [0.0, 0.0, 0],

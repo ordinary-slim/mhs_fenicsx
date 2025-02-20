@@ -1,11 +1,11 @@
 # BEG_ESSENTIAL
 isSteady: False
-heat_source : {
-  initial_position : [-5.0, 0.0, 0.0],
-  initial_speed : [1000.0, 0.0, 0],
-  radius : 0.05,
-  power : 500,
-}
+source_terms :
+  - initial_position : [-5.0, 0.0, 0.0]
+    initial_speed : [1000.0, 0.0, 0]
+    radius : 0.05
+    power : 500
+    path: "Path.gcode"
 # PROPS
 material_powder : {
   density : &density 4.3E-06, # kg / mm3
@@ -44,17 +44,19 @@ petsc_opts_macro: {
 }
 domain_width: 1
 domain_height: 0.5
-path: "Path.gcode"
 els_per_radius: 2
 max_staggered_iters: 1
 
 max_timesteps: 2
+dt : 1.0 #placeholder
 micro_adim_dt: 0.5
 macro_adim_dt: 5
 
 driver_type: "robin"
 initial_condition: False
-predictor_step: True
+predictor_step: {
+  enabled :  True,
+}
 substepper_writepos: False
 quadrature_metadata: {}
 supg: 1

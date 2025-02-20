@@ -88,25 +88,8 @@ class Problem:
         self.dt_func.x.array[:] = self.dt.value
                          
         # Source term
-        try:
-            hs_type = self.input_parameters["heat_source"]["type"]
-            if   hs_type == 1:
-                self.source = Gaussian1D(self)
-            elif hs_type == 2:
-                self.source = Gaussian2D(self)
-            elif hs_type == 3:
-                self.source = Gaussian3D(self)
-            elif hs_type == 4:
-                self.source = LumpedHeatSource(self)
-            else:
-                raise ValueError(f"Unknown heat source type {hs_type}.")
-        except KeyError:
-            if self.dim == 1:
-                self.source = Gaussian1D(self)
-            elif self.dim == 2:
-                self.source = Gaussian2D(self)
-            else:
-                self.source = Gaussian3D(self)
+        self.sources = createHeatSources(self)
+        self.source, self.current_source_term = self.sources[0], 0
 
         self.rhs = None # For python functions
 
@@ -155,7 +138,7 @@ class Problem:
             ])
         to_be_deep_copied = set([
             "linear_solver_opts",
-            "source",
+            "sources",
             "dirichlet_bcs",
             "form_subdomain_data",
             ])
@@ -192,6 +175,7 @@ class Problem:
         result.name = name
         result.writers = {}
         result.is_post_initialized = False
+        result.switch_source_term(self.current_source_term)
         return result
 
     def set_dt(self, dt : float):
@@ -257,6 +241,14 @@ class Problem:
         if finalize:
             self.material_id.x.scatter_forward()
             self.set_form_subdomain_data()
+
+    def switch_source_term(self, idx : int):
+        assert(0 <= idx < len(self.sources))
+        self.current_source_term = idx
+        self.source = self.sources[idx]
+        for idx, source in enumerate(self.sources):
+            if not(idx == self.current_source_term):
+                source.fem_function.x.array.fill(0.0)
 
     def compute_advected_el_size(self):
         if self.advected_el_size is None:
@@ -541,7 +533,9 @@ class Problem:
             # Source term
             if self.rhs is not None:
                 self.source.fem_function.interpolate(self.rhs)
-            l_ufl.append(self.source.fem_function*v*dx(itag))
+
+            for source in self.sources:
+                l_ufl.append(source.fem_function*v*dx(itag))
 
             # Time derivative
             time_derivative_coefficient = mat.rho.ufl(u) * mat.cp.ufl(u)
@@ -800,7 +794,7 @@ class Problem:
         snes.setMonitor(lambda _, it, residual: print(it, residual))
         self.set_snes_sol_vector()
         snes.solve(None, self.x)
-        assert (snes.getConvergedReason() > 0)
+        assert (snes.getConvergedReason() > 0), f"converged reason = {snes.getConvergedReason()}"
         self._update_solution(self.x)  # TODO can this be safely removed?
         snes.destroy()
         [opts.__delitem__(k) for k in opts.getAll().keys()] # Clear options data-base

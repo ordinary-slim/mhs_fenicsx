@@ -13,20 +13,20 @@ rank = comm.Get_rank()
 with open("input.yaml", 'r') as f:
     params = yaml.safe_load(f)
 
-radius = params["heat_source"]["radius"]
+radius = params["source_terms"][0]["radius"]
 max_temporal_iters = params["max_iter"]
 T_env = params["environment_temperature"]
 els_per_radius = params["els_per_radius"]
 
 def get_el_size(resolution=4.0):
-    return params["heat_source"]["radius"] / resolution
+    return params["source_terms"][0]["radius"] / resolution
 def get_dt(adim_dt):
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     return adim_dt * (radius / speed)
 
 box = [-10*radius,-4*radius,+10*radius,+4*radius]
 params["dt"] = get_dt(params["adim_dt"])
-params["heat_source"]["initial_position"] = [-4*radius, 0.0, 0.0]
+params["source_terms"][0]["initial_position"] = [-4*radius, 0.0, 0.0]
 
 def main():
     point_density = np.round(1/get_el_size(els_per_radius)).astype(np.int32)

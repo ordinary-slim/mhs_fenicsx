@@ -25,7 +25,7 @@ def get_dt(adim_dt, radius, speed):
 
 def write_gcode(params):
     (Lx, Ly) = (params["domain_width"], params["domain_height"])
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     hlenx = + 3.0 * Lx / 8.0
     hleny = + 3.0 * Ly / 8.0
     gcode_lines = []
@@ -34,7 +34,7 @@ def write_gcode(params):
     gcode_lines.append(f"G1 Y+{hleny} E0.2\n")
     gcode_lines.append(f"G1 X-{hlenx} E0.3\n")
     gcode_lines.append(f"G1 Y-{hleny} E0.4\n")
-    with open(params["path"],'w') as f:
+    with open(params["source_terms"][0]["path"],'w') as f:
         f.writelines(gcode_lines)
 
 def get_mesh(params, els_per_radius, radius, dim):
@@ -59,8 +59,7 @@ def get_mesh(params, els_per_radius, radius, dim):
 
 
 def run_staggered(params, driver_type, els_per_radius, writepos=True):
-    radius = params["heat_source"]["radius"]
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    radius = params["source_terms"][0]["radius"]
     if   driver_type=="robin":
         driver_constructor = StaggeredRRDriver
         initial_relaxation_factors=[1.0,1.0]
@@ -72,7 +71,6 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
     big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()
-    macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     big_p = Problem(big_mesh, macro_params, name=f"big_ss_{driver_type}")
     initial_condition_fun = get_initial_condition(params)
@@ -80,8 +78,8 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos), do_predictor=params["predictor_step"])
-    (ps,pf) = (substeppin_driver.ps,substeppin_driver.pf)
+    substeppin_driver = MHSStaggeredSubstepper(big_p, writepos=(params["substepper_writepos"] and writepos), predictor=params["predictor_step"])
+    (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
     staggered_driver = driver_constructor(pf,ps,
                                    max_staggered_iters=params["max_staggered_iters"],
                                    initial_relaxation_factors=initial_relaxation_factors,)
@@ -102,12 +100,10 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
     return big_p
 
 def run_semi_monolithic(params, els_per_radius, writepos=True):
-    radius = params["heat_source"]["radius"]
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    radius = params["source_terms"][0]["radius"]
     big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()
-    macro_params["dt"] = get_dt(params["macro_adim_dt"], radius, speed)
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     big_p = Problem(big_mesh, macro_params, name=f"big_sms")
     initial_condition_fun = get_initial_condition(params)
@@ -117,7 +113,7 @@ def run_semi_monolithic(params, els_per_radius, writepos=True):
     substeppin_driver = MHSSemiMonolithicSubstepper(big_p,
                                                     writepos=(params["substepper_writepos"] and writepos),
                                                     max_staggered_iters=params["max_staggered_iters"],
-                                                    do_predictor=params["predictor_step"])
+                                                    predictor=params["predictor_step"])
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
 
     itime_step = 0
@@ -130,8 +126,8 @@ def run_semi_monolithic(params, els_per_radius, writepos=True):
     return big_p
 
 def run_reference(params, els_per_radius):
-    radius = params["heat_source"]["radius"]
-    speed = np.linalg.norm(np.array(params["heat_source"]["initial_speed"]))
+    radius = params["source_terms"][0]["radius"]
+    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()

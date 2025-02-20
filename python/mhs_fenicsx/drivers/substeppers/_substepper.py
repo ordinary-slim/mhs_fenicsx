@@ -6,6 +6,7 @@ from mhs_fenicsx.problem import Problem
 from mhs_fenicsx_cpp import mesh_collision
 from mhs_fenicsx.drivers._staggered_drivers import StaggeredRRDriver, StaggeredDNDriver
 from mhs_fenicsx.geometry import OBB
+from mhs_fenicsx.gcode import TrackType
 import numpy as np
 import shutil
 import typing
@@ -15,27 +16,67 @@ import multiphenicsx.fem.petsc
 
 class MHSSubstepper(ABC):
     def __init__(self,slow_problem:Problem,writepos=True,
-                 max_nr_iters=25,max_ls_iters=5,
-                 do_predictor=False,
+                 max_nr_iters=25, max_ls_iters=5,
+                 predictor={},
                  compile_forms=True):
         self.ps = slow_problem
         self.pf = self.ps.copy(name=f"{self.ps.name}_micro_iters")
         self.plist = [self.ps, self.pf]
+        self.fplist = [self.pf]
         ps, pf = self.ps, self.pf
         self.do_writepos = writepos
         self.writers = dict()
         self.max_nr_iters = max_nr_iters
         self.max_ls_iters = max_ls_iters
-        self.do_predictor = do_predictor
+        self.do_predictor = predictor["enabled"] if "enabled" in predictor else False
+        self.predictor_source_term_idx = predictor["source_term"] if "source_term" in predictor else 0
         self.r_ufl, self.j_ufl, self.r_compiled, self.j_compiled = {}, {}, {}, {}
         for mat in pf.material_to_itag:
             pf.material_to_itag[mat] += len(ps.materials)
         if compile_forms:
             self.compile_forms()
 
-    @abstractmethod
     def do_timestep(self):
+        '''Decide type of time-step and macro time-step size'''
+        ps, pf = self.ps, self.pf
+        self.t0_macro_step = ps.time
+        track = ps.source.path.get_track(self.t0_macro_step)
+        if track.type == TrackType.PRINTING:
+            pf.set_dt(self.dimensionalize_mhs_timestep(track, ps.input_parameters["micro_adim_dt"]))
+            ps.set_dt(self.dimensionalize_mhs_timestep(track, ps.input_parameters["macro_adim_dt"]))
+            self.cap_timestep(ps)
+            self.do_substepped_timestep()
+        elif track.type == TrackType.COOLING:
+            for p in self.plist:
+                p.set_dt(self.dimensionalize_waiting_timestep(track, 0.5))
+            self.step_without_substepping()
+        elif track.type == TrackType.RECOATING:
+            for p in self.plist:
+                p.set_dt(self.dimensionalize_waiting_timestep(track, 0.5))
+            self.step_without_substepping()
+        else:
+            raise Exception
+
+    @abstractmethod
+    def do_substepped_timestep(self):
         pass
+
+    def dimensionalize_mhs_timestep(self, track, adim_dt):
+        return float(adim_dt * self.ps.source.R / track.speed)
+    
+    def dimensionalize_waiting_timestep(self, track, adim_dt):
+        return float(adim_dt * (track.t1 - track.t0))
+
+    def cap_timestep(self, p):
+        tracks = p.source.path.get_track_interval(p.time, p.time + p.dt.value)
+        max_t1 = tracks[-1].t1
+        for track in tracks:
+            if track.type is not(TrackType.PRINTING):
+                max_t1 = track.t1
+                break
+        max_dt = max_t1 - p.time
+        if (max_dt - p.dt.value) < 1e-9:
+            p.set_dt(max_dt)
     
     @abstractmethod
     def compile_forms(self):
@@ -54,7 +95,6 @@ class MHSSubstepper(ABC):
         (ps, pf) = plist = (self.ps, self.pf)
         self.result_folder = f"post_{self.name}_tstep#{self.ps.iter}"
         # TODO: Complete. Data to set activation in predictor_step
-        self.t0_macro_step = ps.time
         self.t1_macro_step = ps.time + ps.dt.value
         self.initial_active_els = self.ps.active_els_func.x.array.nonzero()[0]
         self.initial_restriction = self.ps.restriction
@@ -64,14 +104,11 @@ class MHSSubstepper(ABC):
         # Store this and use it for deactivation?
         if not(subproblem_els):
             self.subproblem_els = self.find_subproblem_els()
-        hs_radius = pf.source.R
-        self.track = pf.source.path.get_track(self.t0_macro_step)
-        hs_speed  = self.track.speed# TODO: Can't use this speed only!
-        pf.set_dt( ps.input_parameters["micro_adim_dt"] * (hs_radius / hs_speed) )
         pf.set_activation(self.subproblem_els)
         pf.set_linear_solver(pf.input_parameters["petsc_opts_micro"])
         # Subtract fast
-        ps.set_activation(np.logical_not(pf.active_els_func.x.array).nonzero()[0], finalize=not(self.do_predictor))
+        ps.active_els_func.x.array[self.subproblem_els] = 0.0
+        ps.set_activation(ps.active_els_func, finalize=not(self.do_predictor))
         if self.do_predictor:
             ps.update_boundary()
             ps.set_form_subdomain_data()
@@ -137,13 +174,16 @@ class MHSSubstepper(ABC):
             #subproblem_els = mhs_fenicsx.geometry.mesh_collision(ps.domain,obb_mesh,bb_tree_mesh_big=ps.bb_tree)
             colliding_els = mesh_collision(ps.domain._cpp_object,obb_mesh._cpp_object,bb_tree_big=ps.bb_tree._cpp_object)
             subproblem_els_mask[colliding_els] = np.True_
+            subproblem_els_mask = np.logical_and(ps.active_els_func.x.array[:], subproblem_els_mask)
         return subproblem_els_mask.nonzero()[0]
 
     def predictor_step(self, writepos=False):
         ''' Always linear '''
         ps = self.ps
-        # Save current activation data
+        # Save current data
         slow_subdomain_data = ps.form_subdomain_data
+        source_term_idx = ps.current_source_term
+        ps.switch_source_term(self.predictor_source_term_idx)
         ps.set_activation(self.initial_active_els)
         # MACRO-STEP
         ps.pre_iterate()
@@ -151,13 +191,39 @@ class MHSSubstepper(ABC):
         ps.pre_assemble()
         ps.non_linear_solve(snes_opts={'-snes_type': 'ksponly'})# LINEAR SOLVE
         ps.post_iterate()
+
         # Reset iter to prev.
         # Useful for writepos
         ps.iter -= 1
         if writepos:
             self.writepos("predictor")
+        ps.switch_source_term(source_term_idx)
         ps.set_activation(slow_subdomain_data[fem.IntegralType.cell][0][1])
         ps.form_subdomain_data = slow_subdomain_data
+
+    def step_without_substepping(self, writepos=False):
+        # TODO: Advance in time pf and pm!
+        ps = self.ps
+        ps.pre_iterate()
+        self.instantiate_forms(ps)
+        ps.pre_assemble()
+        ps.non_linear_solve()
+        ps.post_iterate()
+        if writepos:
+            self.writepos("predictor")
+        # Communicate 
+        self.post_step_wo_substepping()
+
+    def post_step_wo_substepping(self):
+        '''Update other problems to current solution'''
+        ps, pf = (self.ps, self.pf)
+        for p in self.fplist:
+            p.pre_iterate()
+        # Set variables pf
+        pf.u.x.array[:] = ps.u.x.array[:]
+        pf.is_grad_computed = False
+        pf.material_id.x.array[:] = pf.material_id.x.array[:]
+        # TODO: Update pm
 
     def micro_steps(self):
         self.micro_iter = 0
@@ -176,19 +242,12 @@ class MHSSubstepper(ABC):
         raise NotImplementedError
 
     def micro_pre_iterate(self):
-        #TODO: Raise flag if new track
         self.micro_iter += 1
+        for p in self.fplist:
+            self.cap_timestep(p)
 
     def micro_post_iterate(self):
-        '''
-        post_iterate of micro_step
-        TODO: Maybe refactor? Seems like ps needs the same thing
-        '''
-        pf = self.pf
-        current_track = pf.source.path.get_track(pf.time)
-        dt2track_end = current_track.t1 - pf.time
-        if abs(pf.dt.value - dt2track_end) < 1e-9:
-            pf.set_dt(dt2track_end)
+        pass
 
     def post_loop(self):
         #TODO: Change this!
@@ -203,12 +262,12 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
     def __init__(self,slow_problem: Problem ,writepos=True,
                  max_staggered_iters=1,
                  max_nr_iters=25,max_ls_iters=5,
-                 do_predictor=False, compile_forms=True):
-        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters,do_predictor,compile_forms)
+                 predictor={}, compile_forms=True):
+        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, predictor,compile_forms)
         self.name = "semi_monolithic_substepper"
         self.max_staggered_iters = max_staggered_iters
 
-    def do_timestep(self):
+    def do_substepped_timestep(self):
         self.update_fast_problem()
         self.pre_loop()
         if self.do_predictor:
@@ -269,7 +328,6 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 
     def is_substepping(self):
         return (self.t1_macro_step - (self.pf.time + self.pf.dt.value)) > 1e-7
-
 
     def micro_step(self):
         (ps,pf) = (self.ps,self.pf)
@@ -432,18 +490,18 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 class MHSStaggeredSubstepper(MHSSubstepper):
     def __init__(self,slow_problem:Problem,writepos=True,
                  max_nr_iters=25,max_ls_iters=5,
-                 do_predictor=False,
+                 predictor={},
                  compile_forms=True):
-        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, do_predictor, compile_forms)
+        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, predictor, compile_forms)
         self.name = "staggered_substepper"
 
-    def do_timestep(self):
+    def do_substepped_timestep(self):
         staggered_driver = self.staggered_driver
         self.update_fast_problem()
         staggered_driver.pre_loop(prepare_subproblems=False)
         self.pre_loop()
         if self.do_predictor:
-            self.predictor_step(writepos=self.do_writepos and writepos)
+            self.predictor_step(writepos=self.do_writepos)
         staggered_driver.prepare_subproblems()
         for _ in range(staggered_driver.max_staggered_iters):
             self.pre_iterate()

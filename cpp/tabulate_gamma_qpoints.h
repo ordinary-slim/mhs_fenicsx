@@ -1,5 +1,5 @@
 #pragma once
-#include <dolfinx/fem/assemble_matrix_impl.h>
+#include <dolfinx/mesh/Mesh.h>
 #include <basix/quadrature.h>
 
 using U = double;
@@ -18,7 +18,7 @@ inline std::vector<U> tabulate_gamma_quadrature(
     const U, MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 4>>;
 
   int cdim = mesh.topology()->dim();
-  int num_facets_cell = basix::cell::num_sub_entities(mesh::cell_type_to_basix_type(mesh.topology()->cell_type()), cdim-1);
+  int num_facets_cell = basix::cell::num_sub_entities(dolfinx::mesh::cell_type_to_basix_type(mesh.topology()->cell_type()), cdim-1);
   assert(gamma_integration_data.size() % 2 == 0);
   size_t num_local_gamma_cells = gamma_integration_data.size() / 2;
 

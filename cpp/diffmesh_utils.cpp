@@ -2,7 +2,7 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/tuple.h>
-#include <array.h>
+#include <dolfinx_wrappers/array.h>
 
 namespace nb = nanobind;
 template <std::floating_point T>

@@ -1,5 +1,5 @@
 #pragma once
-#include <dolfinx/fem/assemble_matrix_impl.h>
+#include <dolfinx/fem/FunctionSpace.h>
 #include <basix/quadrature.h>
 #include <basix/cell.h>
 #include <dolfinx/geometry/utils.h>

@@ -4,8 +4,8 @@
 #include <dolfinx/fem/petsc.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
-#include <caster_petsc.h>
-#include <caster_mpi.h>
+#include <dolfinx_wrappers/caster_petsc.h>
+#include <dolfinx_wrappers/caster_mpi.h>
 #include <petsc4py/petsc4py.h>
 
 std::vector<double (*)(double)> ptrs2funcs(

@@ -117,8 +117,10 @@ class Gaussian3D(HeatSource):
 class LumpedHeatSource(HeatSource):
     def __init__(self, p:'Problem', hs_params : dict):
         super().__init__(p, hs_params)
-        self.mdwidth = hs_params["mdwidth"]
-        self.mdheight = hs_params["mdheight"]
+        self.mdwidth, self.mdheight, self.mddepth = 0.0, 0.0, 0.0
+        for key in ["mdwidth", "mdheight", "mddepth"]: 
+            if key in hs_params:
+                self.__dict__[key] = hs_params[key]
         self.domain = p.domain
         self.bb_tree = p.bb_tree
         self.compile_volume_form()
@@ -151,7 +153,7 @@ class LumpedHeatSource(HeatSource):
         for track in tracks:
             p0 = track.get_position(self.tn,   bound=True)
             p1 = track.get_position(self.tnp1, bound=True)
-            obb = OBB(p0, p1, self.mdwidth, self.mdheight, 0.0, tdim)
+            obb = OBB(p0, p1, self.mdwidth, self.mdheight, self.mddepth, tdim)
             obb_mesh = obb.get_dolfinx_mesh()
             heated_els = mesh_collision(self.domain._cpp_object,obb_mesh._cpp_object,bb_tree_big=self.bb_tree._cpp_object)
             heated_els_mask[heated_els] = np.True_

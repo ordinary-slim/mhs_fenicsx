@@ -91,7 +91,7 @@ class MHSSubstepper(ABC):
         for w in self.writers.values():
             w.close()
 
-    def update_fast_problem(self, subproblem_els=None):
+    def update_fast_problem(self):
         (ps, pf) = plist = (self.ps, self.pf)
         self.result_folder = f"post_{self.name}_tstep#{self.ps.iter}"
         # TODO: Complete. Data to set activation in predictor_step
@@ -102,18 +102,18 @@ class MHSSubstepper(ABC):
         for p in plist:
             p.clear_gamma_data()
         # Store this and use it for deactivation?
-        if not(subproblem_els):
-            self.subproblem_els = self.find_subproblem_els()
-        pf.set_activation(self.subproblem_els)
+        self.fast_els = self.find_subproblem_els()
+        pf.set_activation(self.fast_els)
         pf.set_linear_solver(pf.input_parameters["petsc_opts_micro"])
         # Subtract fast
-        ps.active_els_func.x.array[self.subproblem_els] = 0.0
+        ps.active_els_func.x.array[self.fast_els] = 0.0
         ps.set_activation(ps.active_els_func, finalize=not(self.do_predictor))
+        self.slow_els = ps.active_els.copy()
         if self.do_predictor:
             ps.update_boundary()
             ps.set_form_subdomain_data()
         set_same_mesh_interface(ps, pf)
-        self.dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim, self.subproblem_els)
+        self.dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim, self.fast_els)
         mask_dofs_slow = np.ones(ps.v.dofmap.index_map.size_local + ps.v.dofmap.index_map.num_ghosts, np.bool)
         mask_dofs_slow[self.dofs_fast] = np.False_
         self.dofs_slow = mask_dofs_slow.nonzero()[0]
@@ -198,7 +198,7 @@ class MHSSubstepper(ABC):
         if writepos:
             self.writepos("predictor")
         ps.switch_source_term(source_term_idx)
-        ps.set_activation(slow_subdomain_data[fem.IntegralType.cell][0][1])
+        ps.set_activation(self.slow_els)
         ps.form_subdomain_data = slow_subdomain_data
 
     def step_without_substepping(self, writepos=False):
@@ -254,7 +254,7 @@ class MHSSubstepper(ABC):
         (ps,pf) = (self.ps,self.pf)
         self.ps.set_activation(self.initial_active_els)
         # Update material composition
-        ps.material_id.x.array[self.subproblem_els] = pf.material_id.x.array[self.subproblem_els]
+        ps.material_id.x.array[self.fast_els] = pf.material_id.x.array[self.fast_els]
         ps.material_id.x.scatter_forward()
         pf.material_id.x.array[:] = ps.material_id.x.array[:]
 

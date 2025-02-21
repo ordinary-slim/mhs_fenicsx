@@ -4,12 +4,23 @@ domain_width : 1
 domain_height : 0.5
 # BEG_ESSENTIAL
 isSteady: False
+radius : &radius 0.05
+half_radius : &half_radius 0.025
 source_terms :
-  - initial_position : [-5.0, 0.0, 0.0]
-    initial_speed : [1000.0, 0.0, 0]
-    radius : 0.05
-    power : 525
-    path: "Path.gcode"
+  - initial_position : &p0 [-5.0, 0.0, 0.0]
+    initial_speed : &speed [1000.0, 0.0, 0]
+    radius : *radius
+    power : &power 525
+    path: &path "Path.gcode"
+  - type : 4
+    initial_position : *p0
+    initial_speed : *speed
+    radius : *radius
+    power : *power
+    mdwidth  : *radius
+    mdheight : *half_radius
+    mddepth : *half_radius
+    path : *path
 # PROPS
 material_powder : {
   density : &density 4.3E-06, # kg / mm3
@@ -47,7 +58,7 @@ petsc_opts_macro: {
   "ksp_rtol" : 1e-14,
   "pc_type" : "jacobi",
 }
-els_per_radius: 2
+els_per_radius: 4
 max_staggered_iters: 1
 
 max_timesteps: 20
@@ -58,7 +69,8 @@ macro_adim_dt: 7.5
 driver_type: "robin"
 initial_condition: False
 predictor_step: {
-  enabled :  False,
+  enabled :  True,
+  source_term : 1,
 }
 substepper_writepos: True
 quadrature_metadata: {}

@@ -17,7 +17,7 @@ def write_gcode(params):
     (L, H) = (params["domain_width"], params["domain_height"])
     t = params["printer"]["layer_thickness"]
     num_layers = np.rint(H / t).astype(np.int32)
-    num_layers = 2
+    num_layers = 1
     speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     hlenx = + L / 2.0
     gcode_lines = []

@@ -48,14 +48,14 @@ environment_temperature : &environment_temperature 25
 # END_ESSENTIAL
 petsc_opts_micro: {
   "ksp_type" : "gmres",
-  "ksp_atol" : 1e-14,
-  "ksp_rtol" : 1e-14,
+  "ksp_atol" : 1e-13,
+  "ksp_rtol" : 1e-13,
   "pc_type" : "jacobi",
 }
 petsc_opts_macro: {
   "ksp_type" : "gmres",
-  "ksp_atol" : 1e-14,
-  "ksp_rtol" : 1e-14,
+  "ksp_atol" : 1e-13,
+  "ksp_rtol" : 1e-13,
   "pc_type" : "jacobi",
 }
 els_per_radius: 4

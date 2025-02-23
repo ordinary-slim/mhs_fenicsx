@@ -27,7 +27,7 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
 class Problem:
-    def __init__(self, domain, parameters, name="case"):
+    def __init__(self, domain, parameters, finalize_activation=True, name="case"):
         self.input_parameters = parameters.copy()
         self.writers = dict()
         self.domain   = domain
@@ -60,7 +60,7 @@ class Problem:
         self.bb_tree = geometry.bb_tree(self.domain,self.dim,np.arange(self.num_cells,dtype=np.int32),padding=1e-7)
         self.bb_tree_nodes = geometry.bb_tree(self.domain,0,np.arange(self.num_nodes,dtype=np.int32),padding=1e-7)
         self.restriction: typing.Optional[multiphenicsx.fem.DofMapRestriction] = None
-        self.initialize_activation()
+        self.initialize_activation(finalize=finalize_activation)
 
         self.u   = fem.Function(self.v, name="uh")   # Solution
         self.u_prev = fem.Function(self.v, name="uh_n") # Previous solution

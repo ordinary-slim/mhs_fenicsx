@@ -24,16 +24,20 @@ class ChimeraSubstepper(ABC):
         self.quadrature_degree : int
         self.fast_subproblem_els : npt.NDArray[np.int32]
 
-    def post_step_without_substepping(self):
-        pm = self.pm
-        super(type(self), self).post_step_without_substepping()
-        pm.pre_iterate()
-
     def chimera_post_init(self, chimera_always_on):
         self.chimera_driver = MonolithicRRDriver(self.pf, self.pm,
                                                  quadrature_degree=self.quadrature_degree)
         self.chimera_off = False
         self.chimera_always_on = chimera_always_on
+        def post_step_wo_substepping():
+            super(type(self), self).post_step_wo_substepping()
+            self.chimera_post_step_without_substepping()
+        self.post_step_wo_substepping = post_step_wo_substepping
+
+    def chimera_post_step_without_substepping(self):
+        (pf, pm) = self.pf, self.pm
+        pm.intersect_problem(pf, finalize=False)
+        self.chimera_interpolate_to_moving()
 
     def chimera_micro_pre_iterate(self):
         pf = self.pf
@@ -117,6 +121,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
         pm.intersect_problem(pf, finalize=False)
         for p in [pm, pf]:
             p.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
+        # This can be removed
         self.fast_subproblem_els = pf.active_els_func.x.array.nonzero()[0]
         pm.intersect_problem(pf, finalize=False)
         sd.assert_tag(pf)
@@ -215,6 +220,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         for p in [pm, pf]:
             p.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
         pm.intersect_problem(pf, finalize=False)
+        # This can be removed
         self.fast_subproblem_els = pf.active_els_func.x.array.nonzero()[0]
 
         if not(self.chimera_off):

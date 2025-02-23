@@ -58,7 +58,7 @@ def get_mesh(params, els_per_radius, radius, dim):
                )
 
 
-def run_staggered(params, driver_type, els_per_radius, writepos=True):
+def run_staggered(params, driver_type, writepos=True):
     radius = params["source_terms"][0]["radius"]
     if   driver_type=="robin":
         driver_constructor = StaggeredRRDriver
@@ -68,7 +68,7 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
         initial_relaxation_factors=[0.5,1]
     else:
         raise ValueError("Undefined staggered driver type.")
-    big_mesh = get_mesh(params, els_per_radius, radius, 2)
+    big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
@@ -86,7 +86,7 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
     substeppin_driver.set_staggered_driver(staggered_driver)
 
     if (type(staggered_driver)==StaggeredRRDriver):
-        el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)
+        el_density = np.round((1.0 / radius) * params["els_per_radius"]).astype(np.int32)
         h = 1.0 / el_density
         k = float(params["material_metal"]["conductivity"])
         staggered_driver.set_dirichlet_coefficients(h, k)
@@ -99,9 +99,9 @@ def run_staggered(params, driver_type, els_per_radius, writepos=True):
             ps.writepos()
     return big_p
 
-def run_semi_monolithic(params, els_per_radius, writepos=True):
+def run_semi_monolithic(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
-    big_mesh = get_mesh(params, els_per_radius, radius, 2)
+    big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
@@ -125,10 +125,10 @@ def run_semi_monolithic(params, els_per_radius, writepos=True):
                 p.writepos(extra_funcs=[p.u_prev])
     return big_p
 
-def run_reference(params, els_per_radius):
+def run_reference(params):
     radius = params["source_terms"][0]["radius"]
     speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
-    big_mesh = get_mesh(params, els_per_radius, radius, 2)
+    big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
     macro_params["dt"] = get_dt(params["micro_adim_dt"], radius, speed)
@@ -155,7 +155,7 @@ def test_staggered_robin_substepper():
     with open("test_input.yaml", 'r') as f:
         params = yaml.safe_load(f)
     write_gcode(params)
-    p = run_staggered(params, "robin", 2, writepos=False)
+    p = run_staggered(params, "robin", writepos=False)
     points = np.array([
         [-0.250, -0.250, 0.0],
         [-0.250, -0.375, 0.0],
@@ -173,7 +173,7 @@ def test_staggered_robin_substepper():
 def test_hodge_semi_monolothic_substepper():
     with open("test_input.yaml", 'r') as f:
         params = yaml.safe_load(f)
-    p = run_semi_monolithic(params, 2, writepos=False)
+    p = run_semi_monolithic(params, writepos=False)
     points = np.array([
         [-0.250, -0.250, 0.0],
         [-0.250, -0.375, 0.0],
@@ -200,7 +200,6 @@ if __name__=="__main__":
     with open("input.yaml", 'r') as f:
         params = yaml.safe_load(f)
     write_gcode(params)
-    els_per_radius = params["els_per_radius"]
     profiling_file = None
     if args.run_sub_sta:
         from mhs_fenicsx.submesh import build_subentity_to_parent_mapping, find_submesh_interface, \
@@ -215,17 +214,17 @@ if __name__=="__main__":
         lp.add_function(find_submesh_interface)
         driver_type = params["driver_type"]
         lp_wrapper = lp(run_staggered)
-        lp_wrapper(params, driver_type, els_per_radius)
+        lp_wrapper(params, driver_type)
         profiling_file = f"profiling_ss_{rank}.txt"
     if args.run_sub_mon:
         lp.add_module(MHSSubstepper)
         lp.add_module(MHSSemiMonolithicSubstepper)
         lp_wrapper = lp(run_semi_monolithic)
-        lp_wrapper(params, els_per_radius)
+        lp_wrapper(params)
         profiling_file = f"profiling_sms_{rank}.txt"
     if args.run_ref:
         lp_wrapper = lp(run_reference)
-        lp_wrapper(params, els_per_radius)
+        lp_wrapper(params)
         profiling_file = f"profiling_ref_{rank}.txt"
     if args.run_test:
         test_staggered_robin_substepper()

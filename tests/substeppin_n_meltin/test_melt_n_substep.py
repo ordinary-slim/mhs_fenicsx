@@ -58,11 +58,12 @@ def run_reference(params, writepos=True):
     big_p.set_initial_condition(  params["environment_temperature"] )
 
     big_p.set_forms()
-    big_p.compile_create_forms()
+    big_p.compile_forms()# UNTESTED
     itime_step = 0
     while not(big_p.is_path_over()):
         itime_step += 1
         big_p.pre_iterate()
+        big_p.instantiate_forms()# UNTESTED
         big_p.pre_assemble()
         big_p.non_linear_solve()
         big_p.post_iterate()
@@ -206,10 +207,10 @@ def test_staggered_rr():
         [-0.1500, -0.0125, 0.0],
         ])
     vals = np.array([
-        1660.6014,
-        49.40714,
-        180.00698,
-        24.863406,
+        1660.6062,
+        49.407119,
+        180.03035,
+        24.863405,
         ])
     mats = np.array([ 2, 1, 1, 1, ])
     assert_pointwise_vals(p, points, vals, f=p.u)
@@ -227,10 +228,10 @@ def test_hodge():
         [-0.1500, -0.0125, 0.0],
         ])
     vals = np.array([
-        1660.6014,
-        49.410033,
-        170.04244,
-        25.000743,
+        1660.6063,
+        49.4101,
+        170.053,
+        25.000744,
         ])
     mats = np.array([ 2, 1, 1, 1, ])
     assert_pointwise_vals(p, points, vals, f=p.u)

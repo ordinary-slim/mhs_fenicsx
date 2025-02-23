@@ -17,7 +17,7 @@ def write_gcode(params):
     (L, H) = (params["domain_width"], params["domain_height"])
     t = params["printer"]["layer_thickness"]
     num_layers = np.rint(H / t).astype(np.int32)
-    num_layers = 1
+    num_layers = 2
     speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     hlenx = + L / 2.0
     gcode_lines = []
@@ -66,42 +66,41 @@ def run_reference(params, writepos=True):
     macro_params["dt"] = print_dt
     recoat_dt = 0.5
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    big_p = Problem(big_mesh, macro_params, name="2dlpbf")
-    big_p.set_activation(np.array([] ,dtype=np.int32))
+    ps = Problem(big_mesh, macro_params, finalize_activation=False, name="2dlpbf")
+    ps.set_activation(np.array([] ,dtype=np.int32))
 
-    big_p.set_initial_condition(  params["environment_temperature"] )
+    ps.set_initial_condition(  params["environment_temperature"] )
 
-    big_p.set_forms()
-    big_p.compile_forms()
+    ps.set_forms()
+    ps.compile_forms()
     itime_step = 0
-    while not(big_p.is_path_over()):
+    while not(ps.is_path_over()):
         itime_step += 1
-        if big_p.source.path.get_track(big_p.time).type == TrackType.RECOATING:
-            big_p.set_dt(recoat_dt)
+        if ps.source.path.get_track(ps.time).type == TrackType.RECOATING:
+            ps.set_dt(recoat_dt)
         else:
-            big_p.set_dt(print_dt)
-        big_p.pre_iterate()
-        big_p.instantiate_forms()
-        big_p.pre_assemble()
-        big_p.non_linear_solve()
-        big_p.post_iterate()
+            ps.set_dt(print_dt)
+        ps.pre_iterate()
+        ps.instantiate_forms()
+        ps.pre_assemble()
+        ps.non_linear_solve()
+        ps.post_iterate()
         if writepos:
-            big_p.writepos(extra_funcs=[big_p.u_av])
+            ps.writepos(extra_funcs=[ps.u_av])
 
 def run_staggered(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
-    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    big_p = Problem(big_mesh, macro_params, name=f"big_ss_RR_melting")
-    big_p.set_activation(np.array([] ,dtype=np.int32))
-    big_p.set_initial_condition(  params["environment_temperature"] )
+    ps = Problem(big_mesh, macro_params, finalize_activation=False, name="2dlpbf")
+    ps.set_activation(np.array([] ,dtype=np.int32))
+    ps.set_initial_condition(  params["environment_temperature"] )
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos), predictor=params["predictor_step"])
+    substeppin_driver = MHSStaggeredSubstepper(ps,writepos=(params["substepper_writepos"] and writepos), predictor=params["predictor_step"])
     (ps,pf) = (substeppin_driver.ps,substeppin_driver.pf)
     staggered_driver = StaggeredRRDriver(pf,ps,
                                    max_staggered_iters=params["max_staggered_iters"],
@@ -118,7 +117,70 @@ def run_staggered(params, writepos=True):
         substeppin_driver.do_timestep()
         if writepos:
             ps.writepos()
-    return big_p
+    return ps
+
+def run_hodge(params, writepos=True):
+    radius = params["source_terms"][0]["radius"]
+    big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
+
+    macro_params = params.copy()
+    macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
+    ps = Problem(big_mesh, macro_params, finalize_activation=False, name="2dlpbf")
+    ps.set_activation(np.array([] ,dtype=np.int32))
+    ps.set_initial_condition(  params["environment_temperature"] )
+
+    max_timesteps = params["max_timesteps"]
+    substeppin_driver = MHSSemiMonolithicSubstepper(ps,
+                                                    writepos=(params["substepper_writepos"] and writepos),
+                                                    max_staggered_iters=params["max_staggered_iters"],
+                                                    predictor=params["predictor_step"])
+    (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
+
+    itime_step = 0
+    while ((itime_step < max_timesteps) and not(ps.is_path_over())):
+        itime_step += 1
+        substeppin_driver.do_timestep()
+        if writepos:
+            for p in [ps,pf]:
+                p.writepos(extra_funcs=[p.u_prev])
+    return ps
+
+def run_chimera_staggered(params, writepos=True):
+    radius = params["source_terms"][0]["radius"]
+    big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
+
+    macro_params = params.copy()
+    macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
+    ps = Problem(big_mesh, macro_params, finalize_activation=False, name="2dlpbf")
+    pm = build_moving_problem(ps, params["els_per_radius"])
+    ps.set_activation(np.array([] ,dtype=np.int32))
+    for p in [pm, ps]:
+        p.set_initial_condition(  params["environment_temperature"] )
+
+    max_timesteps = params["max_timesteps"]
+
+    substeppin_driver = MHSStaggeredChimeraSubstepper(ps, pm,
+                                                      writepos=(params["substepper_writepos"] and writepos),
+                                                      predictor=params["predictor_step"],
+                                                      chimera_always_on=params["chimera_always_on"])
+    pf = substeppin_driver.pf
+    staggered_driver = StaggeredRRDriver(pf,ps,
+                                         max_staggered_iters=params["max_staggered_iters"],
+                                         initial_relaxation_factors=[1.0, 1.0],)
+    substeppin_driver.set_staggered_driver(staggered_driver)
+
+    el_density = np.rint((1.0 / radius) * params["els_per_radius"]).astype(np.int32)
+    h = 1.0 / el_density
+    k = float(params["material_metal"]["conductivity"])
+    staggered_driver.set_dirichlet_coefficients(h, k)
+
+    itime_step = 0
+    while ((itime_step < max_timesteps) and not(ps.is_path_over())):
+        itime_step += 1
+        substeppin_driver.do_timestep()
+        if writepos:
+            ps.writepos()
+    return ps
 
 if __name__=="__main__":
     with open("input.yaml", 'r') as f:
@@ -136,7 +198,7 @@ if __name__=="__main__":
     if args.run_sub_sta:
         run_staggered(params)
     if args.run_hodge:
-        run_semi_monolithic(params)
+        run_hodge(params)
     if args.run_chimera_sub_sta:
         run_chimera_staggered(params)
     if args.run_chimera_hodge:

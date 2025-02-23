@@ -42,20 +42,16 @@ class MHSSubstepper(ABC):
         self.t0_macro_step = ps.time
         track = ps.source.path.get_track(self.t0_macro_step)
         if track.type == TrackType.PRINTING:
+            print("Step WITH substepping STARTS...")
             pf.set_dt(self.dimensionalize_mhs_timestep(track, ps.input_parameters["micro_adim_dt"]))
             ps.set_dt(self.dimensionalize_mhs_timestep(track, ps.input_parameters["macro_adim_dt"]))
             self.cap_timestep(ps)
             self.do_substepped_timestep()
-        elif track.type == TrackType.COOLING:
-            for p in self.plist:
-                p.set_dt(self.dimensionalize_waiting_timestep(track, 0.5))
-            self.step_without_substepping()
-        elif track.type == TrackType.RECOATING:
-            for p in self.plist:
-                p.set_dt(self.dimensionalize_waiting_timestep(track, 0.5))
-            self.step_without_substepping()
         else:
-            raise Exception
+            print("Step WITHOUT substepping STARTS...")
+            for p in self.plist:
+                p.set_dt(self.dimensionalize_waiting_timestep(track, 0.5))
+            self.step_without_substepping()
 
     @abstractmethod
     def do_substepped_timestep(self):
@@ -300,7 +296,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
     def pre_loop(self, prepare_fast_problem=True):
         super().pre_loop()
         (ps,pf) = (self.ps,self.pf)
-        self.num_micro_steps = np.round(ps.dt.value / pf.dt.value, 9).astype(np.int32)
+        self.num_micro_steps = np.rint(ps.dt.value / pf.dt.value).astype(np.int32)
         # Prepare fast problem
         self.set_dirichlet_fast()
         self.initialize_post()
@@ -333,13 +329,14 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         (ps,pf) = (self.ps,self.pf)
         forced_time_derivative = (pf.time - self.t0_macro_step) < 1e-7
         pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
+        pf.set_form_subdomain_data()
+        pf.instantiate_forms()
         f = self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
         # Update Dirichlet BC pf here!
         self.fast_dirichlet_tcon.g.x.array[self.gamma_dofs_fast] = \
                 (1-f)*ps.u_prev.x.array[self.gamma_dofs_fast] + \
                 f*ps.u.x.array[self.gamma_dofs_fast]
         pf.non_linear_solve()
-        #pf.post_iterate()
 
     def set_gamma_slow_to_fast(self):
         (ps, pf) = (self.ps, self.pf)
@@ -561,6 +558,9 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         sd = self.staggered_driver
         forced_time_derivative = (pf.time - self.t0_macro_step) < 1e-7
         pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
+        pf.set_form_subdomain_data()
+        pf.form_subdomain_data[fem.IntegralType.exterior_facet].extend(sd.gamma_subdomain_data[pf])
+        pf.instantiate_forms()
         self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
         if type(sd)==StaggeredRRDriver:
             f = self.fraction_macro_step
@@ -645,7 +645,6 @@ class MHSStaggeredSubstepper(MHSSubstepper):
             raise ValueError("Unknown staggered driver type.")
         for u in self.u_prev.values():
             u.name = "u_prev_driver"
-        # Add a compute gradient around here!
         (p,p_ext) = (pf,ps)
         self.ext_flux_tn = {p:fem.Function(p.dg0_vec,name="ext_flux_tn")}
         p_ext.compute_gradient()

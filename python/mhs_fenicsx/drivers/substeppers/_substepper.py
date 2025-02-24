@@ -224,7 +224,7 @@ class MHSSubstepper(ABC):
     def micro_steps(self):
         self.micro_iter = 0
         while self.is_substepping():
-            self.micro_pre_iterate()
+            self.prepare_micro_step()
             self.micro_step()
             self.writepos(case="micro")
             self.micro_post_iterate()
@@ -237,7 +237,7 @@ class MHSSubstepper(ABC):
     def micro_step(self):
         raise NotImplementedError
 
-    def micro_pre_iterate(self):
+    def prepare_micro_step(self):
         self.micro_iter += 1
         for p in self.fplist:
             self.cap_timestep(p)

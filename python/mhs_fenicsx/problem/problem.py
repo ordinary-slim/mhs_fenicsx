@@ -50,6 +50,7 @@ class Problem:
             self.domain.topology.create_entities(dim)
         self.domain.topology.create_connectivity(self.dim,self.dim)
         self.domain.topology.create_connectivity(domain.topology.dim-1, domain.topology.dim)
+        self.domain.topology.create_connectivity(0, domain.topology.dim)
         # Set num cells per processor
         self.cell_map = self.domain.topology.index_map(self.dim)
         self.facet_map = self.domain.topology.index_map(self.dim-1)
@@ -58,7 +59,6 @@ class Problem:
         self.num_facets = self.facet_map.size_local + self.facet_map.num_ghosts
         self.num_nodes = self.node_map.size_local + self.node_map.num_ghosts
         self.bb_tree = geometry.bb_tree(self.domain,self.dim,np.arange(self.num_cells,dtype=np.int32),padding=1e-7)
-        self.bb_tree_nodes = geometry.bb_tree(self.domain,0,np.arange(self.num_nodes,dtype=np.int32),padding=1e-7)
         self.restriction: typing.Optional[multiphenicsx.fem.DofMapRestriction] = None
         self.initialize_activation(finalize=finalize_activation)
 
@@ -268,7 +268,6 @@ class Problem:
             dx = np.round(self.domain_speed*self.dt.value,7)
             self.domain.geometry.x[:] += dx
             self.bb_tree.bbox_coordinates[:] += dx
-            self.bb_tree_nodes.bbox_coordinates[:] += dx
             self.dof_coords += dx
             self.clear_gamma_data()
 
@@ -285,6 +284,17 @@ class Problem:
 
         if not(forced_time_derivative):
             self.u_prev.x.array[:] = self.u.x.array
+
+    def in_plane_rotation(self, center : npt.NDArray, radians : float):
+        c, s = np.cos(radians, dtype=np.float64), np.sin(radians, dtype=np.float64)
+        Rt = np.array([[ +c,  +s, 0.0],
+                       [ -s,  +c, 0.0],
+                       [0.0, 0.0, 1.0]], dtype=np.float64)
+        for array in [self.domain.geometry.x,
+                      self.dof_coords]:
+            array[:] -= center
+            array[:]  = center + np.matmul(array, Rt)
+        self.bb_tree = geometry.bb_tree(self.domain,self.dim,np.arange(self.num_cells,dtype=np.int32),padding=1e-7)
 
     def post_modify_solution(self, cells=None):
         self.is_grad_computed = False
@@ -441,6 +451,16 @@ class Problem:
         self.set_activation(active_els, finalize=finalize)
         if finalize:
             self.find_gamma(p_ext, self.ext_nodal_activation[p_ext])
+
+    def interpolate(self, p_ext : 'Problem'):
+        local_ext_dofs = self.ext_nodal_activation[p_ext].nonzero()[0]
+        local_ext_dofs = local_ext_dofs[:np.searchsorted(local_ext_dofs, self.domain.topology.index_map(0).size_local)]
+        interpolate_cg1(p_ext.u,
+                        self.u,
+                        np.arange(p_ext.cell_map.size_local),
+                        local_ext_dofs,
+                        self.dof_coords[local_ext_dofs],
+                        1e-6)
 
     def intersect_problem(self, p_ext : 'Problem', finalize=True):
         self.ext_nodal_activation[p_ext] = self.get_active_in_external(p_ext)

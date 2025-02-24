@@ -99,10 +99,10 @@ def test_staggered_robin_chimera_substepper():
         [+0.375, -0.125, 0.0],
         ])
     vals = np.array([
-        229.3857385,
-        782.8796867,
-        24.99886208,
-        1340.33064,
+        230.16532,
+        767.54852,
+        24.998741,
+        1339.9057,
         ])
     assert_pointwise_vals(p,points,vals)
 
@@ -118,10 +118,10 @@ def test_sms_chimera_substepper():
         [+0.375, -0.125, 0.0],
         ])
     vals = np.array([
-        230.2277686,
-        783.1233017,
-        25.24031342,
-        1341.826798,
+        230.87176,
+        767.86368,
+        25.237054,
+        1341.4006,
         ])
     assert_pointwise_vals(p,points,vals)
 

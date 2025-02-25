@@ -76,13 +76,15 @@ class StaggeredDomainDecompositionDriver(ABC):
         self.j_compiled = {p:p.j_compiled for p in plist}
 
     def prepare_subproblems(self, finalize=True):
-        (p1, p2) = plist = (self.p1, self.p2)
-        for p in plist:
+        (p1, p2) = (self.p1, self.p2)
+        for p, p_ext in [p1, p2], [p2, p1]:
             p.r_ufl = self.r_ufl[p]
             p.r_compiled = self.r_compiled[p]
             p.j_ufl = self.j_ufl[p]
             p.j_compiled = self.j_compiled[p]
             if finalize:
+                p.form_subdomain_data[fem.IntegralType.exterior_facet].extend(p.get_facets_subdomain_data(p.gamma_integration_data[p_ext],
+                                                                                                          self.gamma_integration_tags))
                 p.instantiate_forms()
                 p.pre_assemble()
 
@@ -192,8 +194,6 @@ class StaggeredDomainDecompositionDriver(ABC):
             indices_integration_data = np.vstack((2*ifacets, 2*ifacets+1)).reshape(-1, order='F')
             self.gamma_subdomain_data[p].append((self.gamma_integration_tags[mat],
                                          gamma_boundary_data[indices_integration_data]))
-        p.form_subdomain_data[fem.IntegralType.exterior_facet].extend(p.get_facets_subdomain_data(p.gamma_integration_data[p_ext],
-                                                                                                  self.gamma_integration_tags))
 
     def assert_tag(self, p):
         assert_gamma_tags(self.gamma_integration_tags.values(), p)

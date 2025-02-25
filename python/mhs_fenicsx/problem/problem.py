@@ -131,7 +131,7 @@ class Problem:
         to_be_skipped = set([
             "restriction",
             "is_post_initialized",
-            "writers",
+            "form_subdomain_data",
             ])
         to_be_shallow_copied = set([
             "material_to_itag",
@@ -140,7 +140,6 @@ class Problem:
             "linear_solver_opts",
             "sources",
             "dirichlet_bcs",
-            "form_subdomain_data",
             ])
         to_be_reset = set([
             "local_cells",
@@ -151,6 +150,7 @@ class Problem:
             "gamma_facets_index_map",
             "gamma_imap_to_global_imap",
             "gamma_integration_data",
+            "writers",
             ])
         attributes = (set(self.__dict__.keys()) - to_be_skipped) - to_be_deep_copied - to_be_shallow_copied
         result = object.__new__(self.__class__)
@@ -173,9 +173,10 @@ class Problem:
         if not(name):
             name = result.name + "_bis"
         result.name = name
-        result.writers = {}
         result.is_post_initialized = False
         result.switch_source_term(self.current_source_term)
+        result.form_subdomain_data = {fem.IntegralType.cell : [],
+                                      fem.IntegralType.exterior_facet : []}
         return result
 
     def set_dt(self, dt : float):
@@ -240,7 +241,6 @@ class Problem:
         self.material_id.x.array[cells] = self.material_to_tag[mat]
         if finalize:
             self.material_id.x.scatter_forward()
-            self.set_form_subdomain_data()
 
     def switch_source_term(self, idx : int):
         assert(0 <= idx < len(self.sources))
@@ -324,18 +324,22 @@ class Problem:
     def post_iterate(self, finalize=True):
         self._destroy()
         self.has_preassembled = False
-        if finalize:
-            self.set_form_subdomain_data()
 
     def is_path_over(self):
         return (self.source.path.tracks[-1].t1 - self.time) < 1e-7
 
     def initialize_activation(self, finalize=True):
-        self.active_els = np.arange(self.num_cells,dtype=np.int32)
         self.active_els_func= fem.Function(self.dg0,name="active_els")
         self.active_nodes_func = fem.Function(self.v,name="active_nodes")
-        self.active_els_func.x.array[:] = 1.0
+        self.form_subdomain_data = {fem.IntegralType.cell : [],
+                                    fem.IntegralType.exterior_facet : []}
+        self.reset_activation(finalize=finalize)
+
+    def reset_activation(self, finalize=True):
+        self.active_els = np.arange(self.num_cells,dtype=np.int32)
         self.local_active_els = np.arange(self.cell_map.size_local,dtype=np.int32)
+        self.active_els_func.x.array[:] = 1.0
+        self.active_nodes_func.x.array[:] = 1.0
         if finalize:
             self.finalize_activation()
 
@@ -376,12 +380,13 @@ class Problem:
         self.update_active_dofs()
         self.restriction = multiphenicsx.fem.DofMapRestriction(self.v.dofmap, self.active_dofs)
         self.update_boundary()
-        self.set_form_subdomain_data()
+        for v in self.form_subdomain_data.values():
+            v.clear()
 
     def get_facets_subdomain_data(self, facets_integration_data = None, mat2itag = None):
         facet_subdomain_data = []
         if facets_integration_data is None:
-            facets = self.bfacets_tag.find(1)
+            facets = self.bfacets_mask.nonzero()[0] # gamma facets already subtracted
             facets_integration_data = self.get_facet_integrations_entities(facets)
         if mat2itag is None:
             mat2itag = self.material_to_itag
@@ -407,19 +412,16 @@ class Problem:
     def set_form_subdomain_data(self):
         self.divide_domain_by_materials()
         cell_subdomain_data = [(self.material_to_itag[mat], self.local_cells[mat]) for mat in self.materials]
-        self.form_subdomain_data = {
-                fem.IntegralType.cell : cell_subdomain_data,
-                fem.IntegralType.exterior_facet : self.get_facets_subdomain_data(),
-                }
+        self.form_subdomain_data[fem.IntegralType.cell].extend(cell_subdomain_data)
+        self.form_subdomain_data[fem.IntegralType.exterior_facet].extend(self.get_facets_subdomain_data())
 
     def update_boundary(self):
         bfacets_indices  = locate_active_boundary(self.domain, self.active_els_func)
+        self.bfacets_mask = get_mask(self.num_facets,
+                                     bfacets_indices)
         self.bfacets_tag  = mesh.meshtags(self.domain, self.dim-1,
-                                         np.arange(self.num_facets, dtype=np.int32),
-                                         get_mask(self.num_facets,
-                                                  bfacets_indices, dtype=np.int32),
-                                         )
-        # If needed, we are creating bnodes_tag in find_interface with child problem
+                                          np.arange(self.num_facets, dtype=np.int32),
+                                          self.bfacets_mask)
 
     def compute_gradient(self, cells: typing.Optional[npt.NDArray[np.int32]] = None):
         if not(self.is_grad_computed):
@@ -430,6 +432,8 @@ class Problem:
 
     def clear_gamma_data(self):
         self.gamma_nodes.clear()
+        for f in self.gamma_nodes.items():
+            f.x.array.fill(0.0)
         self.gamma_facets.clear()
         self.gamma_facets_index_map.clear()
         self.gamma_imap_to_global_imap.clear()
@@ -493,17 +497,20 @@ class Problem:
         self.update_gamma_data(p_ext)
 
     def update_gamma_data(self, p_ext : 'Problem'):
-        # TODO: Add p_ext as argument
+        f = self.gamma_nodes[p_ext] if p_ext in self.gamma_nodes else None
         self.gamma_nodes[p_ext] = indices_to_function(self.v,
                                                       self.gamma_facets[p_ext].find(1),
                                                       self.dim-1,
-                                                      name=f"gamma_{p_ext.name}",)
+                                                      name=f"gamma_{p_ext.name}",
+                                                      f=f)
         indices_all_gamma_facets = self.gamma_facets[p_ext].values.nonzero()[0]
         self.gamma_facets_index_map[p_ext], \
         self.gamma_imap_to_global_imap[p_ext] = cpp.common.create_sub_index_map(self.facet_map,
                                                     indices_all_gamma_facets,
                                                     False)
         self.gamma_integration_data[p_ext] = self.get_facet_integrations_entities(indices_all_gamma_facets)
+        # Subtract gamma facets to boundary facets mask
+        self.bfacets_mask[indices_all_gamma_facets] = 0.0
 
     def add_dirichlet_bc(self, func, bdofs=None, bfacets_tag=None, marker=None, reset=False):
         if reset:
@@ -634,7 +641,14 @@ class Problem:
         self.j_compiled = fem.compile_form(self.domain.comm, self.j_ufl,
                                             form_compiler_options={"scalar_type": np.float64})
 
-    def instantiate_forms(self):
+    def clear_subdomain_data(self):
+        for v in self.form_subdomain_data.values():
+            v.clear()
+
+    def instantiate_forms(self, clear=False):
+        if clear:
+            self.clear_subdomain_data()
+        self.set_form_subdomain_data()
         rcoeffmap, rconstmap = get_identity_maps(self.r_ufl)
         self.r_instance = fem.create_form(self.r_compiled,
                                            [self.v],
@@ -743,7 +757,7 @@ class Problem:
         funcs.append(partition)
         #EPARTITIONTAG
 
-        bnodes = indices_to_function(self.v,self.bfacets_tag.find(1),self.dim-1,name="bnodes")
+        bnodes = indices_to_function(self.v,self.bfacets_mask.nonzero()[0], self.dim-1,name="bnodes")
         funcs.append(bnodes)
         funcs.extend(extra_funcs)
         self.writers["vtk"].write_function(funcs,t=np.round(self.time,7))
@@ -814,7 +828,7 @@ class Problem:
         snes.setMonitor(lambda _, it, residual: print(it, residual))
         self.set_snes_sol_vector()
         snes.solve(None, self.x)
-        assert (snes.getConvergedReason() > 0), f"converged reason = {snes.getConvergedReason()}"
+        assert (snes.getConvergedReason() > 0), f"did not converge : {snes.getConvergedReason()}"
         self._update_solution(self.x)  # TODO can this be safely removed?
         snes.destroy()
         [opts.__delitem__(k) for k in opts.getAll().keys()] # Clear options data-base

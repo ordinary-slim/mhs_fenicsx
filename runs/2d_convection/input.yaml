@@ -1,11 +1,10 @@
 isSteady: False
-source_terms : {
-  type : 2,
-  initial_position : [0, 0, 0],
-  initial_speed : [0.0, 0.0, 0],
-  radius : 1,
-  power : 0,
-}
+source_terms :
+  - type : 2
+    initial_position : [0, 0, 0]
+    initial_speed : [0.0, 0.0, 0]
+    radius : 1
+    power : 0
 dt : 1.0
 # PROPS
 material : {

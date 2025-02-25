@@ -19,7 +19,7 @@ template <std::floating_point T>
 void interpolate_dg0_at_facets(std::vector<std::reference_wrapper<const dolfinx::fem::Function<T>>> &sending_fs,
                                std::vector<std::shared_ptr<dolfinx::fem::Function<T>>> &receiving_fs,
                                const dolfinx::fem::Function<T> &receiving_active_els_f,
-                               const mesh::MeshTags<std::int32_t> &facet_tag,
+                               const mesh::MeshTags<std::int8_t> &facet_tag,
                                std::span<const std::int32_t> incident_cells,
                                geometry::PointOwnershipData<T> &po,
                                const dolfinx::common::IndexMap &gamma_index_map,
@@ -96,7 +96,7 @@ void interpolate_dg0_at_facets(std::vector<std::reference_wrapper<const dolfinx:
   auto rfacet_map = rmesh->topology()->index_map(cdim-1);
   std::int32_t rnum_facets = rfacet_map->size_local();
 
-  std::span<const std::int32_t> facet_tag_vals = facet_tag.values();
+  std::span<const std::int8_t> facet_tag_vals = facet_tag.values();
 
   // Build facet indices (local and ghost)
   std::size_t n = std::count_if(facet_tag_vals.begin(), facet_tag_vals.end(), [](std::int32_t i){return i>0;});
@@ -328,7 +328,7 @@ void templated_declare_interpolate(nb::module_ &m) {
          std::vector<std::shared_ptr<const dolfinx::fem::Function<T>>> ptrs_sending_fs,
          std::vector<std::shared_ptr<dolfinx::fem::Function<T>>> ptrs_receiving_fs,
          const dolfinx::fem::Function<T> &receiving_active_els_f,
-         const mesh::MeshTags<std::int32_t> &facet_tag,
+         const mesh::MeshTags<std::int8_t> &facet_tag,
          nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> cells,
          geometry::PointOwnershipData<T> &po,
          const dolfinx::common::IndexMap &gamma_index_map,

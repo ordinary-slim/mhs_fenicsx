@@ -339,7 +339,8 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.set_snes_sol_vector()
         snes.solve(None, self.x)
         self.update_solution(self.x)
-        assert (snes.getConvergedReason() > 0)
+        assert (snes.getConvergedReason() > 0), f"did not converge : {snes.getConvergedReason()}"
+
         snes.destroy()
         [opts.__delitem__(k) for k in opts.getAll().keys()] # Clear options data-base
         opts.destroy()

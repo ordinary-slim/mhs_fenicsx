@@ -24,11 +24,12 @@ class ChimeraSubstepper(ABC):
         self.quadrature_degree : int
         self.fast_subproblem_els : npt.NDArray[np.int32]
 
-    def chimera_post_init(self, chimera_always_on):
+    def chimera_post_init(self, chimera_always_on : bool, initial_orientation : npt.NDArray):
         self.chimera_driver = MonolithicRRDriver(self.pf, self.pm,
                                                  quadrature_degree=self.quadrature_degree)
         self.chimera_off = False
         self.chimera_always_on = chimera_always_on
+        self.current_orientation = initial_orientation.astype(np.float64)
         # Overwrite methods
         def post_step_wo_substepping():
             super(type(self), self).post_step_wo_substepping()
@@ -58,17 +59,18 @@ class ChimeraSubstepper(ABC):
         self.direction_change = False
         self.rotation_angle = 0.0
         if not(next_track == pf.source.path.current_track):
-            d0 = self.pf.source.path.current_track.get_direction()
+            d0 = self.current_orientation
             d1 = next_track.get_direction()
             self.rotation_angle = np.arccos(d0.dot(d1))
             if (abs(self.rotation_angle) > 1e-9):
                 self.direction_change = True
+            self.current_orientation = d1
         if (self.direction_change):
             pm.in_plane_rotation(pf.source.x, self.rotation_angle)
 
     def chimera_micro_pre_iterate(self, forced_time_derivative=False):
         (pf, pm) = self.pf, self.pm
-        pm.initialize_activation(finalize=False)
+        pm.reset_activation(finalize=False)
         pm.intersect_problem(pf, finalize=False)
         pf.pre_iterate(forced_time_derivative=forced_time_derivative, verbose=False)
         if self.direction_change:
@@ -104,6 +106,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
                  predictor={},
                  compile_forms=True,
                  chimera_always_on=True,
+                 initial_orientation=np.array([1.0, 0.0, 0.0])
                  ):
         self.pm = moving_problem
         for mat in self.pm.material_to_itag:
@@ -113,7 +116,8 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
         self.fplist.append(self.pm)
         self.quadrature_degree = 2 # Gamma Chimera
         self.name = "staggered_chimera_substepper"
-        self.chimera_post_init(chimera_always_on)
+        self.chimera_post_init(chimera_always_on,
+                               initial_orientation)
 
     def compile_forms(self):
         ps, pm = (self.ps, self.pm)
@@ -203,7 +207,8 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
                  max_staggered_iters=1,
                  max_nr_iters=25,max_ls_iters=5,
                  predictor={},
-                 chimera_always_on=True):
+                 chimera_always_on=True,
+                 initial_orientation=np.array([1.0, 0.0, 0.0])):
         self.pm = moving_problem
         super().__init__(slow_problem,writepos, max_staggered_iters, max_nr_iters,max_ls_iters, predictor, compile_forms=False)
         self.plist.append(self.pm)
@@ -211,7 +216,8 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         self.compile_forms()
         self.quadrature_degree = 2 # Gamma Chimera
         self.name = "semi_monolithic_chimera_substepper"
-        self.chimera_post_init(chimera_always_on)
+        self.chimera_post_init(chimera_always_on,
+                               initial_orientation)
 
     def pre_loop(self, prepare_fast_problem=False):
         super().pre_loop(prepare_fast_problem)
@@ -245,16 +251,9 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
 
     def monolithic_step(self):
         (ps, pf, pm) = (self.ps, self.pf, self.pm)
-        pm.intersect_problem(pf, finalize=False)
         ps.pre_iterate(forced_time_derivative=True)
-        pf.pre_iterate()
-        pm.pre_iterate()
-        pm.intersect_problem(pf, finalize=False)
-        pf.subtract_problem(pm, finalize=False)# Can I finalize here?
-        self.chimera_interpolate_material_id()
-        for p, p_ext in [(pm, pf), (pf, pm)]:
-            p.finalize_activation()
-            p.find_gamma(p_ext)#TODO: Re-use previous data here
+        self.chimera_micro_pre_iterate(forced_time_derivative=((pf.time - self.t0_macro_step) < 1e-7))
+
         assert(check_assumptions(ps, pf, pm))
 
         self.set_gamma_slow_to_fast()

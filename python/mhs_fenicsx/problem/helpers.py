@@ -53,7 +53,7 @@ def get_facet_integration_entities(domain,facet_indices,active_els_func):
                                                           active_els_func._cpp_object,
                                                           )
 
-def get_mask(size, indices, dtype=np.int32, val=1):
+def get_mask(size, indices, dtype=np.int8, val=1):
     val = dtype(val)
     mask = np.zeros(size, dtype=dtype)
     if isinstance(val, np.ndarray):

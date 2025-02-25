@@ -37,11 +37,10 @@ def run(case_name="case"):
     p.set_initial_condition(10.0)
     p.set_forms()
     p.compile_create_forms()
+    p.pre_assemble()
     for _ in range(10):
         p.pre_iterate()
-        p.pre_assemble()
-        p.assemble()
-        p.solve()
+        p.non_linear_solve()
         p.post_iterate()
         p.writepos()
 

@@ -4,6 +4,9 @@ import sys
 import os
 import argparse
 import subprocess
+from mpi4py import MPI
+
+comm = MPI.COMM_WORLD
 
 def main(nprocs):
     ''' Run tests 1 by 1 with MPI.
@@ -18,6 +21,7 @@ def main(nprocs):
         sys.stdout = old_stdout  # Restore stdout
     tests = [line.strip().replace(cwd, '.') for line in output.split("\n") if line.strip() and "::" in line]
     for test in tests:
+        comm.barrier()
         out = subprocess.run(["mpirun", "-n", f"{nprocs}", "pytest", test, '-q', '-s', '--verbose'])
         if out.returncode:
             raise Exception("A test FAILED")

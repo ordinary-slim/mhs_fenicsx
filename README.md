@@ -45,9 +45,10 @@ TODO
 - [ ] h for Robin's gamma not computed explicitly
 - [ ] (IMPORTANT) Substepper + Dirichlet conditions
 - [ ] In substepper, update physical domain restriction where relevant
-- [ ] Material rework to subdomains
+- [x] Material rework to subdomains
 - [x] Store material properties as functions of Temperature
 - [ ] Move Chimera problem to initial position in pre_loop of substepper
 - [ ] Mesh independent forms in monolithic robin driver
 - [x] Set explicit linear solve in SNES where it matters
 - [ ] In micro_pre_iterate, abort if end of path and set t1_macro and ps.dt to diff values
+- [ ] Set form subdomain data of staggered drivers together with one of Problem! Hook or something

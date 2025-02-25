@@ -135,10 +135,10 @@ std::vector<std::int32_t> intersect_from_nodes(const dolfinx::mesh::Mesh<T> &dom
 }
 
 template <std::floating_point T>
-mesh::MeshTags<std::int32_t> find_interface(const dolfinx::mesh::Mesh<T> &domain,
-                                            mesh::MeshTags<std::int32_t> &bfacet_tag,
-                                            const dolfinx::common::IndexMap& dofs_index_map,
-                                            const std::span<const bool> &ext_active_dofs_flags) {
+mesh::MeshTags<std::int8_t> find_interface(const dolfinx::mesh::Mesh<T> &domain,
+    mesh::MeshTags<std::int8_t> &bfacet_tag,
+    const dolfinx::common::IndexMap& dofs_index_map,
+    const std::span<const bool> &ext_active_dofs_flags) {
   // Initialize arrays
   auto topology = domain.topology();
   int cdim = topology->dim();
@@ -147,7 +147,7 @@ mesh::MeshTags<std::int32_t> find_interface(const dolfinx::mesh::Mesh<T> &domain
   auto con_facet_nodes = topology->connectivity(cdim-1,0);
 
   size_t total_facet_count = facet_map->size_local() + facet_map->num_ghosts();
-  std::vector<std::int32_t> tags(total_facet_count,0);
+  std::vector<std::int8_t> tags(total_facet_count, 0);
   std::vector<std::int32_t> bfacets = bfacet_tag.find(1);
   size_t num_nodes_facet = con_facet_nodes->num_links(0);// num links of first facet
                                                          // assuming constant
@@ -173,7 +173,7 @@ mesh::MeshTags<std::int32_t> find_interface(const dolfinx::mesh::Mesh<T> &domain
 
   std::vector<std::int32_t> ents(total_facet_count);
   std::iota(ents.begin(),ents.end(),0);
-  return mesh::MeshTags<std::int32_t>(topology,cdim-1,std::move(ents),std::move(tags));
+  return mesh::MeshTags<std::int8_t>(topology,cdim-1,std::move(ents),std::move(tags));
 }
 
 namespace nb = nanobind;
@@ -212,7 +212,7 @@ void templated_declare_activation_utils(nb::module_ &m) {
       );
   m.def("find_interface",
       [](const dolfinx::mesh::Mesh<T> &domain,
-         mesh::MeshTags<std::int32_t> &bfacet_tag,
+         mesh::MeshTags<std::int8_t> &bfacet_tag,
          const dolfinx::common::IndexMap& dofs_index_map,
          nb::ndarray<const bool, nb::ndim<1>, nb::c_contig> ext_active_dofs_flags)
       {

@@ -107,7 +107,6 @@ class MHSSubstepper(ABC):
         self.slow_els = ps.active_els.copy()
         if self.do_predictor:
             ps.update_boundary()
-            ps.set_form_subdomain_data()
         set_same_mesh_interface(ps, pf)
         self.dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim, self.fast_els)
         mask_dofs_slow = np.ones(ps.v.dofmap.index_map.size_local + ps.v.dofmap.index_map.num_ghosts, np.bool)
@@ -329,7 +328,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         (ps,pf) = (self.ps,self.pf)
         forced_time_derivative = (pf.time - self.t0_macro_step) < 1e-7
         pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
-        pf.set_form_subdomain_data()
+        pf.clear_subdomain_data()
         pf.instantiate_forms()
         f = self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
         # Update Dirichlet BC pf here!
@@ -346,6 +345,8 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 
     def instantiate_monolithic_forms(self):
         (ps, pf) = (self.ps, self.pf)
+        for p in ps, pf:
+            p.set_form_subdomain_data()
         cell_subdomain_data = [subdomain for p in [ps, pf] for subdomain in p.form_subdomain_data[fem.IntegralType.cell]]
         facet_subdomain_data = [subdomain for p in [ps, pf] for subdomain in p.form_subdomain_data[fem.IntegralType.exterior_facet]]
         form_subdomain_data = {fem.IntegralType.cell:cell_subdomain_data,
@@ -558,7 +559,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         sd = self.staggered_driver
         forced_time_derivative = (pf.time - self.t0_macro_step) < 1e-7
         pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
-        pf.set_form_subdomain_data()
+        pf.clear_subdomain_data()
         pf.form_subdomain_data[fem.IntegralType.exterior_facet].extend(sd.gamma_subdomain_data[pf])
         pf.instantiate_forms()
         self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)

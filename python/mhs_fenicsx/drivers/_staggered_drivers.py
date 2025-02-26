@@ -39,10 +39,9 @@ class StaggeredDomainDecompositionDriver(ABC):
         else:
             self.active_gamma_cells = dict()
         # Relaxation
-        self.relaxation_coeff = {p1:fem.Constant(p1.domain, 1.0),p2:fem.Constant(p2.domain, 1.0)}
-        for relaxation,p in zip(initial_relaxation_factors,[p1,p2]):
-            if relaxation<1.0:
-                self.relaxation_coeff[p].value = relaxation
+        self.relaxation_coeff = {p: fem.Constant(p.domain, v)
+                                 for p, v in
+                                 zip([p1, p2], initial_relaxation_factors)}
         self.ext_material_gamma = dict()
         self.ext_flux = dict()
         self.net_ext_flux = dict()
@@ -64,8 +63,16 @@ class StaggeredDomainDecompositionDriver(ABC):
     def initialize_coupling_functions(self):
         pass
 
-    @abstractmethod
     def compile_forms(self):
+        for p in (self.p1, self.p2):
+            p.set_forms()
+        self.add_to_forms()
+        for p in (self.p1, self.p2):
+            p.compile_forms()
+
+
+    @abstractmethod
+    def add_to_forms(self):
         pass
     
     def store_forms(self):
@@ -75,17 +82,21 @@ class StaggeredDomainDecompositionDriver(ABC):
         self.r_compiled = {p:p.r_compiled for p in plist}
         self.j_compiled = {p:p.j_compiled for p in plist}
 
-    def prepare_subproblems(self, finalize=True):
+    def instantiate_forms(self, p : Problem):
+        p.r_ufl = self.r_ufl[p]
+        p.r_compiled = self.r_compiled[p]
+        p.j_ufl = self.j_ufl[p]
+        p.j_compiled = self.j_compiled[p]
+        p.set_form_subdomain_data()
+        self.set_form_subdomain_data(p)
+        self.add_gamma_subdomain_data(p)
+        p.instantiate_forms()
+
+    def prepare_subproblems(self, preassemble=True):
         (p1, p2) = (self.p1, self.p2)
-        for p, p_ext in [p1, p2], [p2, p1]:
-            p.r_ufl = self.r_ufl[p]
-            p.r_compiled = self.r_compiled[p]
-            p.j_ufl = self.j_ufl[p]
-            p.j_compiled = self.j_compiled[p]
-            if finalize:
-                p.form_subdomain_data[fem.IntegralType.exterior_facet].extend(p.get_facets_subdomain_data(p.gamma_integration_data[p_ext],
-                                                                                                          self.gamma_integration_tags))
-                p.instantiate_forms()
+        for p in [p1, p2]:
+            self.instantiate_forms(p)
+            if preassemble:
                 p.pre_assemble()
 
     def initialize_post(self):
@@ -158,7 +169,7 @@ class StaggeredDomainDecompositionDriver(ABC):
             p_index_ghost = np.searchsorted(self.active_gamma_cells[p],p.cell_map.size_local-1,side='right')
             self.active_gamma_cells[p] = self.active_gamma_cells[p][:p_index_ghost]
 
-    def pre_loop(self,set_bc=None):
+    def pre_loop(self,set_bc=None, prepare_subproblems=False, preassemble=False):
         (p1, p2) = (self.p1, self.p2)
         self.iter = 0
         # TODO: Call parent pre-loop
@@ -173,7 +184,6 @@ class StaggeredDomainDecompositionDriver(ABC):
         self.gamma_dofs = dict()
         for p, p_ext in [(p1,p2),(p2,p1)]:
             self.gamma_dofs[p] = fem.locate_dofs_topological(p.v,0,p.gamma_nodes[p_ext].x.array.nonzero()[0],True)
-            self.set_form_subdomain_data(p)
             self.l2_dot[p].set_gamma(p_ext)
         # Ext bc
         if set_bc is not None:
@@ -194,6 +204,13 @@ class StaggeredDomainDecompositionDriver(ABC):
             indices_integration_data = np.vstack((2*ifacets, 2*ifacets+1)).reshape(-1, order='F')
             self.gamma_subdomain_data[p].append((self.gamma_integration_tags[mat],
                                          gamma_boundary_data[indices_integration_data]))
+
+    def add_gamma_subdomain_data(self, p : Problem):
+        if p==self.p1:
+            p_ext=self.p2
+        else:
+            p_ext=self.p1
+        p.form_subdomain_data[fem.IntegralType.exterior_facet].extend(p.get_facets_subdomain_data(p.gamma_integration_data[p_ext], self.gamma_integration_tags))
 
     def assert_tag(self, p):
         assert_gamma_tags(self.gamma_integration_tags.values(), p)
@@ -233,13 +250,8 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
             self.dirichlet_prev_res = fem.Function(pd.v,name="previous residual")
             self.dirichlet_res_diff = fem.Function(pd.v,name="residual difference")
 
-    def compile_forms(self):
-        (pd,pn) = plist = (self.p_dirichlet,self.p_neumann)
-        for p in plist:
-            p.set_forms()
+    def add_to_forms(self):
         self.set_neumann_interface()
-        for p in plist:
-            p.compile_forms()
 
     def writepos(self,extra_funcs_p1=[],extra_funcs_p2=[]):
         (pd,pn) = (self.p_dirichlet,self.p_neumann)
@@ -251,7 +263,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
 
         StaggeredDomainDecompositionDriver.write_results(self,extra_funcs_p1=extra_funcs_p1,extra_funcs_p2=extra_funcs_p2)
 
-    def pre_loop(self,set_bc=None,prepare_subproblems=True):
+    def pre_loop(self,set_bc=None, prepare_subproblems=True, preassemble=False):
         '''
         1. Set interface between subproblems
         2. Initialize vars to receive ext data
@@ -268,11 +280,11 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
 
         # Forms and allocation
         if prepare_subproblems:
-            self.prepare_subproblems()
+            self.prepare_subproblems(preassemble = preassemble)
 
-    def prepare_subproblems(self, finalize=True):
+    def prepare_subproblems(self, preassemble=True):
         (pn, pd) = plist = (self.p_neumann, self.p_dirichlet)
-        StaggeredDomainDecompositionDriver.prepare_subproblems(self,finalize=finalize)
+        StaggeredDomainDecompositionDriver.prepare_subproblems(self, preassemble=preassemble)
         self.set_dirichlet_interface()
 
     def post_iterate(self, verbose=False):
@@ -421,12 +433,9 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
             self.prev_ext_sol[p] = fem.Function(p.v,name="prev_ext_sol")
             self.gamma_residual[p] = fem.Function(p.v,name="residual")
 
-    def compile_forms(self):
-        (p1,p2) = plist = (self.p1,self.p2)
-        for p in plist:
-            p.set_forms()
+    def add_to_forms(self):
+        for p in (self.p1,self.p2):
             self.set_robin(p)
-            p.compile_forms()
 
     def set_dirichlet_coefficients(self, h:float, k:float):
         (p1,p2) = (self.p1,self.p2)
@@ -451,7 +460,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
                 self.prev_ext_flux[p].x.array[:] = self.ext_flux[p].x.array[:]
                 self.prev_ext_sol[p].x.array[:] = self.ext_sol[p].x.array[:]
 
-    def pre_loop(self,set_bc=None,prepare_subproblems=True):
+    def pre_loop(self,set_bc=None, prepare_subproblems=True, preassemble=False):
         '''
         1. Interface data
         2. Vars to receive p_ext data
@@ -469,11 +478,11 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
                                             self.active_gamma_cells[p_ext],
                                             np.float64(1e-6))
         if prepare_subproblems:
-            self.prepare_subproblems()
+            self.prepare_subproblems(preassemble=preassemble)
 
-    def prepare_subproblems(self, finalize=True):
+    def prepare_subproblems(self, preassemble=True):
         (p2, p1) = plist = (self.p2, self.p1)
-        StaggeredDomainDecompositionDriver.prepare_subproblems(self,finalize=finalize)
+        StaggeredDomainDecompositionDriver.prepare_subproblems(self, preassemble=preassemble)
 
     def post_iterate(self, verbose=False):
         (p2, p1) = (self.p2, self.p1)

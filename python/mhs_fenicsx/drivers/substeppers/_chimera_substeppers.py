@@ -2,6 +2,7 @@ from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.problem.helpers import interpolate_cg1, interpolate_dg0
 from mhs_fenicsx.drivers.substeppers import MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper
 from mhs_fenicsx.drivers._monolithic_drivers import MonolithicRRDriver
+from mhs_fenicsx.drivers._staggered_drivers import StaggeredDomainDecompositionDriver
 import mhs_fenicsx_cpp
 import ufl
 import numpy as np
@@ -70,11 +71,17 @@ class ChimeraSubstepper(ABC):
 
     def chimera_micro_pre_iterate(self, forced_time_derivative=False):
         (pf, pm) = self.pf, self.pm
+        prev_pm_active_nodes_mask = pm.active_nodes_func.x.array.copy()
         pm.reset_activation(finalize=False)
         pm.intersect_problem(pf, finalize=False)
+        newly_activated_dofs = np.logical_and(pm.active_nodes_func.x.array,
+                                               prev_pm_active_nodes_mask).nonzero()[0]
+        if newly_activated_dofs.size > 0:
+            pm.interpolate(pf)
         pf.pre_iterate(forced_time_derivative=forced_time_derivative, verbose=False)
         if self.direction_change:
-            pm.interpolate(pf)
+            if not(self.chimera_off):
+                pm.interpolate(pf, dofs_to_interpolate=newly_activated_dofs)
             pm.pre_iterate(forced_time_derivative=False, verbose=False)
         else:
             pm.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
@@ -89,7 +96,6 @@ class ChimeraSubstepper(ABC):
             p.finalize_activation()
             p.find_gamma(p_ext)#TODO: Re-use previous data here
 
-
     def chimera_micro_post_iterate(self):
         (pf, pm) = self.pf, self.pm
         pf.set_activation(self.fast_subproblem_els, finalize=False)
@@ -100,7 +106,10 @@ class ChimeraSubstepper(ABC):
                         pf.ext_colliding_els[pm], pm.local_active_els)
 
 class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
-    def __init__(self,slow_problem:Problem, moving_problem : Problem,
+    def __init__(self,
+                 staggered_driver_class : typing.Type[StaggeredDomainDecompositionDriver],
+                 staggered_relaxation_factors : list[float],
+                 slow_problem:Problem, moving_problem : Problem,
                  writepos=True,
                  max_nr_iters=25,max_ls_iters=5,
                  predictor={},
@@ -111,7 +120,14 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
         self.pm = moving_problem
         for mat in self.pm.material_to_itag:
             self.pm.material_to_itag[mat] += 2*len(slow_problem.materials)
-        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, predictor,compile_forms)
+        super().__init__(staggered_driver_class,
+                         staggered_relaxation_factors,
+                         slow_problem,
+                         writepos,
+                         max_nr_iters,
+                         max_ls_iters,
+                         predictor,
+                         compile_forms)
         self.plist.append(self.pm)
         self.fplist.append(self.pm)
         self.quadrature_degree = 2 # Gamma Chimera
@@ -156,10 +172,8 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
         sd.net_ext_flux[pf].x.array[:] = (1-f)*self.ext_flux_tn[pf].x.array[:] + \
                 f*self.ext_flux_array_tnp1[:]
 
-        pf.form_subdomain_data[fem.IntegralType.exterior_facet].extend(sd.gamma_subdomain_data[pf])
-        assert(check_assumptions(ps, pf, pm))
+        sd.instantiate_forms(pf)
 
-        pf.instantiate_forms()
         pf.pre_assemble()
         if not(self.chimera_off):
             self.instantiate_forms(pm)

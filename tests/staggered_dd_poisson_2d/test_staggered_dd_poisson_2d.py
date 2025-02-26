@@ -85,7 +85,7 @@ def run(dd_type="dn", chimera=True):
     driver = driver_type(p_right,p_left,max_staggered_iters=params["max_staggered_iters"],
                          initial_relaxation_factors=initial_relaxation_factors)
 
-    driver.pre_loop(set_bc=set_bc)
+    driver.pre_loop(set_bc=set_bc, preassemble=True)
     for _ in range(driver.max_staggered_iters):
         driver.pre_iterate()
         driver.iterate()

@@ -386,6 +386,9 @@ class Problem:
     def get_facets_subdomain_data(self, facets_integration_data = None, mat2itag = None):
         facet_subdomain_data = []
         if facets_integration_data is None:
+            # Subtract gamma facets to boundary facets mask
+            for facets in self.gamma_imap_to_global_imap.values():
+                self.bfacets_mask[facets] = 0.0
             facets = self.bfacets_mask.nonzero()[0] # gamma facets already subtracted
             facets_integration_data = self.get_facet_integrations_entities(facets)
         if mat2itag is None:
@@ -456,21 +459,26 @@ class Problem:
         if finalize:
             self.find_gamma(p_ext, self.ext_nodal_activation[p_ext])
 
-    def interpolate(self, p_ext : 'Problem'):
-        local_ext_dofs = self.ext_nodal_activation[p_ext].nonzero()[0]
-        local_ext_dofs = local_ext_dofs[:np.searchsorted(local_ext_dofs, self.domain.topology.index_map(0).size_local)]
+    def interpolate(self, p_ext : 'Problem', dofs_to_interpolate = None, cells1 = None):
+        if dofs_to_interpolate is None:
+            dofs_to_interpolate = self.ext_nodal_activation[p_ext].nonzero()[0]
+            dofs_to_interpolate = dofs_to_interpolate[:np.searchsorted(dofs_to_interpolate, self.domain.topology.index_map(0).size_local)]
+        if cells1 is None:
+            cells1 = p_ext.local_active_els
+        # BUG: Nothing is being done with cells1!
         interpolate_cg1(p_ext.u,
                         self.u,
-                        np.arange(p_ext.cell_map.size_local),
-                        local_ext_dofs,
-                        self.dof_coords[local_ext_dofs],
+                        cells1,
+                        dofs_to_interpolate,
+                        self.dof_coords[dofs_to_interpolate],
                         1e-6)
 
     def intersect_problem(self, p_ext : 'Problem', finalize=True):
         self.ext_nodal_activation[p_ext] = self.get_active_in_external(p_ext)
-        active_els = mhs_fenicsx_cpp.intersect_from_nodes(self.domain._cpp_object,
-                                                          self.active_els_func._cpp_object,
-                                                          self.ext_nodal_activation[p_ext])
+        active_els, self.ext_colliding_els[p_ext] = mhs_fenicsx_cpp.intersect_from_nodes(self.domain._cpp_object,
+                                                                                         self.active_els_func._cpp_object,
+                                                                                         self.ext_nodal_activation[p_ext])
+        self.ext_colliding_els[p_ext] = self.ext_colliding_els[p_ext][:np.searchsorted(self.ext_colliding_els[p_ext], self.cell_map.size_local)]
         self.set_activation(active_els, finalize=finalize)
         if finalize:
             self.find_gamma(p_ext, self.ext_nodal_activation[p_ext])
@@ -509,8 +517,6 @@ class Problem:
                                                     indices_all_gamma_facets,
                                                     False)
         self.gamma_integration_data[p_ext] = self.get_facet_integrations_entities(indices_all_gamma_facets)
-        # Subtract gamma facets to boundary facets mask
-        self.bfacets_mask[indices_all_gamma_facets] = 0.0
 
     def add_dirichlet_bc(self, func, bdofs=None, bfacets_tag=None, marker=None, reset=False):
         if reset:

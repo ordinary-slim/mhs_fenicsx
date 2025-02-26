@@ -4,20 +4,22 @@ from mpi4py import MPI
 from mhs_fenicsx.problem import Problem, HeatSource
 from mhs_fenicsx.problem.helpers import interpolate_cg1
 
-def interpolate_solution_to_inactive(p:Problem, p_ext:Problem, finalize=True):
+def interpolate_solution_to_inactive(p:Problem, p_ext:Problem, cells1 = None, finalize=True):
     local_ext_inactive_dofs = np.logical_and((p.active_nodes_func.x.array == 0), p.ext_nodal_activation[p_ext]).nonzero()[0]
     local_ext_inactive_dofs = local_ext_inactive_dofs[:np.searchsorted(local_ext_inactive_dofs, p.domain.topology.index_map(0).size_local)]
+    if cells1 is None:
+        cells1 = p_ext.local_active_els
     interpolate_cg1(p_ext.u,
                     p.u,
-                    np.arange(p_ext.cell_map.size_local),
+                    cells1,
                     local_ext_inactive_dofs,
                     p.dof_coords[local_ext_inactive_dofs],
                     1e-6)
     if finalize:
         p.post_modify_solution(cells=p.ext_colliding_els[p_ext])
 
-def build_moving_problem(p_fixed:Problem,els_per_radius=2):
-    moving_domain = mesh_around_hs(p_fixed.source,p_fixed.domain.topology.dim,els_per_radius)
+def build_moving_problem(p_fixed : Problem, els_per_radius=2, shift=None):
+    moving_domain = mesh_around_hs(p_fixed.source, p_fixed.domain.topology.dim, els_per_radius, shift=shift)
     params = p_fixed.input_parameters.copy()
     params["attached_to_hs"] = 1
     # Placeholders
@@ -28,14 +30,16 @@ def build_moving_problem(p_fixed:Problem,els_per_radius=2):
     p = Problem(moving_domain, params,name=p_fixed.name+"_moving")
     return p
 
-def mesh_around_hs(hs:HeatSource, dim:int,els_per_radius:int):
+def mesh_around_hs(hs:HeatSource, dim:int, els_per_radius:int, shift=None):
     center_of_mesh = np.array(hs.x)
     back_length  = hs.R * 4
     front_length = hs.R * 2
     side_length  = hs.R * 2
     bot_length   = hs.R * 2
     top_length   = hs.R * 2
+
     el_size      = hs.R / float(els_per_radius)
+
     mesh_bounds  = [
             center_of_mesh[0]-back_length,
             center_of_mesh[1]-side_length,
@@ -44,9 +48,14 @@ def mesh_around_hs(hs:HeatSource, dim:int,els_per_radius:int):
             center_of_mesh[1]+side_length,
             center_of_mesh[2]+top_length,
             ]
-    nx = np.round((back_length+front_length)/el_size).astype(int)
-    ny = np.round(side_length*2/el_size).astype(int)
-    nz = np.round((top_length+bot_length)/el_size).astype(int)
+    if shift is not None:
+        assert(shift.size == 3)
+        for i in range(3):
+            mesh_bounds[i]   += shift[i]
+            mesh_bounds[i+3] += shift[i]
+    nx = np.rint((back_length+front_length)/el_size).astype(int)
+    ny = np.rint(side_length*2/el_size).astype(int)
+    nz = np.rint((top_length+bot_length)/el_size).astype(int)
     if dim==1:
         return dolfinx.mesh.create_interval(MPI.COMM_WORLD,
                                             nx,

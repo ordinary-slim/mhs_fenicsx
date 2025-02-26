@@ -67,7 +67,7 @@ def staggered_robin(params, writepos=True):
     driver = StaggeredRRDriver(p_right, p_left, max_staggered_iters=20,
                                initial_relaxation_factors=[1.0, 1.0])
 
-    driver.pre_loop(set_bc=set_bc)
+    driver.pre_loop(set_bc=set_bc, preassemble=True)
     for _ in range(driver.max_staggered_iters):
         driver.pre_iterate()
         driver.iterate()

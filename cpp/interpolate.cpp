@@ -231,8 +231,11 @@ void interpolate_cg1_affine(const dolfinx::fem::Function<T> &sending_f,
   size_t num_dofs_processor = _coords_dofs_to_interpolate.size() / 3;
   assert(num_dofs_processor == dofs_to_interpolate.size());
 
-  dolfinx::geometry::PointOwnershipData<T> interpolation_data =
-    geometry::determine_point_ownership<T>(*smesh, _coords_dofs_to_interpolate, padding);
+    dolfinx::geometry::PointOwnershipData<T> interpolation_data =
+      my_determine_point_ownership(*smesh,
+          _coords_dofs_to_interpolate,
+          sending_cells,
+          padding);
 
   const std::vector<int>& dest_ranks = interpolation_data.src_owner;
   const std::vector<int>& src_ranks = interpolation_data.dest_owners;

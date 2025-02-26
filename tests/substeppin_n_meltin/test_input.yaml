@@ -2,9 +2,9 @@
 isSteady: False
 source_terms :
   - initial_position : [-5.0, 0.0, 0.0]
-    initial_speed : [1000.0, 0.0, 0]
+    initial_speed : [500.0, 0.0, 0]
     radius : 0.05
-    power : 500
+    power : 300
     path: "Path.gcode"
 # PROPS
 material_powder : {
@@ -41,6 +41,12 @@ petsc_opts_macro: {
   "ksp_type" : "gmres",
   "ksp_rtol" : 1e-14,
   "pc_type" : "jacobi",
+}
+petsc_opts_mono_robin: {
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-13,
+  "ksp_rtol" : 1e-13,
+  "pc_type" : "fieldsplit",
 }
 domain_width: 1
 domain_height: 0.5

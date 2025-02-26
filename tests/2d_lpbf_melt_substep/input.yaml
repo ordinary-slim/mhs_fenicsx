@@ -10,7 +10,7 @@ source_terms :
   - initial_position : &p0 [-5.0, 0.0, 0.0]
     initial_speed : &speed [1000.0, 0.0, 0]
     radius : *radius
-    power : &power 525
+    power : &power 540
     path: &path "Path.gcode"
   - type : 4
     initial_position : *p0
@@ -43,10 +43,12 @@ material_metal : {
     liquidus_temperature : *liquidus_temperature,
   }
 }
+convection_coeff : 0.15
 smoothing_cte_phase_change : 1.0
 environment_temperature : &environment_temperature 25
 # END_ESSENTIAL
 petsc_opts_micro: {
+  "ksp_error_if_not_converged" : "true",
   "ksp_type" : "gmres",
   "ksp_atol" : 1e-13,
   "ksp_rtol" : 1e-13,
@@ -56,7 +58,7 @@ petsc_opts_macro: {
   "ksp_type" : "gmres",
   "ksp_atol" : 1e-13,
   "ksp_rtol" : 1e-13,
-  "pc_type" : "jacobi",
+  "pc_type" : "fieldsplit",
 }
 els_per_radius: 4
 max_staggered_iters: 1
@@ -65,6 +67,7 @@ max_timesteps: 20
 dt : 1.0 #placeholder
 micro_adim_dt: 0.5
 macro_adim_dt: 7.5
+cooling_adim_dt: 0.5
 
 driver_type: "robin"
 initial_condition: False

@@ -82,12 +82,13 @@ def run_staggered(params, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredSubstepper(big_p,writepos=(params["substepper_writepos"] and writepos), predictor=params["predictor_step"])
-    (ps,pf) = (substeppin_driver.ps,substeppin_driver.pf)
-    staggered_driver = StaggeredRRDriver(pf,ps,
-                                   max_staggered_iters=params["max_staggered_iters"],
-                                   initial_relaxation_factors=[1.0, 1.0],)
-    substeppin_driver.set_staggered_driver(staggered_driver)
+    substeppin_driver = MHSStaggeredSubstepper(StaggeredRRDriver,
+                                               [1.0, 1.0],
+                                               big_p,
+                                               writepos=(params["substepper_writepos"] and writepos),
+                                               predictor=params["predictor_step"])
+    (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
+    staggered_driver = substeppin_driver.staggered_driver
     el_density = np.round((1.0 / radius) * params["els_per_radius"]).astype(np.int32)
     h = 1.0 / el_density
     k = float(params["material_metal"]["conductivity"])
@@ -103,13 +104,12 @@ def run_staggered(params, writepos=True):
 
 def run_semi_monolithic(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
-    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     big_p = Problem(big_mesh, macro_params, name=f"big_sms_melting")
-    big_p.set_initial_condition(  params["environment_temperature"] )
+    big_p.set_initial_condition(params["environment_temperature"])
 
     max_timesteps = params["max_timesteps"]
     substeppin_driver = MHSSemiMonolithicSubstepper(big_p,
@@ -129,33 +129,32 @@ def run_semi_monolithic(params, writepos=True):
 def run_chimera_staggered(params, writepos=True):
     els_per_radius = params["els_per_radius"]
     radius = params["source_terms"][0]["radius"]
-    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
-    initial_relaxation_factors=[1.0,1.0]
+    el_size = radius / els_per_radius
+    initial_relaxation_factors = [1.0,1.0]
     big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     ps = Problem(big_mesh, macro_params, name=f"big_chimera_ss_RR_melting")
-    pm = build_moving_problem(ps, els_per_radius)
-    ps.set_initial_condition(  params["environment_temperature"] )
-    pm.set_initial_condition(  params["environment_temperature"] )
+    if els_per_radius == 2:
+        shift = np.array([0.0, el_size / 2.0, 0.0], dtype=np.float64)
+    else:
+        shift = None
+    pm = build_moving_problem(ps, els_per_radius, shift=shift)
+    ps.set_initial_condition(params["environment_temperature"])
+    pm.set_initial_condition(params["environment_temperature"])
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredChimeraSubstepper(ps, pm,
+    substeppin_driver = MHSStaggeredChimeraSubstepper(StaggeredRRDriver, initial_relaxation_factors, ps, pm,
                                                       writepos=(params["substepper_writepos"] and writepos),
                                                       predictor=params["predictor_step"],
                                                       chimera_always_on=params["chimera_always_on"])
-    pf = substeppin_driver.pf
-    staggered_driver = StaggeredRRDriver(pf,ps,
-                                         max_staggered_iters=params["max_staggered_iters"],
-                                         initial_relaxation_factors=initial_relaxation_factors,)
-    substeppin_driver.set_staggered_driver(staggered_driver)
+    (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
+    staggered_driver = substeppin_driver.staggered_driver
 
-    el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)
-    h = 1.0 / el_density
     k = float(params["material_metal"]["conductivity"])
-    staggered_driver.set_dirichlet_coefficients(h, k)
+    staggered_driver.set_dirichlet_coefficients(el_size, k)
 
     itime_step = 0
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
@@ -168,13 +167,17 @@ def run_chimera_staggered(params, writepos=True):
 def run_chimera_hodge(params, writepos=True):
     els_per_radius = params["els_per_radius"]
     radius = params["source_terms"][0]["radius"]
-    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
+    el_size = radius / els_per_radius
     big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     ps = Problem(big_mesh, macro_params, name=f"big_chimera_sms_melting")
-    pm = build_moving_problem(ps, els_per_radius)
+    if els_per_radius == 2:
+        shift = np.array([0.0, el_size / 2.0, 0.0], dtype=np.float64)
+    else:
+        shift = None
+    pm = build_moving_problem(ps, els_per_radius, shift=shift)
     ps.set_initial_condition(  params["environment_temperature"] )
     pm.set_initial_condition(  params["environment_temperature"] )
 
@@ -206,12 +209,7 @@ def test_staggered_rr():
         [-0.4125, -0.1500, 0.0],
         [-0.1500, -0.0125, 0.0],
         ])
-    vals = np.array([
-        1660.6062,
-        49.407119,
-        180.03035,
-        24.863405,
-        ])
+    vals = np.array([1741.17490832,  220.79734639,  282.20719521,   25.44636481])
     mats = np.array([ 2, 1, 1, 1, ])
     assert_pointwise_vals(p, points, vals, f=p.u)
     assert_pointwise_vals(p, points, mats, f=p.material_id)
@@ -227,12 +225,7 @@ def test_hodge():
         [-0.4125, -0.1500, 0.0],
         [-0.1500, -0.0125, 0.0],
         ])
-    vals = np.array([
-        1660.6063,
-        49.4101,
-        170.053,
-        25.000744,
-        ])
+    vals = np.array([1741.14278225,  220.80143742,  275.1454711 ,   25.14675252])
     mats = np.array([ 2, 1, 1, 1, ])
     assert_pointwise_vals(p, points, vals, f=p.u)
     assert_pointwise_vals(p, points, mats, f=p.material_id)
@@ -240,7 +233,6 @@ def test_hodge():
 def test_chimera_staggered_rr():
     with open("test_input.yaml", 'r') as f:
         params = yaml.safe_load(f)
-    params["source_terms"][0]["power"] *= 1.05
     write_gcode(params)
     p = run_chimera_staggered(params, writepos=False)
     points = np.array([
@@ -249,12 +241,7 @@ def test_chimera_staggered_rr():
         [-0.4125, -0.1500, 0.0],
         [-0.1500, -0.0125, 0.0],
         ])
-    vals = np.array([
-        1627.7407,
-        83.90751,
-        206.86814,
-        25.242121,
-        ])
+    vals = np.array([1701.99618512,  222.3950177 ,  293.67740056,   25.02479187])
     mats = np.array([ 2, 1, 1, 1, ])
     assert_pointwise_vals(p, points, vals, f=p.u)
     assert_pointwise_vals(p, points, mats, f=p.material_id)
@@ -262,7 +249,6 @@ def test_chimera_staggered_rr():
 def test_chimera_hodge():
     with open("test_input.yaml", 'r') as f:
         params = yaml.safe_load(f)
-    params["source_terms"][0]["power"] *= 1.05
     write_gcode(params)
     p = run_chimera_hodge(params, writepos=False)
     points = np.array([
@@ -271,12 +257,7 @@ def test_chimera_hodge():
         [-0.4125, -0.1500, 0.0],
         [-0.1500, -0.0125, 0.0],
         ])
-    vals = np.array([
-        1627.7408,
-        83.900625,
-        200.67343,
-        25.086891,
-        ])
+    vals = np.array([1701.99618437,  222.40220688,  288.67899577,   25.06183412])
     mats = np.array([ 2, 1, 1, 1, ])
     assert_pointwise_vals(p, points, vals, f=p.u)
     assert_pointwise_vals(p, points, mats, f=p.material_id)

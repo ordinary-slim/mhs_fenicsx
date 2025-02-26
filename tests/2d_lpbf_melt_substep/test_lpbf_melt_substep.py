@@ -25,7 +25,8 @@ def write_gcode(params):
     E = 0.0
     for layer in range(num_layers):
         gcode_lines.append(f"G0 Y{t*(layer+1):2.2f}")
-        gcode_lines.append(f"G4 P1.0 R1")
+        gcode_lines.append(f"G4 P0.5")
+        gcode_lines.append(f"G4 P0.5 R1")
         E += 0.1
         gcode_lines.append(f"G1 X{np.pow(-1, layer)*hlenx} E{E:2.2f}")
     with open(params["source_terms"][0]["path"],'w') as f:
@@ -59,25 +60,27 @@ def get_dt(adim_dt, radius, speed):
 def run_reference(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
     speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
-    big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
+    domain = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
     print_dt = get_dt(params["micro_adim_dt"], radius, speed)
     macro_params["dt"] = print_dt
-    recoat_dt = 0.5
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(big_mesh, macro_params, finalize_activation=False, name="2dlpbf")
+    ps = Problem(domain, macro_params, finalize_activation=False, name="2dlpbf")
     ps.set_activation(np.array([] ,dtype=np.int32))
 
     ps.set_initial_condition(  params["environment_temperature"] )
 
     ps.set_forms()
     ps.compile_forms()
+    adim_dt_cooling = params["cooling_adim_dt"]
     itime_step = 0
     while not(ps.is_path_over()):
         itime_step += 1
-        if ps.source.path.get_track(ps.time).type == TrackType.RECOATING:
-            ps.set_dt(recoat_dt)
+        track = ps.source.path.get_track(ps.time)
+        if ps.source.path.get_track(ps.time).type in [TrackType.RECOATING,
+                                                      TrackType.DWELLING]:
+            ps.set_dt(adim_dt_cooling*(track.t1 - track.t0))
         else:
             ps.set_dt(print_dt)
         ps.pre_iterate()
@@ -90,22 +93,23 @@ def run_reference(params, writepos=True):
 
 def run_staggered(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
-    big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
+    domain = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(big_mesh, macro_params, finalize_activation=False, name="2dlpbf")
+    ps = Problem(domain, macro_params, finalize_activation=False, name="2dlpbf")
     ps.set_activation(np.array([] ,dtype=np.int32))
     ps.set_initial_condition(  params["environment_temperature"] )
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredSubstepper(ps,writepos=(params["substepper_writepos"] and writepos), predictor=params["predictor_step"])
-    (ps,pf) = (substeppin_driver.ps,substeppin_driver.pf)
-    staggered_driver = StaggeredRRDriver(pf,ps,
-                                   max_staggered_iters=params["max_staggered_iters"],
-                                   initial_relaxation_factors=[1.0, 1.0],)
-    substeppin_driver.set_staggered_driver(staggered_driver)
+    substeppin_driver = MHSStaggeredSubstepper(StaggeredRRDriver,
+                                               [1.0, 1.0],
+                                               ps,
+                                               writepos=(params["substepper_writepos"] and writepos),
+                                               predictor=params["predictor_step"])
+    (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
+    staggered_driver = substeppin_driver.staggered_driver
     el_density = np.round((1.0 / radius) * params["els_per_radius"]).astype(np.int32)
     h = 1.0 / el_density
     k = float(params["material_metal"]["conductivity"])
@@ -116,16 +120,16 @@ def run_staggered(params, writepos=True):
         itime_step += 1
         substeppin_driver.do_timestep()
         if writepos:
-            ps.writepos()
+            ps.writepos(extra_funcs=[ps.u_prev])
     return ps
 
 def run_hodge(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
-    big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
+    domain = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(big_mesh, macro_params, finalize_activation=False, name="2dlpbf")
+    ps = Problem(domain, macro_params, finalize_activation=False, name="2dlpbf")
     ps.set_activation(np.array([] ,dtype=np.int32))
     ps.set_initial_condition(  params["environment_temperature"] )
 
@@ -147,11 +151,11 @@ def run_hodge(params, writepos=True):
 
 def run_chimera_staggered(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
-    big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
+    domain = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(big_mesh, macro_params, finalize_activation=False, name="2dlpbf")
+    ps = Problem(domain, macro_params, finalize_activation=False, name="2dlpbf")
     pm = build_moving_problem(ps, params["els_per_radius"])
     ps.set_activation(np.array([] ,dtype=np.int32))
     for p in [pm, ps]:
@@ -159,15 +163,13 @@ def run_chimera_staggered(params, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredChimeraSubstepper(ps, pm,
+    substeppin_driver = MHSStaggeredChimeraSubstepper(StaggeredRRDriver, [1.0, 1.0],
+                                                      ps, pm,
                                                       writepos=(params["substepper_writepos"] and writepos),
                                                       predictor=params["predictor_step"],
                                                       chimera_always_on=params["chimera_always_on"])
-    pf = substeppin_driver.pf
-    staggered_driver = StaggeredRRDriver(pf,ps,
-                                         max_staggered_iters=params["max_staggered_iters"],
-                                         initial_relaxation_factors=[1.0, 1.0],)
-    substeppin_driver.set_staggered_driver(staggered_driver)
+    (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
+    staggered_driver = substeppin_driver.staggered_driver
 
     el_density = np.rint((1.0 / radius) * params["els_per_radius"]).astype(np.int32)
     h = 1.0 / el_density
@@ -179,7 +181,36 @@ def run_chimera_staggered(params, writepos=True):
         itime_step += 1
         substeppin_driver.do_timestep()
         if writepos:
-            ps.writepos()
+            ps.writepos(extra_funcs=[ps.u_prev, ps.u_av])
+    return ps
+
+def run_chimera_hodge(params, writepos=True):
+    radius = params["source_terms"][0]["radius"]
+    domain = get_mesh(params, params["els_per_radius"], radius, 2)
+
+    macro_params = params.copy()
+    macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
+    ps = Problem(domain, macro_params, finalize_activation=False, name="2dlpbf")
+    pm = build_moving_problem(ps, params["els_per_radius"])
+    ps.set_activation(np.array([] ,dtype=np.int32))
+    for p in [pm, ps]:
+        p.set_initial_condition(  params["environment_temperature"] )
+
+    max_timesteps = params["max_timesteps"]
+
+    substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm,
+                                                           writepos=(params["substepper_writepos"] and writepos),
+                                                           max_staggered_iters=params["max_staggered_iters"],
+                                                           predictor=params["predictor_step"],
+                                                           chimera_always_on=params["chimera_always_on"])
+    pf = substeppin_driver.pf
+    itime_step = 0
+    while ((itime_step < max_timesteps) and not(ps.is_path_over())):
+        itime_step += 1
+        substeppin_driver.do_timestep()
+        if writepos:
+            for p in [ps,pf]:
+                p.writepos(extra_funcs=[p.u_prev])
     return ps
 
 if __name__=="__main__":

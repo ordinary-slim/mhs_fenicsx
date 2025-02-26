@@ -33,16 +33,15 @@ def run_staggered_RR(params, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredChimeraSubstepper(ps, pm,
-                                                      writepos=(params["substepper_writepos"] and writepos),
-                                                      predictor=params["predictor_step"],
-                                                      chimera_always_on=params["chimera_always_on"])
-    pf = substeppin_driver.pf
-    staggered_driver = StaggeredRRDriver(pf,ps,
-                                         max_staggered_iters=params["max_staggered_iters"],
-                                         initial_relaxation_factors=initial_relaxation_factors,)
-    substeppin_driver.set_staggered_driver(staggered_driver)
+    substeppin_driver = MHSStaggeredChimeraSubstepper(
+            StaggeredRRDriver,
+            initial_relaxation_factors,
+            ps, pm,
+            writepos=(params["substepper_writepos"] and writepos),
+            predictor=params["predictor_step"],
+            chimera_always_on=params["chimera_always_on"])
 
+    staggered_driver = substeppin_driver.staggered_driver
     el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)
     h = 1.0 / el_density
     k = float(params["material_metal"]["conductivity"])
@@ -98,12 +97,7 @@ def test_staggered_robin_chimera_substepper():
         [+0.250, +0.000, 0.0],
         [+0.375, -0.125, 0.0],
         ])
-    vals = np.array([
-        230.16532,
-        767.54852,
-        24.998741,
-        1339.9057,
-        ])
+    vals = np.array([ 232.16429694,  769.83503999,   24.9991268 , 1340.52243405])
     assert_pointwise_vals(p,points,vals)
 
 def test_sms_chimera_substepper():
@@ -117,12 +111,7 @@ def test_sms_chimera_substepper():
         [+0.250, +0.000, 0.0],
         [+0.375, -0.125, 0.0],
         ])
-    vals = np.array([
-        230.87176,
-        767.86368,
-        25.237054,
-        1341.4006,
-        ])
+    vals = np.array([ 232.80964993,  770.1403553 ,   25.2371303 , 1341.99693241])
     assert_pointwise_vals(p,points,vals)
 
 if __name__=="__main__":

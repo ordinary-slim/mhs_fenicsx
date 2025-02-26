@@ -78,12 +78,9 @@ def run_staggered(params, driver_type, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredSubstepper(big_p, writepos=(params["substepper_writepos"] and writepos), predictor=params["predictor_step"])
+    substeppin_driver = MHSStaggeredSubstepper(driver_constructor, initial_relaxation_factors, big_p, writepos=(params["substepper_writepos"] and writepos), predictor=params["predictor_step"])
+    staggered_driver = substeppin_driver.staggered_driver
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
-    staggered_driver = driver_constructor(pf,ps,
-                                   max_staggered_iters=params["max_staggered_iters"],
-                                   initial_relaxation_factors=initial_relaxation_factors,)
-    substeppin_driver.set_staggered_driver(staggered_driver)
 
     if (type(staggered_driver)==StaggeredRRDriver):
         el_density = np.round((1.0 / radius) * params["els_per_radius"]).astype(np.int32)

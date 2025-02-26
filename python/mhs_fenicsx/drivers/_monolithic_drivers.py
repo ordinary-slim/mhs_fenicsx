@@ -16,11 +16,15 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
 class MonolithicDomainDecompositionDriver:
-    def __init__(self, sub_problem_1:Problem,sub_problem_2:Problem, quadrature_degree):
+    def __init__(self, sub_problem_1 : Problem, sub_problem_2:Problem, quadrature_degree):
         (p1,p2) = (sub_problem_1,sub_problem_2)
         self.p1 = p1
         self.p2 = p2
         self.quadrature_degree = quadrature_degree
+        if "petsc_opts_mono_robin" in p1.input_parameters:
+            self.solver_opts = dict(p1.input_parameters["petsc_opts_mono_robin"])
+        else:
+            self.solver_opts = {"pc_type" : "lu", "pc_factor_mat_solver_type" : "mumps",}
 
     def setup_coupling(self):
         ''' Find interface '''
@@ -319,18 +323,14 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         snes = PETSc.SNES().create(p1.domain.comm)
         snes.setTolerances(max_it=50)
 
-        snes.getKSP().setType("preonly")
         opts = PETSc.Options()
-        opts.setValue('-ksp_error_if_not_converged', 'true')
-        opts.setValue('-snes_type', 'newtonls')
-        #opts.setValue('-snes_line_search_type', 'l2')
+        for k,v in self.solver_opts.items():
+            opts[k] = v
         snes.setFromOptions()
-        #snes.getKSP().setFromOptions()
-        snes.getKSP().getPC().setType("lu")
-        snes.getKSP().getPC().setFactorSolverType("mumps")
-        #snes.getKSP().getPC().setType("fieldsplit")
-        #nested_IS = self.A.getNestISs()
-        #snes.getKSP().getPC().setFieldSplitIS(["u1", nested_IS[0][0]], ["u2", nested_IS[1][1]])
+        pc = snes.getKSP().getPC()
+        if pc.getType() == "fieldsplit":
+            index_sets = self.A.getNestISs()
+            pc.setFieldSplitIS(["u1", index_sets[0][0]], ["u2", index_sets[1][1]])
 
         snes.setObjective(self.obj_snes)
         snes.setFunction(self.R_snes, self.L)

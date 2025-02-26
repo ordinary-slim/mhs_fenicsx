@@ -4,10 +4,11 @@ from dolfinx import fem, io
 import ufl
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx_cpp import mesh_collision
-from mhs_fenicsx.drivers._staggered_drivers import StaggeredRRDriver, StaggeredDNDriver
+from mhs_fenicsx.drivers._staggered_drivers import StaggeredRRDriver, StaggeredDNDriver, StaggeredDomainDecompositionDriver
 from mhs_fenicsx.geometry import OBB
 from mhs_fenicsx.gcode import TrackType
 import numpy as np
+import numpy.typing as npt
 import shutil
 import typing
 from petsc4py import PETSc
@@ -50,7 +51,7 @@ class MHSSubstepper(ABC):
         else:
             print("Step WITHOUT substepping STARTS...")
             for p in self.plist:
-                p.set_dt(self.dimensionalize_waiting_timestep(track, 0.5))
+                p.set_dt(self.dimensionalize_waiting_timestep(track, ps.input_parameters["cooling_adim_dt"]))
             self.step_without_substepping()
 
     @abstractmethod
@@ -65,11 +66,12 @@ class MHSSubstepper(ABC):
 
     def cap_timestep(self, p):
         tracks = p.source.path.get_track_interval(p.time, p.time + p.dt.value)
-        max_t1 = tracks[-1].t1
+        max_t1 = tracks[0].t1
         for track in tracks:
             if track.type is not(TrackType.PRINTING):
-                max_t1 = track.t1
                 break
+            else:
+                max_t1 = track.t1
         max_dt = max_t1 - p.time
         if (max_dt - p.dt.value) < 1e-9:
             p.set_dt(max_dt)
@@ -254,7 +256,7 @@ class MHSSubstepper(ABC):
         pf.material_id.x.array[:] = ps.material_id.x.array[:]
 
 class MHSSemiMonolithicSubstepper(MHSSubstepper):
-    def __init__(self,slow_problem: Problem ,writepos=True,
+    def __init__(self, slow_problem: Problem ,writepos=True,
                  max_staggered_iters=1,
                  max_nr_iters=25,max_ls_iters=5,
                  predictor={}, compile_forms=True):
@@ -486,21 +488,30 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 
 
 class MHSStaggeredSubstepper(MHSSubstepper):
-    def __init__(self,slow_problem:Problem,writepos=True,
-                 max_nr_iters=25,max_ls_iters=5,
+    def __init__(self,
+                 staggered_driver_class : typing.Type[StaggeredDomainDecompositionDriver],
+                 staggered_relaxation_factors : list[float],
+                 slow_problem:Problem, writepos=True,
+                 max_nr_iters=25, max_ls_iters=5,
                  predictor={},
                  compile_forms=True):
         super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, predictor, compile_forms)
+        self.staggered_driver = staggered_driver_class(self.pf, self.ps,
+                                                       max_staggered_iters=self.ps.input_parameters["max_staggered_iters"],
+                                                       initial_relaxation_factors=staggered_relaxation_factors)
         self.name = "staggered_substepper"
 
     def do_substepped_timestep(self):
+        (ps, pf) = (self.ps, self.pf)
         staggered_driver = self.staggered_driver
         self.update_fast_problem()
         staggered_driver.pre_loop(prepare_subproblems=False)
         self.pre_loop()
         if self.do_predictor:
             self.predictor_step(writepos=self.do_writepos)
-        staggered_driver.prepare_subproblems()
+        for p in (ps, pf):
+            staggered_driver.instantiate_forms(p)
+            p.pre_assemble()
         for _ in range(staggered_driver.max_staggered_iters):
             self.pre_iterate()
             staggered_driver.pre_iterate()
@@ -560,8 +571,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         forced_time_derivative = (pf.time - self.t0_macro_step) < 1e-7
         pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
         pf.clear_subdomain_data()
-        pf.form_subdomain_data[fem.IntegralType.exterior_facet].extend(sd.gamma_subdomain_data[pf])
-        pf.instantiate_forms()
+        sd.instantiate_forms(pf)
         self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
         if type(sd)==StaggeredRRDriver:
             f = self.fraction_macro_step
@@ -588,6 +598,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         # Updated sol, grad, conduc from n+1
         # I have to apply curr sol, grad, conduc from n+1 weighted with the one from n
 
+        rr_driver.instantiate_forms(ps)
         rr_driver.update_robin(ps)
         ps.pre_iterate(forced_time_derivative=True)
         ps.non_linear_solve()
@@ -600,6 +611,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         # Solve fast/Dirichlet problem
         self.micro_steps()
 
+        dn_driver.instantiate_forms(pn)
         dn_driver.update_neumann_interface()
         # Solve slow/Neumann problem
         pn.pre_iterate(forced_time_derivative=True)
@@ -631,8 +643,6 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         for p in [ps,pf]:
             p.post_iterate()
 
-    def set_staggered_driver(self, sd:typing.Union[StaggeredDNDriver,StaggeredRRDriver]):
-        self.staggered_driver = sd
 
     def pre_loop(self):
         super().pre_loop()

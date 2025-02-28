@@ -43,13 +43,13 @@ class MHSSubstepper(ABC):
         self.t0_macro_step = ps.time
         track = ps.source.path.get_track(self.t0_macro_step)
         if track.type == TrackType.PRINTING:
-            print("Step WITH substepping STARTS...")
+            print("Step WITH substepping STARTS...", flush=True)
             pf.set_dt(self.dimensionalize_mhs_timestep(track, ps.input_parameters["micro_adim_dt"]))
             ps.set_dt(self.dimensionalize_mhs_timestep(track, ps.input_parameters["macro_adim_dt"]))
             self.cap_timestep(ps)
             self.do_substepped_timestep()
         else:
-            print("Step WITHOUT substepping STARTS...")
+            print("Step WITHOUT substepping STARTS...", flush=True)
             for p in self.plist:
                 p.set_dt(self.dimensionalize_waiting_timestep(track, ps.input_parameters["cooling_adim_dt"]))
             self.step_without_substepping()
@@ -111,8 +111,8 @@ class MHSSubstepper(ABC):
             ps.update_boundary()
         set_same_mesh_interface(ps, pf)
         self.dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim, self.fast_els)
-        mask_dofs_slow = np.ones(ps.v.dofmap.index_map.size_local + ps.v.dofmap.index_map.num_ghosts, np.bool)
-        mask_dofs_slow[self.dofs_fast] = np.False_
+        mask_dofs_slow = np.logical_and(np.logical_not(pf.active_nodes_func.x.array),
+                                        ps.active_nodes_func.x.array)
         self.dofs_slow = mask_dofs_slow.nonzero()[0]
 
     @abstractmethod

@@ -90,6 +90,7 @@ def run_reference(params, writepos=True):
         ps.post_iterate()
         if writepos:
             ps.writepos(extra_funcs=[ps.u_av])
+    return ps
 
 def run_staggered(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
@@ -212,6 +213,96 @@ def run_chimera_hodge(params, writepos=True):
             for p in [ps,pf]:
                 p.writepos(extra_funcs=[p.u_prev])
     return ps
+
+def test_2dlpbf_ref():
+    with open("test_input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    write_gcode(params)
+    p = run_reference(params, writepos=False)
+    points = np.array([
+        [-0.4625, +0.0875, 0.0],
+        [-0.4375, +0.0875, 0.0],
+        [-0.0500, +0.0500, 0.0],
+        [+0.4625, +0.0375, 0.0],
+        [-0.5000,  0.0000, 0.0]
+        ])
+    vals = np.array([1686.39024011, 1706.14093675, 1153.03727521, 400.95171243,
+                     333.5883279])
+    mats = np.array([2., 2., 2., 2., 1.])
+    assert_pointwise_vals(p, points, vals, f=p.u)
+    assert_pointwise_vals(p, points, mats, f=p.material_id)
+
+def test_staggered_rr_substepper():
+    with open("test_input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    write_gcode(params)
+    p = run_staggered(params, writepos=False)
+    points = np.array([
+        [-0.4625, +0.0875, 0.0],
+        [-0.4375, +0.0875, 0.0],
+        [-0.0500, +0.0500, 0.0],
+        [+0.4625, +0.0375, 0.0],
+        [-0.5000,  0.0000, 0.0]
+        ])
+    vals = np.array([1686.47343084, 1706.81739878, 1126.69490977, 411.3817135,
+                     333.59490358])
+    mats = np.array([2., 2., 2., 2., 1.])
+    assert_pointwise_vals(p, points, vals, f=p.u)
+    assert_pointwise_vals(p, points, mats, f=p.material_id)
+
+def test_hodge_substepper():
+    with open("test_input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    write_gcode(params)
+    p = run_hodge(params, writepos=False)
+    points = np.array([
+        [-0.4625, +0.0875, 0.0],
+        [-0.4375, +0.0875, 0.0],
+        [-0.0500, +0.0500, 0.0],
+        [+0.4625, +0.0375, 0.0],
+        [-0.5000,0.0000, 0.0]
+        ])
+    vals = np.array([1686.39865997, 1706.215781, 1126.75101605, 428.4346181932377,
+                     333.58832694])
+    mats = np.array([1., 2., 2., 1., 1.])
+    assert_pointwise_vals(p, points, vals, f=p.u)
+    assert_pointwise_vals(p, points, mats, f=p.material_id)
+
+def test_staggered_chimera_substepper():
+    with open("test_input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    write_gcode(params)
+    p = run_chimera_staggered(params, writepos=False)
+    points = np.array([
+        [-0.4625, +0.0875, 0.0],
+        [-0.4375, +0.0875, 0.0],
+        [-0.0500, +0.0500, 0.0],
+        [+0.4625, +0.0375, 0.0],
+        [-0.5000,0.0000, 0.0]
+        ])
+    vals = np.array([1591.82868091, 1634.73779913, 1212.38565072, 404.001689034979,
+                     227.00690003])
+    mats = np.array([1., 2., 2., 1., 1.])
+    assert_pointwise_vals(p, points, vals, f=p.u)
+    assert_pointwise_vals(p, points, mats, f=p.material_id)
+
+def test_hodge_chimera_substepper():
+    with open("test_input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    write_gcode(params)
+    p = run_chimera_hodge(params, writepos=False)
+    points = np.array([
+        [-0.4625, +0.0875, 0.0],
+        [-0.4375, +0.0875, 0.0],
+        [-0.0500, +0.0500, 0.0],
+        [+0.4625, +0.0375, 0.0],
+        [-0.5000,0.0000, 0.0]
+        ])
+    vals = np.array([1591.82868091, 1634.73779913, 1212.38566461,  404.01927062,
+                     227.00690003])
+    mats = np.array([1., 2., 2., 1., 1.])
+    assert_pointwise_vals(p, points, vals, f=p.u)
+    assert_pointwise_vals(p, points, mats, f=p.material_id)
 
 if __name__=="__main__":
     with open("input.yaml", 'r') as f:

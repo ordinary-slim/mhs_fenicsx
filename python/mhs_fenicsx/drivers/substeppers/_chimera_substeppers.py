@@ -76,7 +76,8 @@ class ChimeraSubstepper(ABC):
         pm.intersect_problem(pf, finalize=False)
         newly_activated_dofs = np.logical_and(pm.active_nodes_func.x.array,
                                                prev_pm_active_nodes_mask).nonzero()[0]
-        if newly_activated_dofs.size > 0:
+        num_dofs_to_interpolate = pm.domain.comm.allreduce(newly_activated_dofs.size)
+        if num_dofs_to_interpolate > 0:
             pm.interpolate(pf)
         pf.pre_iterate(forced_time_derivative=forced_time_derivative, verbose=False)
         if self.direction_change:
@@ -263,6 +264,60 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
             pf.non_linear_solve()
             pm.interpolate(pf)
 
+    def set_snes_sol_vector(self, x) -> PETSc.Vec:  # type: ignore[no-any-unimported]
+        """
+        Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess
+        """
+        (ps, pf, pm) = (self.ps, self.pf, self.pm)
+        with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(
+                x, self.chimera_driver.dofmaps, self.chimera_driver.restriction) as nest_sol:
+            for sol_sub, u_sub in zip(nest_sol, [pf.u, pm.u]):
+                with u_sub.x.petsc_vec.localForm() as u_sol_sub_vector_local:
+                    sol_sub[:] = u_sol_sub_vector_local[:]
+
+    def update_solution(self, sol_vector, interpolate=False):
+        (ps, pf, pm) = (self.ps, self.pf, self.pm)
+        with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(sol_vector, self.chimera_driver.dofmaps, self.chimera_driver.restriction) as nest_sol:
+            for sol_sub, u_sub in zip(nest_sol, [pf.u, pm.u]):
+                with u_sub.x.petsc_vec.localForm() as u_sub_vector_local:
+                    u_sub_vector_local[:] = sol_sub[:]
+        pm.u.x.scatter_forward()
+        pf.u.x.scatter_forward()
+        if interpolate:
+            interpolate_solution_to_inactive(pf, pm)
+        ps.u.x.array[:] = pf.u.x.array[:]
+
+    def assemble_jacobian(
+            self, snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat, P_mat: PETSc.Mat):
+        (ps, pf, pm) = (self.ps, self.pf, self.pm)
+        super(type(self), self).assemble_jacobian(snes, x, J_mat.getNestSubMatrix(0,0), P_mat)
+        pm.assemble_jacobian(finalize=False)
+        self.chimera_driver.assemble_robin_jacobian_p_p_ext(self.chimera_driver.p1, self.chimera_driver.p2)
+        self.chimera_driver.assemble_robin_jacobian_p_p_ext(self.chimera_driver.p2, self.chimera_driver.p1)
+        self.chimera_driver.assemble_robin_jacobian_p_p()
+        J_mat.assemble()
+
+    def assemble_residual(self, snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
+        (ps, pf, pm) = (self.ps, self.pf, self.pm)
+        self.update_solution(x)
+        Rf, Rm = R_vec.getNestSubVecs()
+        with Rf.localForm() as R_local:
+            R_local.set(0.0)
+        multiphenicsx.fem.petsc.assemble_vector(Rf,
+                                                self.r_instance,
+                                                restriction=pf.restriction)
+        Rf.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
+        pm.assemble_residual(Rm)
+        self.chimera_driver.assemble_robin_residual(R_vec)
+
+    def obj(  # type: ignore[no-any-unimported]
+        self,
+        snes: PETSc.SNES, x: PETSc.Vec
+    ) -> np.float64:
+        """Compute the norm of the residual."""
+        self.assemble_residual(snes, x, self.obj_vec)
+        return self.obj_vec.norm()  # type: ignore[no-any-return]
+
     def monolithic_step(self):
         (ps, pf, pm) = (self.ps, self.pf, self.pm)
         ps.pre_iterate(forced_time_derivative=True)
@@ -297,80 +352,29 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         self.x = cd.x
         self.obj_vec = cd.obj_vec
 
-        def set_snes_sol_vector(self) -> PETSc.Vec:  # type: ignore[no-any-unimported]
-            """
-            Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess
-            """
-            sol_vector = self.x
-            with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(
-                    sol_vector, cd.dofmaps, cd.restriction) as nest_sol:
-                for sol_sub, u_sub in zip(nest_sol, [pf.u, pm.u]):
-                    with u_sub.x.petsc_vec.localForm() as u_sol_sub_vector_local:
-                        sol_sub[:] = u_sol_sub_vector_local[:]
-
-        def update_solution(sol_vector, interpolate=False):
-            with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(sol_vector, cd.dofmaps, cd.restriction) as nest_sol:
-                for sol_sub, u_sub in zip(nest_sol, [pf.u, pm.u]):
-                    with u_sub.x.petsc_vec.localForm() as u_sub_vector_local:
-                        u_sub_vector_local[:] = sol_sub[:]
-            pm.u.x.scatter_forward()
-            pf.u.x.scatter_forward()
-            if interpolate:
-                interpolate_solution_to_inactive(pf, pm)
-            ps.u.x.array[:] = pf.u.x.array[:]
-
-        def J_snes(
-                snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat, P_mat: PETSc.Mat):
-            super(type(self), self).assemble_jacobian(snes, x, J_mat.getNestSubMatrix(0,0), P_mat)
-            pm.assemble_jacobian(finalize=False)
-            cd.assemble_robin_jacobian_p_p_ext(cd.p1, cd.p2)
-            cd.assemble_robin_jacobian_p_p_ext(cd.p2, cd.p1)
-            cd.assemble_robin_jacobian_p_p()
-            J_mat.assemble()
-
-        def R_snes(snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
-            update_solution(x)
-            Rf, Rm = R_vec.getNestSubVecs()
-            with Rf.localForm() as R_local:
-                R_local.set(0.0)
-            multiphenicsx.fem.petsc.assemble_vector(Rf,
-                                                    self.r_instance,
-                                                    restriction=pf.restriction)
-            Rf.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
-            pm.assemble_residual(Rm)
-            cd.assemble_robin_residual(R_vec)
-
-        def obj_snes(  # type: ignore[no-any-unimported]
-            snes: PETSc.SNES, x: PETSc.Vec
-        ) -> np.float64:
-            """Compute the norm of the residual."""
-            R_snes(snes, x, self.obj_vec)
-            return self.obj_vec.norm()  # type: ignore[no-any-return]
-
         # Solve
+        if "petsc_opts_macro_chimera" in ps.input_parameters:
+            solver_opts = dict(ps.input_parameters["petsc_opts_macro_chimera"])
+        else:
+            solver_opts = {"pc_type" : "lu", "pc_factor_mat_solver_type" : "mumps",}
         snes = PETSc.SNES().create(pf.domain.comm)
-        snes.setTolerances(max_it=20)
 
-        snes.getKSP().setType("preonly")
         opts = PETSc.Options()
-        opts.setValue('-ksp_error_if_not_converged', 'true')
-        opts.setValue('-snes_type', 'newtonls')
-        #opts.setValue('-snes_line_search_type', 'l2')
+        for k,v in solver_opts.items():
+            opts[k] = v
         snes.setFromOptions()
-        #snes.getKSP().setFromOptions()
-        snes.getKSP().getPC().setType("lu")
-        snes.getKSP().getPC().setFactorSolverType("mumps")
-        #snes.getKSP().getPC().setType("fieldsplit")
-        #nested_IS = self.A.getNestISs()
-        #snes.getKSP().getPC().setFieldSplitIS(["u1", nested_IS[0][0]], ["u2", nested_IS[1][1]])
+        pc = snes.getKSP().getPC()
+        if pc.getType() == "fieldsplit":
+            index_sets = self.A.getNestISs()
+            pc.setFieldSplitIS(["u1", index_sets[0][0]], ["u2", index_sets[1][1]])
 
-        snes.setObjective(obj_snes)
-        snes.setFunction(R_snes, self.L)
-        snes.setJacobian(J_snes, J=self.A, P=None)
+        snes.setObjective(self.obj)
+        snes.setFunction(self.assemble_residual, self.L)
+        snes.setJacobian(self.assemble_jacobian, J=self.A, P=None)
         snes.setMonitor(lambda _, it, residual: print(it, residual))
-        set_snes_sol_vector(self)
+        self.set_snes_sol_vector(self.x)
         snes.solve(None, self.x)
-        update_solution(self.x, interpolate=True)
+        self.update_solution(self.x, interpolate=True)
         assert (snes.getConvergedReason() > 0)
         snes.destroy()
         [opts.__delitem__(k) for k in opts.getAll().keys()] # Clear options data-base

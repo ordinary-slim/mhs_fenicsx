@@ -176,6 +176,8 @@ def assert_pointwise_vals(p:Problem, points, ref_vals, f = None, rtol=1.e-5):
     rindices_points_found = (po.dest_owners == rank).nonzero()[0]
 
     vals = f.eval(po.dest_points[rindices_points_found], po.dest_cells[rindices_points_found]).reshape(-1)
+    #for i, idx in zip(range(len(indices_points_found)), indices_points_found):
+    #    print(f"{rank}: {po.dest_points[i]} ---> {vals[i]} / {ref_vals[idx]}", flush=True)
     assert np.isclose(ref_vals[indices_points_found], vals, rtol=rtol).all()
 
 def print_vals(p:Problem, points, only_print=False):

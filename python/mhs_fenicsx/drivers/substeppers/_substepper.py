@@ -155,9 +155,12 @@ class MHSSubstepper(ABC):
         # Here we just do a single collision test
         tracks = ps.source.path.get_track_interval(self.t0_macro_step, self.t1_macro_step)
         hs_radius = ps.source.R
-        back_pad = 5*hs_radius
-        front_pad = 5*hs_radius
-        side_pad = 3*hs_radius
+        adim_back_pad_substepper = ps.input_parameters["adim_back_pad_substepper"] if "adim_back_pad_substepper" in ps.input_parameters else 5
+        adim_front_pad_substepper = ps.input_parameters["adim_front_pad_substepper"] if "adim_front_pad_substepper" in ps.input_parameters else 5
+        adim_side_pad_substepper = ps.input_parameters["adim_side_pad_substepper"] if "adim_side_pad_substepper" in ps.input_parameters else 3
+        back_pad = adim_back_pad_substepper*hs_radius
+        front_pad = adim_front_pad_substepper*hs_radius
+        side_pad = adim_side_pad_substepper*hs_radius
         subproblem_els_mask = np.zeros((ps.cell_map.size_local + ps.cell_map.num_ghosts), dtype=np.bool_)
         for track in tracks:
             p0 = track.get_position(self.t0_macro_step, bound=True)

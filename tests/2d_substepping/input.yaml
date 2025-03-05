@@ -1,9 +1,11 @@
 # BEG_ESSENTIAL
 isSteady: False
+radius : &radius 0.05
+half_radius : &half_radius 0.025
 source_terms :
   - initial_position : &p0 [-5.0, 0.0, 0.0]
     initial_speed : &speed [1000.0, 0.0, 0]
-    radius : &radius 0.05
+    radius : *radius
     power : &power 500
     path: &path "Path.gcode"
   - type : 4
@@ -12,18 +14,19 @@ source_terms :
     radius : *radius
     power : *power
     mdwidth  : *radius
-    mdheight : *radius
+    mdheight : *half_radius
+    mddepth: *half_radius
     path : *path
 # PROPS
 material_metal : {
   density : 4.3E-06, # kg / mm3
   conductivity : 10.0E-03, # W / mm / K
   specific_heat : 700, # J / kg / K
-  phase_change : {
-    latent_heat : 350.0E+03,
-    solidus_temperature : &solidus_temperature 1600.0,
-    liquidus_temperature : 1650.0
-  }
+  #phase_change : {
+  #  latent_heat : 350.0E+03,
+  #  solidus_temperature : &solidus_temperature 1600.0,
+  #  liquidus_temperature : 1650.0
+  #}
 }
 smoothing_cte_phase_change : 1.0
 #convection_coeff : 1.0E-00
@@ -41,10 +44,10 @@ petsc_opts_macro: {
 }
 domain_width: 1
 domain_height: 1
-els_per_radius: 4
+els_per_radius: 8
 max_staggered_iters: 1
 
-max_timesteps: 1
+max_timesteps: 10
 dt : 1.0
 micro_adim_dt: 0.5
 macro_adim_dt: 10
@@ -56,6 +59,9 @@ predictor_step: {
   source_term : 1,
 }
 substepper_writepos: True
+adim_back_pad_substepper: 3
+adim_front_pad_substepper: 3
+adim_side_pad_substepper: 3
 quadrature_metadata: {}
 supg: 1
 

@@ -280,8 +280,9 @@ def test_staggered_chimera_substepper():
         [+0.4625, +0.0375, 0.0],
         [-0.5000,0.0000, 0.0]
         ])
-    vals = np.array([1591.82868091, 1634.73779913, 1212.38565072, 404.001689034979,
-                     227.00690003])
+    vals = np.array([1577.75608848, 1651.87852828, 1174.97455676,  404.4928847,
+                     216.59141428])
+
     mats = np.array([1., 2., 2., 1., 1.])
     assert_pointwise_vals(p, points, vals, f=p.u)
     assert_pointwise_vals(p, points, mats, f=p.material_id)
@@ -298,8 +299,9 @@ def test_hodge_chimera_substepper():
         [+0.4625, +0.0375, 0.0],
         [-0.5000,0.0000, 0.0]
         ])
-    vals = np.array([1591.82868091, 1634.73779913, 1212.38566461,  404.01927062,
-                     227.00690003])
+    vals = np.array([1577.75608859, 1651.87852836, 1174.97458097,  404.52264415,
+                     216.59141428])
+
     mats = np.array([1., 2., 2., 1., 1.])
     assert_pointwise_vals(p, points, vals, f=p.u)
     assert_pointwise_vals(p, points, mats, f=p.material_id)

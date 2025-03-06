@@ -200,14 +200,12 @@ class Problem:
         self.rhs = rhs
 
     def define_materials(self,parameters):
-        self.T_env = parameters["environment_temperature"]
-        if "deposition_temperature" in parameters:
-            self.T_dep = parameters["deposition_temperature"]
-        if "convection_coeff" in parameters:
-            self.convection_coeff = fem.Constant(
-                    self.domain, PETSc.ScalarType(parameters["convection_coeff"]))
-        else:
-            self.convection_coeff = None
+        self.T_env = fem.Constant(self.domain, PETSc.ScalarType(parameters["environment_temperature"]))
+        self.T_dep = parameters["deposition_temperature"] if "deposition_temperature" in parameters else None
+        self.convection_coeff = fem.Constant(self.domain, PETSc.ScalarType(parameters["convection_coeff"])) if "convection_coeff" \
+                in parameters else None
+        self.radiation_coeff = fem.Constant(self.domain, PETSc.ScalarType(parameters["radiation_coeff"])) if "radiation_coeff" \
+                in parameters else None
 
         self.materials = []
         self.phase_change, self.melting = False, False
@@ -594,7 +592,7 @@ class Problem:
                 if self.is_supg:
                     assert(self.advected_el_size is not None)
                     supg_coeff = self.advected_el_size**2 / (2 * self.advected_el_size * \
-                            time_derivative_coefficient * advection_norm + \
+                            advection_coefficient * advection_norm + \
                              4 * mat.k.ufl(u))
                     if not(self.is_steady):
                         a_ufl.append(supg_coeff * time_derivative_coefficient * \
@@ -629,12 +627,19 @@ class Problem:
             # CONVECTION
             if self.convection_coeff is not None:
                 a_ufl.append(self.convection_coeff * \
-                              u*v* \
-                              ds(itag))
-                T_env   = fem.Constant(self.domain, PETSc.ScalarType(self.T_env))
+                             u*v* \
+                             ds(itag))
                 l_ufl.append(self.convection_coeff * \
-                              T_env*v* \
-                              ds(itag))
+                             self.T_env*v* \
+                             ds(itag))
+            # RADIATION
+            if self.radiation_coeff is not None:
+                a_ufl.append(self.radiation_coeff * \
+                             u**4*v* \
+                             ds(itag))
+                l_ufl.append(self.radiation_coeff * \
+                             self.T_env**4*v* \
+                             ds(itag))
 
         self.a_ufl = sum(a_ufl)
         self.l_ufl = sum(l_ufl)

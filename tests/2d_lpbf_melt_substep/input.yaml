@@ -76,7 +76,7 @@ petsc_opts_macro_chimera: {
   "ksp_rtol" : 1e-13,
   "pc_type" : "fieldsplit",
 }
-els_per_radius: 4
+els_per_radius: 8
 max_staggered_iters: 1
 
 max_timesteps: 20

@@ -241,7 +241,7 @@ def test_chimera_staggered_rr():
         [-0.4125, -0.1500, 0.0],
         [-0.1500, -0.0125, 0.0],
         ])
-    vals = np.array([1701.99618512,  222.3950177 ,  293.67740056,   25.02479187])
+    vals = np.array([1753.49372323,  219.63642619,  286.68875939,   25.15615151])
     mats = np.array([ 2, 1, 1, 1, ])
     assert_pointwise_vals(p, points, vals, f=p.u)
     assert_pointwise_vals(p, points, mats, f=p.material_id)
@@ -257,7 +257,7 @@ def test_chimera_hodge():
         [-0.4125, -0.1500, 0.0],
         [-0.1500, -0.0125, 0.0],
         ])
-    vals = np.array([1701.99618437,  222.40220688,  288.67899577,   25.06183412])
+    vals = np.array([1753.49372288,  219.64521511,  282.18803562,   25.10785478])
     mats = np.array([ 2, 1, 1, 1, ])
     assert_pointwise_vals(p, points, vals, f=p.u)
     assert_pointwise_vals(p, points, mats, f=p.material_id)

@@ -2,7 +2,7 @@ import yaml
 from mpi4py import MPI
 
 from mhs_fenicsx.drivers import MonolithicRRDriver, MonolithicDomainDecompositionDriver, StaggeredRRDriver
-from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, MHSStaggeredChimeraSubstepper, MHSSemiMonolithicChimeraSubstepper
+from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, ChimeraSubstepper, MHSStaggeredChimeraSubstepper, MHSSemiMonolithicChimeraSubstepper
 from test_2d_substepping import get_initial_condition, get_dt, write_gcode, get_mesh
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.chimera import build_moving_problem
@@ -90,14 +90,14 @@ def test_staggered_robin_chimera_substepper():
     with open("test_input.yaml", 'r') as f:
         params = yaml.safe_load(f)
     params["material_metal"].pop("phase_change")
-    p = run_staggered_RR(params, writepos=False)
+    p = run_staggered_RR(params, writepos=True)
     points = np.array([
         [-0.250, -0.250, 0.0],
         [-0.250, -0.375, 0.0],
         [+0.250, +0.000, 0.0],
         [+0.375, -0.125, 0.0],
         ])
-    vals = np.array([ 232.16429694,  769.83503999,   24.9991268 , 1340.52243405])
+    vals = np.array([230.21145903,  767.64713976,   24.99873494, 1338.92131082])
     assert_pointwise_vals(p,points,vals)
 
 def test_sms_chimera_substepper():
@@ -111,7 +111,7 @@ def test_sms_chimera_substepper():
         [+0.250, +0.000, 0.0],
         [+0.375, -0.125, 0.0],
         ])
-    vals = np.array([ 232.80964993,  770.1403553 ,   25.2371303 , 1341.99693241])
+    vals = np.array([230.91602869,  767.95991237,   25.23704842, 1340.40649002])
     assert_pointwise_vals(p,points,vals)
 
 if __name__=="__main__":
@@ -133,6 +133,7 @@ if __name__=="__main__":
         lp.add_module(MHSSubstepper)
         lp.add_module(MonolithicDomainDecompositionDriver)
         lp.add_module(MonolithicRRDriver)
+        lp.add_module(ChimeraSubstepper)
         lp.add_function(interpolate_solution_to_inactive)
         lp.add_function(interpolate_cg1)
         lp_wrapper = lp(run_staggered_RR)
@@ -145,6 +146,7 @@ if __name__=="__main__":
         lp.add_module(MHSSemiMonolithicChimeraSubstepper)
         lp.add_module(MonolithicDomainDecompositionDriver)
         lp.add_module(MonolithicRRDriver)
+        lp.add_module(ChimeraSubstepper)
         lp.add_function(interpolate_solution_to_inactive)
         lp.add_function(interpolate_cg1)
         lp_wrapper = lp(run_hodge)

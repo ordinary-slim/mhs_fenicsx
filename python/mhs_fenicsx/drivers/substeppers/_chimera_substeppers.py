@@ -1,4 +1,4 @@
-from mhs_fenicsx.problem import Problem
+from mhs_fenicsx.problem import Problem, L2Differ
 from mhs_fenicsx.problem.helpers import interpolate_cg1, interpolate_dg0
 from mhs_fenicsx.drivers.substeppers import MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper
 from mhs_fenicsx.drivers._monolithic_drivers import MonolithicRRDriver
@@ -13,6 +13,10 @@ from petsc4py import PETSc
 import typing
 import numpy.typing as npt
 from abc import ABC, abstractmethod
+from mpi4py import MPI
+
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
 
 def check_assumptions(ps, pf, pm):
     return not(np.logical_and(pf.gamma_facets[pm].values, ps.bfacets_tag.values).all())
@@ -42,6 +46,7 @@ class ChimeraSubstepper(ABC):
         self.prepare_micro_step = prepare_micro_step
         self.post_step_wo_substepping = post_step_wo_substepping
         self.micro_post_iterate = micro_post_iterate
+        self.steadiness_metric = L2Differ(self.pm)
 
     def chimera_post_step_without_substepping(self):
         (pf, pm) = self.pf, self.pm
@@ -74,11 +79,12 @@ class ChimeraSubstepper(ABC):
         prev_pm_active_nodes_mask = pm.active_nodes_func.x.array.copy()
         pm.reset_activation(finalize=False)
         pm.intersect_problem(pf, finalize=False)
+        pm.update_active_dofs()
         newly_activated_dofs = np.logical_and(pm.active_nodes_func.x.array,
-                                               prev_pm_active_nodes_mask).nonzero()[0]
+                                              np.logical_not(prev_pm_active_nodes_mask)).nonzero()[0]
         num_dofs_to_interpolate = pm.domain.comm.allreduce(newly_activated_dofs.size)
         if num_dofs_to_interpolate > 0:
-            pm.interpolate(pf)
+            pm.interpolate(pf, dofs_to_interpolate=newly_activated_dofs)
         pf.pre_iterate(forced_time_derivative=forced_time_derivative, verbose=False)
         if self.direction_change:
             if not(self.chimera_off):
@@ -100,6 +106,9 @@ class ChimeraSubstepper(ABC):
     def chimera_micro_post_iterate(self):
         (pf, pm) = self.pf, self.pm
         pf.set_activation(self.fast_subproblem_els, finalize=False)
+        sm = self.steadiness_metric.get_steadiness_metric()
+        if rank==0:
+            print(f"Stadiness metric = {sm}")
 
     def chimera_interpolate_material_id(self):
         (pf, pm) = (self.pf, self.pm)

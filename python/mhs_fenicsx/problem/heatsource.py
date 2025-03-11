@@ -128,18 +128,17 @@ class LumpedHeatSource(HeatSource):
         self.attributes_to_reference = {"domain", "bb_tree", "volume_form_compiled"}
 
     def compile_volume_form(self):
-        dV = ufl.Measure("dx", metadata={"quadrature_degree":1,})
-        volume_form_ufl = ufl.TestFunction(self.fem_function.function_space)*dV(1)
+        dV = ufl.Measure("dx", domain = self.domain, metadata={"quadrature_degree":1,})
+        volume_form_ufl = 1*dV(1)
         self.volume_form_compiled = fem.compile_form(self.domain.comm, volume_form_ufl,
                                                      form_compiler_options={"scalar_type": np.float64})
     def instantiate_volume_form(self):
         subdomain_data = {fem.IntegralType.cell : [(1, self.heated_els)]}
-        coefficient_map = {self.fem_function:self.fem_function}
         return fem.create_form(self.volume_form_compiled,
-                               [self.fem_function.function_space],
+                               [],
                                msh=self.domain,
                                subdomains=subdomain_data,
-                               coefficient_map=coefficient_map,
+                               coefficient_map={},
                                constant_map={})
 
     def initialize_fem_function(self,p:'Problem'):

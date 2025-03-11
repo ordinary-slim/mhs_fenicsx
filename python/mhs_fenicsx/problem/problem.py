@@ -846,6 +846,50 @@ class Problem:
         opts.destroy()
         self.post_modify_solution()
 
+class L2Differ:
+    def __init__(self, p : Problem):
+        self.f, self.g = (ufl.Coefficient(p.v), ufl.Coefficient(p.v))
+        dx = ufl.dx(domain=p.domain)
+        self.l_ufl = (self.f - self.g)**2 * dx(1)
+        self.v_ufl = 1 * dx(1)
+        self.l_com = fem.compile_form(comm, self.l_ufl,
+                                      form_compiler_options={"scalar_type": np.float64})
+        self.v_com = fem.compile_form(comm, self.v_ufl,
+                                      form_compiler_options={"scalar_type": np.float64})
+        self.p = p
+
+    def get_form_subdomain_data(self):
+        return {fem.IntegralType.cell : [(1, self.p.local_active_els)]}
+
+    def __call__(self, f:fem.Function, g:typing.Optional[fem.Function] = None):
+        if g is None:
+            g = f
+        coefficient_map = {self.f : f, self.g : g}
+        self.l_instance = fem.create_form(self.l_com,
+                                          [],
+                                          msh=self.p.domain,
+                                          subdomains=self.get_form_subdomain_data(),
+                                          coefficient_map=coefficient_map,
+                                          constant_map={})
+        l2_norm = dolfinx.fem.assemble_scalar(self.l_instance)
+        l2_norm = comm.allreduce(l2_norm, op=MPI.SUM)
+        return np.sqrt(l2_norm)
+
+    def get_active_volume(self):
+        self.v_instance = fem.create_form(self.v_com,
+                                          [],
+                                          msh = self.p.domain,
+                                          subdomains = self.get_form_subdomain_data(),
+                                          coefficient_map = {},
+                                          constant_map={})
+        vol = dolfinx.fem.assemble_scalar(self.v_instance)
+        vol = comm.allreduce(vol, op=MPI.SUM)
+        return vol
+
+    def get_steadiness_metric(self):
+        p = self.p
+        return self(p.u, p.u_prev) / p.dt.value / self.get_active_volume()
+
 class GammaL2Dotter:
     def __init__(self, p:Problem):
         self.f, self.g = (ufl.Coefficient(p.v), ufl.Coefficient(p.v))

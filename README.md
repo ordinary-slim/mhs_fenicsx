@@ -14,12 +14,12 @@ CHECKPOINTS
 - [x] Monolithic Chimera
 - [x] Square track case
 - [ ] 3D
-- [ ] 2D AM
+- [x] 2D AM
 - [ ] 3D AM
-- [ ] Lumped heat source PREDICTOR (high priority)
+- [x] Lumped heat source PREDICTOR (high priority)
 - [ ] 2 staggered iterations at most
 - [x] Phase change
-- [ ] Melting of powder into bulk
+- [x] Melting of powder into bulk
 - [x] Temperature dependent parameters
 - [x] 5 tests
 - [x] 10 tests

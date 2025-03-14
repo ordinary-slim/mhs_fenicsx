@@ -78,7 +78,7 @@ def run_staggered(params, driver_type, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredSubstepper(driver_constructor, initial_relaxation_factors, big_p, writepos=(params["substepper_writepos"] and writepos), predictor=params["predictor_step"])
+    substeppin_driver = MHSStaggeredSubstepper(driver_constructor, initial_relaxation_factors, big_p)
     staggered_driver = substeppin_driver.staggered_driver
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
 
@@ -107,10 +107,7 @@ def run_semi_monolithic(params, writepos=True):
     big_p.set_initial_condition(  initial_condition_fun )
 
     max_timesteps = params["max_timesteps"]
-    substeppin_driver = MHSSemiMonolithicSubstepper(big_p,
-                                                    writepos=(params["substepper_writepos"] and writepos),
-                                                    max_staggered_iters=params["max_staggered_iters"],
-                                                    predictor=params["predictor_step"])
+    substeppin_driver = MHSSemiMonolithicSubstepper(big_p)
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
 
     itime_step = 0

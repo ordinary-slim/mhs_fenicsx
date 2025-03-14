@@ -19,7 +19,6 @@ rank = comm.Get_rank()
 def run_staggered_RR(params, writepos=True):
     els_per_radius = params["els_per_radius"]
     radius = params["source_terms"][0]["radius"]
-    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     initial_relaxation_factors=[1.0,1.0]
     big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
@@ -33,13 +32,18 @@ def run_staggered_RR(params, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredChimeraSubstepper(
+    if params["substepping_parameters"]["chimera_steadiness_workflow"]["enabled"]:
+        class MyMHSStaggeredChimeraSubstepper(MHSStaggeredChimeraSubstepper):
+            def is_steady_enough(self):
+                return (len(self.steadiness_measurements) > 1) and (((self.steadiness_measurements[-1] - self.steadiness_measurements[-2]) / self.steadiness_measurements[-2]) < 0.15)
+        driver_type = MyMHSStaggeredChimeraSubstepper
+    else:
+        driver_type = MHSStaggeredChimeraSubstepper
+
+    substeppin_driver = driver_type(
             StaggeredRRDriver,
             initial_relaxation_factors,
-            ps, pm,
-            writepos=(params["substepper_writepos"] and writepos),
-            predictor=params["predictor_step"],
-            chimera_always_on=params["chimera_always_on"])
+            ps, pm)
 
     staggered_driver = substeppin_driver.staggered_driver
     el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)
@@ -58,7 +62,6 @@ def run_staggered_RR(params, writepos=True):
 def run_hodge(params, writepos=True):
     els_per_radius = params["els_per_radius"]
     radius = params["source_terms"][0]["radius"]
-    speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()
@@ -71,11 +74,7 @@ def run_hodge(params, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm,
-                                                           writepos=(params["substepper_writepos"] and writepos),
-                                                           max_staggered_iters=params["max_staggered_iters"],
-                                                           predictor=params["predictor_step"],
-                                                           chimera_always_on=params["chimera_always_on"])
+    substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm)
     pf = substeppin_driver.pf
     itime_step = 0
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
@@ -137,7 +136,7 @@ if __name__=="__main__":
         lp.add_function(interpolate_solution_to_inactive)
         lp.add_function(interpolate_cg1)
         lp_wrapper = lp(run_staggered_RR)
-        lp_wrapper(params,True)
+        lp_wrapper(params, writepos = True)
         profiling_file = f"profiling_chimera_rss_{rank}.txt"
     if args.run_sub_mon:
         from mhs_fenicsx.chimera import interpolate_solution_to_inactive

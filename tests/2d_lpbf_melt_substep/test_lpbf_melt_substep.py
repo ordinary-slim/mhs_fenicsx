@@ -63,7 +63,7 @@ def run_reference(params, writepos=True):
     domain = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
-    print_dt = get_dt(params["micro_adim_dt"], radius, speed)
+    print_dt = get_dt(params["substepping_parameters"]["micro_adim_dt"], radius, speed)
     macro_params["dt"] = print_dt
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     ps = Problem(domain, macro_params, finalize_activation=False, name="2dlpbf")
@@ -73,7 +73,7 @@ def run_reference(params, writepos=True):
 
     ps.set_forms()
     ps.compile_forms()
-    adim_dt_cooling = params["cooling_adim_dt"]
+    adim_dt_cooling = params["substepping_parameters"]["cooling_adim_dt"]
     itime_step = 0
     while not(ps.is_path_over()):
         itime_step += 1
@@ -106,9 +106,7 @@ def run_staggered(params, writepos=True):
 
     substeppin_driver = MHSStaggeredSubstepper(StaggeredRRDriver,
                                                [1.0, 1.0],
-                                               ps,
-                                               writepos=(params["substepper_writepos"] and writepos),
-                                               predictor=params["predictor_step"])
+                                               ps,)
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
     staggered_driver = substeppin_driver.staggered_driver
     el_density = np.round((1.0 / radius) * params["els_per_radius"]).astype(np.int32)
@@ -135,10 +133,7 @@ def run_hodge(params, writepos=True):
     ps.set_initial_condition(  params["environment_temperature"] )
 
     max_timesteps = params["max_timesteps"]
-    substeppin_driver = MHSSemiMonolithicSubstepper(ps,
-                                                    writepos=(params["substepper_writepos"] and writepos),
-                                                    max_staggered_iters=params["max_staggered_iters"],
-                                                    predictor=params["predictor_step"])
+    substeppin_driver = MHSSemiMonolithicSubstepper(ps,)
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
 
     itime_step = 0
@@ -164,11 +159,13 @@ def run_chimera_staggered(params, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredChimeraSubstepper(StaggeredRRDriver, [1.0, 1.0],
-                                                      ps, pm,
-                                                      writepos=(params["substepper_writepos"] and writepos),
-                                                      predictor=params["predictor_step"],
-                                                      chimera_always_on=params["chimera_always_on"])
+    class MyMHSStaggeredChimeraSubstepper(MHSStaggeredChimeraSubstepper):
+        def is_steady_enough(self):
+            next_track = self.pf.source.path.get_track(pf.time)
+            return (((pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) >= 0.15)
+
+    substeppin_driver = MyMHSStaggeredChimeraSubstepper(StaggeredRRDriver, [1.0, 1.0],
+                                                      ps, pm,)
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
     staggered_driver = substeppin_driver.staggered_driver
 
@@ -199,11 +196,7 @@ def run_chimera_hodge(params, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm,
-                                                           writepos=(params["substepper_writepos"] and writepos),
-                                                           max_staggered_iters=params["max_staggered_iters"],
-                                                           predictor=params["predictor_step"],
-                                                           chimera_always_on=params["chimera_always_on"])
+    substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm,)
     pf = substeppin_driver.pf
     itime_step = 0
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
@@ -315,7 +308,9 @@ if __name__=="__main__":
     parser.add_argument('-ss','--run-sub-sta',action='store_true')
     parser.add_argument('-sms','--run-hodge',action='store_true')
     parser.add_argument('-css','--run-chimera-sub-sta',action='store_true')
+    parser.add_argument('-tcss', '--test-chimera-sub-sta', action='store_true')
     parser.add_argument('-csms','--run-chimera-hodge',action='store_true')
+    parser.add_argument('-tcsms', '--test-chimera-hodge', action='store_true')
     args = parser.parse_args()
     if args.run_ref:
         run_reference(params)
@@ -327,3 +322,7 @@ if __name__=="__main__":
         run_chimera_staggered(params)
     if args.run_chimera_hodge:
         run_chimera_hodge(params)
+    if args.test_chimera_sub_sta:
+        test_staggered_chimera_substepper()
+    if args.test_chimera_hodge:
+        test_hodge_chimera_substepper()

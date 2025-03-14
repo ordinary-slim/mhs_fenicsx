@@ -16,21 +16,21 @@ from abc import ABC, abstractmethod
 import multiphenicsx.fem.petsc
 
 class MHSSubstepper(ABC):
-    def __init__(self,slow_problem:Problem,writepos=True,
+    def __init__(self, slow_problem:Problem,
                  max_nr_iters=25, max_ls_iters=5,
-                 predictor={},
                  compile_forms=True):
         self.ps = slow_problem
+        self.params = self.ps.input_parameters["substepping_parameters"]
         self.pf = self.ps.copy(name=f"{self.ps.name}_micro_iters")
         self.plist = [self.ps, self.pf]
         self.fplist = [self.pf]
         ps, pf = self.ps, self.pf
-        self.do_writepos = writepos
+        self.do_writepos = self.params["writepos"]
         self.writers = dict()
         self.max_nr_iters = max_nr_iters
         self.max_ls_iters = max_ls_iters
-        self.do_predictor = predictor["enabled"] if "enabled" in predictor else False
-        self.predictor_source_term_idx = predictor["source_term"] if "source_term" in predictor else 0
+        self.do_predictor = self.params["predictor"]["enabled"]
+        self.predictor_source_term_idx = self.params["predictor"]["source_term"] if "source_term" in self.params["predictor"] else 0
         self.r_ufl, self.j_ufl, self.r_compiled, self.j_compiled = {}, {}, {}, {}
         for mat in pf.material_to_itag:
             pf.material_to_itag[mat] += len(ps.materials)
@@ -44,25 +44,19 @@ class MHSSubstepper(ABC):
         track = ps.source.path.get_track(self.t0_macro_step)
         if track.type == TrackType.PRINTING:
             print("Step WITH substepping STARTS...", flush=True)
-            pf.set_dt(self.dimensionalize_mhs_timestep(track, ps.input_parameters["micro_adim_dt"]))
-            ps.set_dt(self.dimensionalize_mhs_timestep(track, ps.input_parameters["macro_adim_dt"]))
+            pf.set_dt(pf.dimensionalize_mhs_timestep(track, self.params["micro_adim_dt"]))
+            ps.set_dt(ps.dimensionalize_mhs_timestep(track, self.params["macro_adim_dt"]))
             self.cap_timestep(ps)
             self.do_substepped_timestep()
         else:
             print("Step WITHOUT substepping STARTS...", flush=True)
             for p in self.plist:
-                p.set_dt(self.dimensionalize_waiting_timestep(track, ps.input_parameters["cooling_adim_dt"]))
+                p.set_dt(p.dimensionalize_waiting_timestep(track, self.params["cooling_adim_dt"]))
             self.step_without_substepping()
 
     @abstractmethod
     def do_substepped_timestep(self):
         pass
-
-    def dimensionalize_mhs_timestep(self, track, adim_dt):
-        return float(adim_dt * self.ps.source.R / track.speed)
-    
-    def dimensionalize_waiting_timestep(self, track, adim_dt):
-        return float(adim_dt * (track.t1 - track.t0))
 
     def cap_timestep(self, p):
         tracks = p.source.path.get_track_interval(p.time, p.time + p.dt.value)
@@ -155,12 +149,18 @@ class MHSSubstepper(ABC):
         # Here we just do a single collision test
         tracks = ps.source.path.get_track_interval(self.t0_macro_step, self.t1_macro_step)
         hs_radius = ps.source.R
-        adim_back_pad_substepper = ps.input_parameters["adim_back_pad_substepper"] if "adim_back_pad_substepper" in ps.input_parameters else 5
-        adim_front_pad_substepper = ps.input_parameters["adim_front_pad_substepper"] if "adim_front_pad_substepper" in ps.input_parameters else 5
-        adim_side_pad_substepper = ps.input_parameters["adim_side_pad_substepper"] if "adim_side_pad_substepper" in ps.input_parameters else 3
-        back_pad = adim_back_pad_substepper*hs_radius
-        front_pad = adim_front_pad_substepper*hs_radius
-        side_pad = adim_side_pad_substepper*hs_radius
+        if "adim_lens" in self.params:
+            adim_lens_substepper = self.params["adim_lens"]
+            adim_back_pad = adim_lens_substepper["back_pad"]
+            adim_front_pad = adim_lens_substepper["front_pad"]
+            adim_side_pad = adim_lens_substepper["side_pad"]
+        else:
+            adim_back_pad = 5
+            adim_front_pad = 5
+            adim_side_pad = 3
+        back_pad = adim_back_pad*hs_radius
+        front_pad = adim_front_pad*hs_radius
+        side_pad = adim_side_pad*hs_radius
         subproblem_els_mask = np.zeros((ps.cell_map.size_local + ps.cell_map.num_ghosts), dtype=np.bool_)
         for track in tracks:
             p0 = track.get_position(self.t0_macro_step, bound=True)
@@ -259,13 +259,12 @@ class MHSSubstepper(ABC):
         pf.material_id.x.array[:] = ps.material_id.x.array[:]
 
 class MHSSemiMonolithicSubstepper(MHSSubstepper):
-    def __init__(self, slow_problem: Problem ,writepos=True,
-                 max_staggered_iters=1,
+    def __init__(self, slow_problem: Problem,
                  max_nr_iters=25,max_ls_iters=5,
-                 predictor={}, compile_forms=True):
-        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, predictor,compile_forms)
+                 compile_forms=True):
+        super().__init__(slow_problem, max_nr_iters, max_ls_iters, compile_forms)
         self.name = "semi_monolithic_substepper"
-        self.max_staggered_iters = max_staggered_iters
+        self.max_staggered_iters = self.params["max_staggered_iters"]
 
     def do_substepped_timestep(self):
         self.update_fast_problem()
@@ -494,13 +493,12 @@ class MHSStaggeredSubstepper(MHSSubstepper):
     def __init__(self,
                  staggered_driver_class : typing.Type[StaggeredDomainDecompositionDriver],
                  staggered_relaxation_factors : list[float],
-                 slow_problem:Problem, writepos=True,
+                 slow_problem : Problem,
                  max_nr_iters=25, max_ls_iters=5,
-                 predictor={},
                  compile_forms=True):
-        super().__init__(slow_problem,writepos,max_nr_iters,max_ls_iters, predictor, compile_forms)
+        super().__init__(slow_problem, max_nr_iters, max_ls_iters, compile_forms)
         self.staggered_driver = staggered_driver_class(self.pf, self.ps,
-                                                       max_staggered_iters=self.ps.input_parameters["max_staggered_iters"],
+                                                       max_staggered_iters=self.params["max_staggered_iters"],
                                                        initial_relaxation_factors=staggered_relaxation_factors)
         self.name = "staggered_substepper"
 

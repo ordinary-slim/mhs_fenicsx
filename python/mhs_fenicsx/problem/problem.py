@@ -181,7 +181,7 @@ class Problem:
 
     def set_dt(self, dt : float):
         self.dt.value = dt
-        self.dt_func.x.array[:] = dt
+        self.dt_func.x.array.fill(dt)
 
     def set_domain_speed(self, v : npt.NDArray[typing.Union[np.float32, np.float64]]):
         assert(v.size == 3)
@@ -247,6 +247,12 @@ class Problem:
         for idx, source in enumerate(self.sources):
             if not(idx == self.current_source_term):
                 source.fem_function.x.array.fill(0.0)
+
+    def dimensionalize_mhs_timestep(self, track : Track, adim_dt : float):
+        return float(adim_dt * self.source.R / track.speed)
+    
+    def dimensionalize_waiting_timestep(self, track : Track, adim_dt : float):
+        return float(adim_dt * (track.t1 - track.t0))
 
     def compute_advected_el_size(self):
         if self.advected_el_size is None:

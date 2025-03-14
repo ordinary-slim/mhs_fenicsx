@@ -28,12 +28,13 @@ class ChimeraSubstepper(ABC):
         self.pm : Problem
         self.quadrature_degree : int
         self.fast_subproblem_els : npt.NDArray[np.int32]
+        self.params : dict
 
-    def chimera_post_init(self, chimera_always_on : bool, initial_orientation : npt.NDArray):
+    def chimera_post_init(self, initial_orientation : npt.NDArray):
         self.chimera_driver = MonolithicRRDriver(self.pf, self.pm,
                                                  quadrature_degree=self.quadrature_degree)
-        self.chimera_off = False
-        self.chimera_always_on = chimera_always_on
+        self.chimera_always_on = self.params["chimera_always_on"]
+        self.chimera_on = self.chimera_always_on
         self.current_orientation = initial_orientation.astype(np.float64)
         # Overwrite methods
         def post_step_wo_substepping():
@@ -46,7 +47,10 @@ class ChimeraSubstepper(ABC):
         self.prepare_micro_step = prepare_micro_step
         self.post_step_wo_substepping = post_step_wo_substepping
         self.micro_post_iterate = micro_post_iterate
+        # Steadiness workflow
+        self.steadiness_workflow_params = self.params["chimera_steadiness_workflow"]
         self.steadiness_metric = L2Differ(self.pm)
+        self.steadiness_measurements = []
 
     def chimera_post_step_without_substepping(self):
         (pf, pm) = self.pf, self.pm
@@ -57,11 +61,6 @@ class ChimeraSubstepper(ABC):
         (pf, pm) = self.pf, self.pm
         super(type(self), self).prepare_micro_step()
         next_track = self.pf.source.path.get_track(pf.time)
-        if not(self.chimera_always_on):
-            if ((pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) < 0.15:
-                self.chimera_off = True
-            else:
-                self.chimera_off = False
         self.direction_change = False
         self.rotation_angle = 0.0
         if not(next_track == pf.source.path.current_track):
@@ -71,8 +70,34 @@ class ChimeraSubstepper(ABC):
             if (abs(self.rotation_angle) > 1e-9):
                 self.direction_change = True
             self.current_orientation = d1
-        if (self.direction_change):
+
+        if self.direction_change:
             pm.in_plane_rotation(pf.source.x, self.rotation_angle)
+
+        def set_dt(dt : float):
+            for p in [pf, pm]:
+                p.set_dt(dt)
+                #TODO: Cap dt
+        increasing_dt = self.params["chimera_steadiness_workflow"]["enabled"]
+        # STEADINESS WORKFLOW
+        # Unsteady reset
+        if self.direction_change:
+            if not(self.chimera_always_on):
+                self.chimera_on = False
+            if increasing_dt:
+                set_dt(pf.dimensionalize_mhs_timestep(next_track, self.params["micro_adim_dt"]))
+        else:
+            if self.is_steady_enough():
+                self.chimera_on = True
+                if increasing_dt:
+                    current_dt = pm.dt.value
+                    increment = pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["adim_dt_increment"])
+                    dt = min(pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["max_adim_dt"]), current_dt + increment)
+                    set_dt(dt)
+
+    def is_steady_enough(self):
+        next_track = self.pf.source.path.get_track(self.pf.time)
+        return (((self.pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) >= 0.15)
 
     def chimera_micro_pre_iterate(self, forced_time_derivative=False):
         (pf, pm) = self.pf, self.pm
@@ -87,7 +112,7 @@ class ChimeraSubstepper(ABC):
             pm.interpolate(pf, dofs_to_interpolate=newly_activated_dofs)
         pf.pre_iterate(forced_time_derivative=forced_time_derivative, verbose=False)
         if self.direction_change:
-            if not(self.chimera_off):
+            if self.chimera_on:
                 pm.interpolate(pf, dofs_to_interpolate=newly_activated_dofs)
             pm.pre_iterate(forced_time_derivative=False, verbose=False)
         else:
@@ -95,7 +120,7 @@ class ChimeraSubstepper(ABC):
         self.fast_subproblem_els = pf.active_els.copy()# This can be removed
         pm.intersect_problem(pf, finalize=False)
 
-        if not(self.chimera_off):
+        if self.chimera_on:
             pf.subtract_problem(pm, finalize=False)# Can I finalize here?
             self.chimera_interpolate_material_id()
 
@@ -106,9 +131,9 @@ class ChimeraSubstepper(ABC):
     def chimera_micro_post_iterate(self):
         (pf, pm) = self.pf, self.pm
         pf.set_activation(self.fast_subproblem_els, finalize=False)
-        sm = self.steadiness_metric.get_steadiness_metric()
+        self.steadiness_measurements.append(self.steadiness_metric.get_steadiness_metric())
         if rank==0:
-            print(f"Stadiness metric = {sm}")
+            print(f"is Chimera ON? {self.chimera_on}, steadiness metric = {self.steadiness_measurements[-1]}")
 
     def chimera_interpolate_material_id(self):
         (pf, pm) = (self.pf, self.pm)
@@ -120,11 +145,8 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
                  staggered_driver_class : typing.Type[StaggeredDomainDecompositionDriver],
                  staggered_relaxation_factors : list[float],
                  slow_problem:Problem, moving_problem : Problem,
-                 writepos=True,
-                 max_nr_iters=25,max_ls_iters=5,
-                 predictor={},
+                 max_nr_iters=25, max_ls_iters=5,
                  compile_forms=True,
-                 chimera_always_on=True,
                  initial_orientation=np.array([1.0, 0.0, 0.0])
                  ):
         self.pm = moving_problem
@@ -133,17 +155,14 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
         super().__init__(staggered_driver_class,
                          staggered_relaxation_factors,
                          slow_problem,
-                         writepos,
                          max_nr_iters,
                          max_ls_iters,
-                         predictor,
                          compile_forms)
         self.plist.append(self.pm)
         self.fplist.append(self.pm)
         self.quadrature_degree = 2 # Gamma Chimera
         self.name = "staggered_chimera_substepper"
-        self.chimera_post_init(chimera_always_on,
-                               initial_orientation)
+        self.chimera_post_init(initial_orientation)
 
     def compile_forms(self):
         ps, pm = (self.ps, self.pm)
@@ -185,7 +204,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
         sd.instantiate_forms(pf)
 
         pf.pre_assemble()
-        if not(self.chimera_off):
+        if self.chimera_on:
             self.instantiate_forms(pm)
             pm.pre_assemble()
             cd.non_linear_solve()
@@ -227,21 +246,16 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
 
 class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSubstepper):
     def __init__(self,slow_problem:Problem, moving_problem : Problem,
-                 writepos=True,
-                 max_staggered_iters=1,
                  max_nr_iters=25,max_ls_iters=5,
-                 predictor={},
-                 chimera_always_on=True,
                  initial_orientation=np.array([1.0, 0.0, 0.0])):
         self.pm = moving_problem
-        super().__init__(slow_problem,writepos, max_staggered_iters, max_nr_iters,max_ls_iters, predictor, compile_forms=False)
+        super().__init__(slow_problem, max_nr_iters, max_ls_iters, compile_forms=False)
         self.plist.append(self.pm)
         self.fplist.append(self.pm)
         self.compile_forms()
         self.quadrature_degree = 2 # Gamma Chimera
         self.name = "semi_monolithic_chimera_substepper"
-        self.chimera_post_init(chimera_always_on,
-                               initial_orientation)
+        self.chimera_post_init(initial_orientation)
 
     def pre_loop(self, prepare_fast_problem=False):
         super().pre_loop(prepare_fast_problem)
@@ -264,7 +278,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
 
         self.instantiate_forms(pf)
         pf.pre_assemble()
-        if not(self.chimera_off):
+        if self.chimera_on:
             self.instantiate_forms(pm)
             pm.pre_assemble()
             cd.non_linear_solve()

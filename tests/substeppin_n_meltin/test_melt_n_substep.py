@@ -84,9 +84,7 @@ def run_staggered(params, writepos=True):
 
     substeppin_driver = MHSStaggeredSubstepper(StaggeredRRDriver,
                                                [1.0, 1.0],
-                                               big_p,
-                                               writepos=(params["substepper_writepos"] and writepos),
-                                               predictor=params["predictor_step"])
+                                               big_p,)
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
     staggered_driver = substeppin_driver.staggered_driver
     el_density = np.round((1.0 / radius) * params["els_per_radius"]).astype(np.int32)
@@ -112,9 +110,7 @@ def run_semi_monolithic(params, writepos=True):
     big_p.set_initial_condition(params["environment_temperature"])
 
     max_timesteps = params["max_timesteps"]
-    substeppin_driver = MHSSemiMonolithicSubstepper(big_p,
-                                                    max_staggered_iters=params["max_staggered_iters"],
-                                                    writepos=(params["substepper_writepos"] and writepos), predictor=params["predictor_step"])
+    substeppin_driver = MHSSemiMonolithicSubstepper(big_p,)
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
 
     itime_step = 0
@@ -146,10 +142,7 @@ def run_chimera_staggered(params, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredChimeraSubstepper(StaggeredRRDriver, initial_relaxation_factors, ps, pm,
-                                                      writepos=(params["substepper_writepos"] and writepos),
-                                                      predictor=params["predictor_step"],
-                                                      chimera_always_on=params["chimera_always_on"])
+    substeppin_driver = MHSStaggeredChimeraSubstepper(StaggeredRRDriver, initial_relaxation_factors, ps, pm,)
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
     staggered_driver = substeppin_driver.staggered_driver
 
@@ -183,11 +176,7 @@ def run_chimera_hodge(params, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm,
-                                                           max_staggered_iters=params["max_staggered_iters"],
-                                                           writepos=(params["substepper_writepos"] and writepos),
-                                                           predictor=params["predictor_step"],
-                                                           chimera_always_on=params["chimera_always_on"])
+    substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm,)
     pf = substeppin_driver.pf
     itime_step = 0
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):

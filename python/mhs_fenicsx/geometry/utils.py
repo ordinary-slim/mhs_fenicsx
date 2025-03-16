@@ -183,7 +183,7 @@ def mesh_containment(nodal_bb_tree,loc_mesh,cell_bb_tree,ext_mesh):
                      ].reshape(-1, num_vertices_per_cell_small),
             recv_geom[recv_geom_offsets[i]:recv_geom_offsets[i+1]
                       ].reshape(-1, ext_mesh.geometry.dim),
-            ext_mesh.ufl_domain()))
+            ext_mesh.extract_unique_domain()))
 
     # For each local mesh, compute the bounding box, compute colliding cells
     tol = 1e-13

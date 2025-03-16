@@ -1,5 +1,5 @@
 from mhs_fenicsx.problem import Problem
-from dolfinx import fem, mesh, la
+from dolfinx import fem, la
 import basix.ufl
 from mhs_fenicsx_cpp import cellwise_determine_point_ownership, scatter_cell_integration_data_po, \
                             MonolithicRobinRobinAssembler64, interpolate_dg0_at_facets, \
@@ -151,7 +151,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         for p, p_ext, R_sub_vec in zip([p1, p2], [p2, p1], R_vec.getNestSubVecs()):
             # RHS term Robin for residual formulation
             res = p.restriction
-            robin_residual = la.create_petsc_vector(res.index_map, p.v.value_size)
+            robin_residual = la.petsc.create_vector(res.index_map, p.v.value_size)
 
             # EXT CONTRIBUTION
             self.assemble_robin_residual_p_p_ext(robin_residual, p, p_ext)

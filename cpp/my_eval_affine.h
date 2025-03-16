@@ -1,7 +1,7 @@
 #include <dolfinx/fem/Function.h>
 
 template <dolfinx::scalar T,
-          std::floating_point U = dolfinx::scalar_value_type_t<T>>
+          std::floating_point U = dolfinx::scalar_value_t<T>>
 void eval_affine(const fem::Function<T, U> &f, std::span<const U> x, std::array<std::size_t, 2> xshape,
     std::span<const std::int32_t> cells, std::span<T> u,
     std::array<std::size_t, 2> ushape)

@@ -29,6 +29,8 @@ class ChimeraSubstepper(ABC):
         self.quadrature_degree : int
         self.fast_subproblem_els : npt.NDArray[np.int32]
         self.params : dict
+        self.t0_macro_step : float
+        self.t1_macro_step : float
 
     def chimera_post_init(self, initial_orientation : npt.NDArray):
         self.chimera_driver = MonolithicRRDriver(self.pf, self.pm,
@@ -75,9 +77,11 @@ class ChimeraSubstepper(ABC):
             pm.in_plane_rotation(pf.source.x, self.rotation_angle)
 
         def set_dt(dt : float):
+            max_dt_substep = self.t1_macro_step - pf.time
+            dt = min(dt, max_dt_substep)
             for p in [pf, pm]:
                 p.set_dt(dt)
-                #TODO: Cap dt
+
         increasing_dt = self.params["chimera_steadiness_workflow"]["enabled"]
         # STEADINESS WORKFLOW
         # Unsteady reset
@@ -88,12 +92,14 @@ class ChimeraSubstepper(ABC):
                 set_dt(pf.dimensionalize_mhs_timestep(next_track, self.params["micro_adim_dt"]))
         else:
             if self.is_steady_enough():
-                self.chimera_on = True
-                if increasing_dt:
-                    current_dt = pm.dt.value
-                    increment = pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["adim_dt_increment"])
-                    dt = min(pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["max_adim_dt"]), current_dt + increment)
-                    set_dt(dt)
+                if not(self.chimera_on):
+                    self.chimera_on = True
+                else:
+                    if increasing_dt:
+                        current_dt = pm.dt.value
+                        increment = pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["adim_dt_increment"])
+                        dt = min(pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["max_adim_dt"]), current_dt + increment)
+                        set_dt(dt)
 
     def is_steady_enough(self):
         next_track = self.pf.source.path.get_track(self.pf.time)

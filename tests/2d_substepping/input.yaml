@@ -63,9 +63,9 @@ petsc_opts_macro_chimera: {
 }
 domain_width: 1
 domain_height: 1
-els_per_radius: 8
+els_per_radius: 4
 
-max_timesteps: 10
+max_timesteps: 1
 dt : 1.0
 driver_type: "robin"
 initial_condition: False

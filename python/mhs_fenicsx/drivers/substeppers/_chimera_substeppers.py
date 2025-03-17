@@ -7,7 +7,7 @@ import mhs_fenicsx_cpp
 import ufl
 import numpy as np
 from dolfinx import fem
-from mhs_fenicsx.chimera import interpolate_solution_to_inactive
+from mhs_fenicsx.chimera import interpolate_solution_to_inactive, shape_moving_problem
 import multiphenicsx
 from petsc4py import PETSc
 import typing
@@ -34,6 +34,7 @@ class ChimeraSubstepper(ABC):
 
     def chimera_post_init(self, initial_orientation : npt.NDArray):
         self.chimera_driver = MonolithicRRDriver(self.pf, self.pm,
+                                                 1.0, 1.0,
                                                  quadrature_degree=self.quadrature_degree)
         self.chimera_always_on = self.params["chimera_always_on"]
         self.chimera_on = self.chimera_always_on
@@ -76,8 +77,9 @@ class ChimeraSubstepper(ABC):
         if self.direction_change:
             pm.in_plane_rotation(pf.source.x, self.rotation_angle)
 
+        max_dt_substep = self.t1_macro_step - pf.time
+
         def set_dt(dt : float):
-            max_dt_substep = self.t1_macro_step - pf.time
             dt = min(dt, max_dt_substep)
             for p in [pf, pm]:
                 p.set_dt(dt)
@@ -101,6 +103,9 @@ class ChimeraSubstepper(ABC):
                         dt = min(pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["max_adim_dt"]), current_dt + increment)
                         set_dt(dt)
 
+        if pf.dt.value > (max_dt_substep + 1e-7):
+            set_dt(max_dt_substep)
+
     def is_steady_enough(self):
         next_track = self.pf.source.path.get_track(self.pf.time)
         return (((self.pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) >= 0.15)
@@ -108,7 +113,7 @@ class ChimeraSubstepper(ABC):
     def chimera_micro_pre_iterate(self, forced_time_derivative=False):
         (pf, pm) = self.pf, self.pm
         prev_pm_active_nodes_mask = pm.active_nodes_func.x.array.copy()
-        pm.reset_activation(finalize=False)
+        shape_moving_problem(pm)
         pm.intersect_problem(pf, finalize=False)
         pm.update_active_dofs()
         newly_activated_dofs = np.logical_and(pm.active_nodes_func.x.array,
@@ -139,7 +144,8 @@ class ChimeraSubstepper(ABC):
         pf.set_activation(self.fast_subproblem_els, finalize=False)
         self.steadiness_measurements.append(self.steadiness_metric.get_steadiness_metric())
         if rank==0:
-            print(f"is Chimera ON? {self.chimera_on}, steadiness metric = {self.steadiness_measurements[-1]}")
+            adim_dt = self.pm.adimensionalize_mhs_timestep(pm.source.path.current_track)
+            print(f"is Chimera ON? {self.chimera_on}, adim dt = {adim_dt}, steadiness metric = {self.steadiness_measurements[-1]}")
 
     def chimera_interpolate_material_id(self):
         (pf, pm) = (self.pf, self.pm)

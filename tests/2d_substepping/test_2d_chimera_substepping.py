@@ -35,7 +35,10 @@ def run_staggered_RR(params, writepos=True):
     if params["substepping_parameters"]["chimera_steadiness_workflow"]["enabled"]:
         class MyMHSStaggeredChimeraSubstepper(MHSStaggeredChimeraSubstepper):
             def is_steady_enough(self):
-                return (len(self.steadiness_measurements) > 1) and (((self.steadiness_measurements[-1] - self.steadiness_measurements[-2]) / self.steadiness_measurements[-2]) < 0.10)
+                yes = (len(self.steadiness_measurements) > 1) and (((self.steadiness_measurements[-1] - self.steadiness_measurements[-2]) / self.steadiness_measurements[-2]) < 0.05)
+                if yes:
+                    self.steadiness_measurements.clear()
+                return yes
         driver_type = MyMHSStaggeredChimeraSubstepper
     else:
         driver_type = MHSStaggeredChimeraSubstepper

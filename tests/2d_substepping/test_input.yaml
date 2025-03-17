@@ -58,3 +58,12 @@ substepping_parameters: {
     enabled: False,
   }
 }
+
+moving_domain_params : {
+  shape : False,
+  max_adim_dt : 2,
+  adim_front_len : 2,
+  adim_side_len : 2,
+  adim_bot_len : 2,
+  adim_top_len : 2,
+}

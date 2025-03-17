@@ -30,7 +30,6 @@ std::vector<std::int32_t> mesh_collision(
     mesh_small is in MPI.COMM_SELF
     mesh_big is in MPI.COMM_WORLD
     */
-  // TODO: Handle case where nullptr is passed.
   double tol = 1e-7;
   if (not(bb_tree_big)) {
     throw std::runtime_error("Expected valid ptr to bb_tree_big");
@@ -67,8 +66,8 @@ std::vector<std::int32_t> mesh_collision(
       big_colliding_cells.push_back(cell_big);
     }
   }
-  sort( big_colliding_cells.begin(), big_colliding_cells.end() );
-  big_colliding_cells.erase( unique( big_colliding_cells.begin(), big_colliding_cells.end() ), big_colliding_cells.end() );
+  sort(big_colliding_cells.begin(), big_colliding_cells.end());
+  big_colliding_cells.erase(unique( big_colliding_cells.begin(), big_colliding_cells.end() ), big_colliding_cells.end());
 
   return big_colliding_cells;
 }

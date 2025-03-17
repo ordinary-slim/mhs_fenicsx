@@ -36,6 +36,7 @@ def extract_cell_geometry(input_mesh, cell: int):
     return input_mesh.geometry.x[mesh_nodes]
 
 
+# TODO: Check if outdated
 def mesh_collision(mesh_big,mesh_small,bb_tree_mesh_big=None):
     '''
     mesh_small is in MPI.COMM_SELF
@@ -68,6 +69,7 @@ def mesh_collision(mesh_big,mesh_small,bb_tree_mesh_big=None):
     sorted_unique_big_cells = np.unique(big_cells).astype(dtype=np.int32)
     return sorted_unique_big_cells
 
+# TODO: Check if outdated
 def mesh_containment(nodal_bb_tree,loc_mesh,cell_bb_tree,ext_mesh):
     big_process = nodal_bb_tree.create_global_tree(loc_mesh.comm)
     process_collisions = geometry.compute_collisions_trees(cell_bb_tree, big_process)
@@ -229,7 +231,7 @@ class OBB:
         i.e. 2D is nested in 3D
         '''
         self.dim = dim
-        step = p1-p0
+        step = p1 - p0
         step_len = np.linalg.norm(step)
         self.pos = (p0+p1)/2
         self.x_axis = step / step_len
@@ -268,7 +270,7 @@ class OBB:
                                 z_sign*self.half_widths[2]*self.z_axis
                         point_counter+=1
             cells = [(0,1,2,3,4,5,6,7)]
-            ufl_mesh = ufl.Mesh(basix.ufl.element("Lagrange", "hexahedron", 1, shape=(self.dim,), dtype=PETSc.RealType))
+            el_type = "hexahedron"
         else:
             for x_sign in [-1.0,+1.0]:
                 for z_sign in [-1.0,+1.0]:
@@ -278,5 +280,36 @@ class OBB:
                             z_sign*self.half_widths[2]*self.z_axis[:2]
                     point_counter+=1
             cells = [(0,1,2,3)]
-            ufl_mesh = ufl.Mesh(basix.ufl.element("Lagrange", "quadrilateral", 1, shape=(self.dim,), dtype=PETSc.RealType))
-        return mesh.create_mesh(MPI.COMM_SELF,cells,points,ufl_mesh)
+            el_type = "quadrilateral"
+        ufl_mesh = ufl.Mesh(basix.ufl.element("Lagrange", el_type, 1, shape=(self.dim,), dtype=PETSc.RealType))
+        return mesh.create_mesh(MPI.COMM_SELF, cells, points, ufl_mesh)
+
+def aabb_to_mesh(dim, bounds):
+    points = np.empty((2**dim, dim))
+    point_counter = 0
+    if dim==3:
+        for Y in [1, 4]:
+            for X in [0, 3]:
+                for Z in [2, 5]:
+                    points[point_counter, :] = np.array([bounds[X], bounds[Y], bounds[Z]])
+                    point_counter += 1
+        cells = [(0,1,2,3,4,5,6,7)]
+        el_type = "hexahedron"
+    else:
+        for X in [0, 2]:
+            for Z in [1, 3]:
+                    points[point_counter, :] = np.array([bounds[X], bounds[Z]])
+                    point_counter += 1
+        cells = [(0,1,2,3)]
+        el_type = "quadrilateral"
+    ufl_mesh = ufl.Mesh(basix.ufl.element("Lagrange", el_type, 1, shape=(dim,), dtype=PETSc.RealType))
+    return mesh.create_mesh(MPI.COMM_SELF, cells, points, ufl_mesh)
+
+def mesh_aabb_collision(bb_tree_mesh, aabb_bounds):
+    dim = int(len(aabb_bounds) / 2)
+    aabb_mesh = aabb_to_mesh(dim, aabb_bounds)
+    single_leaf_tree = geometry.bb_tree(
+            aabb_mesh, aabb_mesh.topology.dim, padding=1e-7)
+    cell_cell_collisions = geometry.compute_collisions_trees(
+        bb_tree_mesh, single_leaf_tree)
+    return cell_cell_collisions[:, 0]

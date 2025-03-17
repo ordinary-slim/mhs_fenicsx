@@ -65,7 +65,7 @@ domain_width: 1
 domain_height: 1
 els_per_radius: 4
 
-max_timesteps: 1
+max_timesteps: 2
 dt : 1.0
 driver_type: "robin"
 initial_condition: False
@@ -97,3 +97,11 @@ substepping_parameters: {
   }
 }
 
+moving_domain_params : {
+  shape : True,
+  max_adim_dt : 2,
+  adim_front_len : 2,
+  adim_side_len : 2,
+  adim_bot_len : 2,
+  adim_top_len : 2,
+}

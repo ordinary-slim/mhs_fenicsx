@@ -42,7 +42,7 @@ def main(input_file, writepos=True):
     p_fixed.set_initial_condition(T_env)
     p_moving.set_initial_condition(T_env)
 
-    driver = MonolithicRRDriver(p_fixed, p_moving, quadrature_degree=2)
+    driver = MonolithicRRDriver(p_fixed, p_moving, 1.0, 1.0, quadrature_degree=2)
 
     for p in [p_fixed, p_moving]:
         p.set_forms()

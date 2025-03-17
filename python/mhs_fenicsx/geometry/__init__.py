@@ -1,4 +1,4 @@
-from mhs_fenicsx.geometry.utils import mark_cells, indices_to_func, create_partition_tag, extract_cell_geometry, mesh_collision, mesh_containment, Hatch, OBB
+from mhs_fenicsx.geometry.utils import mark_cells, indices_to_func, create_partition_tag, extract_cell_geometry, mesh_collision, mesh_containment, Hatch, OBB, aabb_to_mesh, mesh_aabb_collision
 
 __all__ = [
     "mark_cells",
@@ -9,4 +9,6 @@ __all__ = [
     "mesh_containment",
     "Hatch",
     "OBB"
+    "aabb_to_mesh",
+    "mesh_aabb_collision",
 ]

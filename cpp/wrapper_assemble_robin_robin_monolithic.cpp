@@ -81,7 +81,8 @@ void declare_assemble_robin_robin_monolithic(nb::module_ &m) {
           nb::ndarray<const int, nb::ndim<1>, nb::c_contig> renumbering_cells_po_mesh_j,
           nb::ndarray<const std::int64_t, nb::ndim<2>, nb::c_contig> dofs_cells_mesh_j,
           nb::ndarray<const T, nb::ndim<2>, nb::c_contig> u_ext_coeffs,
-          nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> mat_ids
+          nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> mat_ids,
+          double robin_coeff
           )
        {
          std::span<const double> _gp(gweights_facet.data(), gweights_facet.size());
@@ -103,7 +104,8 @@ void declare_assemble_robin_robin_monolithic(nb::module_ &m) {
              std::span(renumbering_cells_po_mesh_j.data(), renumbering_cells_po_mesh_j.size()),
              std::span(dofs_cells_mesh_j.data(), dofs_cells_mesh_j.size()),
              std::span(u_ext_coeffs.data(), u_ext_coeffs.size()),
-             std::span(mat_ids.data(), mat_ids.size())
+             std::span(mat_ids.data(), mat_ids.size()),
+             robin_coeff
              );
        })
     .def(
@@ -124,7 +126,8 @@ void declare_assemble_robin_robin_monolithic(nb::module_ &m) {
           nb::ndarray<const int, nb::ndim<1>, nb::c_contig> renumbering_cells_po_mesh_j,
           nb::ndarray<const std::int64_t, nb::ndim<2>, nb::c_contig> dofs_cells_mesh_j,
           nb::ndarray<const T, nb::ndim<2>, nb::c_contig> u_ext_coeffs,
-          nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> mat_ids
+          nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> mat_ids,
+          double robin_coeff
           )
        {
          std::span<const double> _gp(gweights_facet.data(), gweights_facet.size());
@@ -146,7 +149,8 @@ void declare_assemble_robin_robin_monolithic(nb::module_ &m) {
              std::span(renumbering_cells_po_mesh_j.data(), renumbering_cells_po_mesh_j.size()),
              std::span(dofs_cells_mesh_j.data(), dofs_cells_mesh_j.size()),
              std::span(u_ext_coeffs.data(), u_ext_coeffs.size()),
-             std::span(mat_ids.data(), mat_ids.size())
+             std::span(mat_ids.data(), mat_ids.size()),
+             robin_coeff
              );
        });
 }

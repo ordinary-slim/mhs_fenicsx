@@ -16,7 +16,8 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
 class MonolithicDomainDecompositionDriver:
-    def __init__(self, sub_problem_1 : Problem, sub_problem_2:Problem, quadrature_degree):
+    def __init__(self, sub_problem_1 : Problem, sub_problem_2:Problem,
+                 quadrature_degree):
         (p1,p2) = (sub_problem_1,sub_problem_2)
         self.p1 = p1
         self.p2 = p2
@@ -51,9 +52,12 @@ class MonolithicDomainDecompositionDriver:
         pass
 
 class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
-    def __init__(self, sub_problem_1:Problem,sub_problem_2:Problem, quadrature_degree):
+    def __init__(self, sub_problem_1:Problem, sub_problem_2:Problem,
+                 robin_coeff1 : float, robin_coeff2 : float,
+                 quadrature_degree):
         (p1,p2) = (sub_problem_1,sub_problem_2)
         super().__init__(p1, p2, quadrature_degree)
+        self.robin_coeff1, self.robin_coeff2 = robin_coeff1, robin_coeff2
         self.set_n_compile_forms()
         self.Qe = dict()
         self.quadrature_points_cell = dict()
@@ -93,12 +97,12 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.r_ufl, self.j_ufl = {}, {}
         self.r_compiled, self.j_compiled = {}, {}
         ds = ufl.Measure('ds')
-        for p in [p1, p2]:
+        for p, robin_coeff in zip([p1, p2], [self.robin_coeff1, self.robin_coeff2]):
             # LHS term Robin
             (u, v) = (p.u, ufl.TestFunction(p.v))
             a_ufl = []
             for mat in p.materials:
-                a_ufl.append(+ u * v * ds(self.gamma_integration_tags[mat]))
+                a_ufl.append(+ robin_coeff * u * v * ds(self.gamma_integration_tags[mat]))
             a_ufl = sum(a_ufl)
             self.j_ufl[p] = ufl.derivative(a_ufl, u)
             # LOC CONTRIBUTION
@@ -208,8 +212,10 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
 
     def assemble_robin_jacobian_p_p_ext(self, p:Problem, p_ext:Problem):
         A = self.A12
+        robin_coeff = self.robin_coeff1
         if p_ext == self.p1:
             A = self.A21
+            robin_coeff = self.robin_coeff2
         A.zeroEntries()
         u_ext_coeffs = self.gdofs_communicators[p].point_to_point_comm()
         self.monolithicRrAssembler[p].assemble_jacobian(A,
@@ -227,12 +233,16 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                                         self.gamma_renumbered_cells_ext[p][p_ext],
                                                         self.gamma_dofs_cells_ext[p][p_ext],
                                                         u_ext_coeffs,
-                                                        self.gamma_mat_ids[p][p_ext]
+                                                        self.gamma_mat_ids[p][p_ext],
+                                                        robin_coeff
                                                         )
         A.assemble()
 
     def assemble_robin_residual_p_p_ext(self, R_sub_vec: PETSc.Vec, p:Problem, p_ext:Problem):
         u_ext_coeffs = self.gdofs_communicators[p].point_to_point_comm()
+        robin_coeff = self.robin_coeff1
+        if p_ext == self.p1:
+            robin_coeff = self.robin_coeff2
         with R_sub_vec.localForm() as R_loc:
             self.monolithicRrAssembler[p].assemble_residual(R_loc.array_w,
                                                             np.array([mat.k.compiled_func for mat in p_ext.materials], np.uintp),
@@ -249,7 +259,8 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                                             self.gamma_renumbered_cells_ext[p][p_ext],
                                                             self.gamma_dofs_cells_ext[p][p_ext],
                                                             u_ext_coeffs,
-                                                            self.gamma_mat_ids[p][p_ext]
+                                                            self.gamma_mat_ids[p][p_ext],
+                                                            robin_coeff
                                                             )
 
     def pre_assemble(self):

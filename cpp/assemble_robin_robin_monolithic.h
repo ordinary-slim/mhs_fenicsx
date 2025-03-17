@@ -362,26 +362,28 @@ class MonolithicRobinRobinAssembler {
       std::span<const int> renumbering_cells_po_mesh_j,
       std::span<const std::int64_t> _dofs_cells_mesh_j,
       std::span<const T> _u_ext_coeffs,
-      std::span<const std::int32_t> mat_ids)
+      std::span<const std::int32_t> mat_ids,
+      double robin_coeff)
   {
     std::vector<Triplet> contribs;
-    _assemble(true,                                              
-        contribs,                                    
-        conductivities,                              
-        dconductivities,                             
-        _tabulated_gauss_points_gamma,               
-        _gauss_points_cell,                          
-        gweights_facet,                              
-        V_i,                                         
-        restriction_i,                               
-        V_j,                                         
-        restriction_j,                               
-        gamma_integration_data_i,                    
-        po_mesh_j,                                   
-        renumbering_cells_po_mesh_j,                 
-        _dofs_cells_mesh_j,                          
-        _u_ext_coeffs,                               
-        mat_ids);                                    
+    _assemble(true,
+        contribs,
+        conductivities,
+        dconductivities,
+        _tabulated_gauss_points_gamma,
+        _gauss_points_cell,
+        gweights_facet,
+        V_i,
+        restriction_i,
+        V_j,
+        restriction_j,
+        gamma_integration_data_i,
+        po_mesh_j,
+        renumbering_cells_po_mesh_j,
+        _dofs_cells_mesh_j,
+        _u_ext_coeffs,
+        mat_ids,
+        robin_coeff);
     // Assemble triplets
     for (Triplet& t: contribs) {
       mat_add(t.row, t.col, t.value);
@@ -403,7 +405,8 @@ class MonolithicRobinRobinAssembler {
       std::span<const int> renumbering_cells_po_mesh_j,
       std::span<const std::int64_t> _dofs_cells_mesh_j,
       std::span<const T> _u_ext_coeffs,
-      std::span<const std::int32_t> mat_ids)
+      std::span<const std::int32_t> mat_ids,
+      double robin_coeff)
   {
     std::vector<Triplet> contribs;
     _assemble(false,
@@ -422,7 +425,8 @@ class MonolithicRobinRobinAssembler {
         renumbering_cells_po_mesh_j,
         _dofs_cells_mesh_j,
         _u_ext_coeffs,
-        mat_ids);
+        mat_ids,
+        robin_coeff);
     // Assemble triplets (discarding column info)
     for (Triplet& t: contribs)
       b[t.row] += t.value;
@@ -454,7 +458,8 @@ class MonolithicRobinRobinAssembler {
       std::span<const int> renumbering_cells_po_mesh_j,
       std::span<const std::int64_t> _dofs_cells_mesh_j,
       std::span<const T> _u_ext_coeffs,
-      std::span<const std::int32_t> mat_ids)
+      std::span<const std::int32_t> mat_ids,
+      double robin_coeff)
   {
 
     auto mesh_i = V_i.mesh();
@@ -546,8 +551,7 @@ class MonolithicRobinRobinAssembler {
           for (size_t i = 0; i < num_dofs_facet_i; ++i) {
             for (size_t j = 0; j < num_dofs_cell_j; ++j) {
               v = 0.0;
-              // TODO Consider adding Robin coeff
-              v -= phi_j(0, igp, j, 0);
+              v -= robin_coeff * phi_j(0, igp, j, 0);
               // dphi: dim, gp, basis func
               double dot_gradj_n = 0.0;
               for (size_t w = 0; w < tdim; ++w) {
@@ -567,7 +571,7 @@ class MonolithicRobinRobinAssembler {
         } else {// residual assembly
           for (size_t i = 0; i < num_dofs_facet_i; ++i) {
             v = 0.0;
-            v -= u_ext_gp;
+            v -= robin_coeff * u_ext_gp;
             v -= conductivity * dn_u_ext_gp;
             v  *= phi_i(0,
                        idx_gp_i,

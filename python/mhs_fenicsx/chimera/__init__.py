@@ -3,6 +3,7 @@ import numpy as np
 from mpi4py import MPI
 from mhs_fenicsx.problem import Problem, HeatSource
 from mhs_fenicsx.problem.helpers import interpolate_cg1
+from mhs_fenicsx.geometry import mesh_aabb_collision
 
 def interpolate_solution_to_inactive(p:Problem, p_ext:Problem, cells1 = None, finalize=True):
     local_ext_inactive_dofs = np.logical_and((p.active_nodes_func.x.array == 0), p.ext_nodal_activation[p_ext]).nonzero()[0]
@@ -18,9 +19,62 @@ def interpolate_solution_to_inactive(p:Problem, p_ext:Problem, cells1 = None, fi
     if finalize:
         p.post_modify_solution(cells=p.ext_colliding_els[p_ext])
 
+def shape_moving_problem(pm : Problem):
+    if not(pm.input_parameters["moving_domain_params"]["shape"]):
+        pm.reset_activation(finalize=False)
+    else:
+        next_track = pm.source.path.get_track(pm.time)
+        adim_dt = pm.adimensionalize_mhs_timestep(next_track)
+        mdparams = pm.input_parameters["moving_domain_params"]
+        radius = pm.source.R
+        back_len = get_adim_back_len_paper(0.5, adim_dt) * radius
+        front_len = mdparams["adim_front_len"] * radius
+        side_len = mdparams["adim_side_len"] * radius
+        bot_len = mdparams["adim_bot_len"] * radius
+        top_len = mdparams["adim_top_len"] * radius
+        center = np.array(pm.source.x)
+        if pm.dim == 1:
+            aabb_bounds  = [
+                    center[0]-back_len,
+                    center[1]+front_len]
+        if pm.dim == 2:
+            aabb_bounds  = [
+                    center[0]-back_len,
+                    center[1]-bot_len,
+                    center[0]+front_len,
+                    center[1]+top_len]
+        elif pm.dim == 3:
+            aabb_bounds  = [
+                    center[0]-back_len,
+                    center[1]-side_len,
+                    center[2]-bot_len,
+                    center[0]+front_len,
+                    center[1]+side_len,
+                    center[2]+top_len, ]
+        else:
+            raise ValueError
+        colliding_els = mesh_aabb_collision(pm.bb_tree, aabb_bounds)
+        pm.set_activation(colliding_els, finalize=False)
+
+def get_adim_back_len_paper(fine_adim_dt : float = 0.5, adim_dt : float = 2):
+    return np.round(4*(1 + adim_dt + (adim_dt**2.3)*fine_adim_dt)) / 4
+
+def get_adim_back_len_simple(fine_adim_dt : float = 0.5, adim_dt : float = 2):
+    return adim_dt + 4 * fine_adim_dt
+
 def build_moving_problem(p_fixed : Problem, els_per_radius=2, shift=None):
-    moving_domain = mesh_around_hs(p_fixed.source, p_fixed.domain.topology.dim, els_per_radius, shift=shift)
     params = p_fixed.input_parameters.copy()
+    mdparams = params["moving_domain_params"]
+    if params["moving_domain_params"]["shape"]:
+        adim_back_len = get_adim_back_len_paper(0.5, mdparams["max_adim_dt"])
+    else:
+        adim_back_len = get_adim_back_len_simple(0.5, mdparams["max_adim_dt"])
+    adim_front_len = mdparams["adim_front_len"]
+    adim_side_len = mdparams["adim_side_len"]
+    adim_bot_len = mdparams["adim_bot_len"]
+    adim_top_len = mdparams["adim_top_len"]
+    moving_domain = mesh_around_hs(p_fixed.source, p_fixed.domain.topology.dim, els_per_radius, shift,
+                                   adim_back_len, adim_front_len, adim_side_len, adim_bot_len, adim_top_len)
     params["attached_to_hs"] = 1
     # Placeholders
     params["domain_speed"] = np.array([1.0, 0.0, 0.0])
@@ -30,13 +84,21 @@ def build_moving_problem(p_fixed : Problem, els_per_radius=2, shift=None):
     p = Problem(moving_domain, params,name=p_fixed.name+"_moving")
     return p
 
-def mesh_around_hs(hs:HeatSource, dim:int, els_per_radius:int, shift=None):
+def mesh_around_hs(hs:HeatSource,
+                   dim:int,
+                   els_per_radius:int,
+                   shift=None,
+                   adim_back_len = 4.0,
+                   adim_front_len = 2.0,
+                   adim_side_len = 2.0,
+                   adim_bot_len = 2.0,
+                   adim_top_len = 2.0):
     center_of_mesh = np.array(hs.x)
-    back_length  = hs.R * 4
-    front_length = hs.R * 2
-    side_length  = hs.R * 2
-    bot_length   = hs.R * 2
-    top_length   = hs.R * 2
+    back_length  = hs.R * adim_back_len
+    front_length = hs.R * adim_front_len
+    side_length  = hs.R * adim_side_len
+    bot_length   = hs.R * adim_bot_len
+    top_length   = hs.R * adim_top_len
 
     el_size      = hs.R / float(els_per_radius)
 

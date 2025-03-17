@@ -159,7 +159,7 @@ def run(dim, els_side, el_type, writepos=False):
         p.find_gamma(p_ext)
 
     quadrature_degree = 2
-    driver = MonolithicRRDriver(p_left, p_right, quadrature_degree=quadrature_degree)
+    driver = MonolithicRRDriver(p_left, p_right, 1.0, 1.0, quadrature_degree=quadrature_degree)
 
     neumann_facets = {}
     for p, marker in zip([p_left, p_right], [left_marker_neumann, right_marker_neumann]):

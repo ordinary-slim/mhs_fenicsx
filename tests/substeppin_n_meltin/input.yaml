@@ -53,7 +53,7 @@ petsc_opts_macro: {
 }
 domain_width: 1
 domain_height: 0.5
-els_per_radius: 4
+els_per_radius: 8
 
 max_timesteps: 2
 dt : 1.0 #placeholder
@@ -76,7 +76,9 @@ substepping_parameters: {
   writepos: True,
   chimera_always_on: False,
   chimera_steadiness_workflow: {
-    enabled: False,
+    enabled: True,
+    adim_dt_increment : 0.5,
+    max_adim_dt : 2,
   },
 }
 

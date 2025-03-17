@@ -3,7 +3,7 @@ import numpy as np
 from mpi4py import MPI
 from mhs_fenicsx.problem import Problem, HeatSource
 from mhs_fenicsx.problem.helpers import interpolate_cg1
-from mhs_fenicsx.geometry import mesh_aabb_collision
+from mhs_fenicsx.geometry import OBB
 
 def interpolate_solution_to_inactive(p:Problem, p_ext:Problem, cells1 = None, finalize=True):
     local_ext_inactive_dofs = np.logical_and((p.active_nodes_func.x.array == 0), p.ext_nodal_activation[p_ext]).nonzero()[0]
@@ -27,33 +27,17 @@ def shape_moving_problem(pm : Problem):
         adim_dt = pm.adimensionalize_mhs_timestep(next_track)
         mdparams = pm.input_parameters["moving_domain_params"]
         radius = pm.source.R
+        center = np.array(pm.source.x)
+        e = next_track.get_direction()
         back_len = get_adim_back_len_paper(0.5, adim_dt) * radius
         front_len = mdparams["adim_front_len"] * radius
         side_len = mdparams["adim_side_len"] * radius
         bot_len = mdparams["adim_bot_len"] * radius
         top_len = mdparams["adim_top_len"] * radius
-        center = np.array(pm.source.x)
-        if pm.dim == 1:
-            aabb_bounds  = [
-                    center[0]-back_len,
-                    center[1]+front_len]
-        if pm.dim == 2:
-            aabb_bounds  = [
-                    center[0]-back_len,
-                    center[1]-bot_len,
-                    center[0]+front_len,
-                    center[1]+top_len]
-        elif pm.dim == 3:
-            aabb_bounds  = [
-                    center[0]-back_len,
-                    center[1]-side_len,
-                    center[2]-bot_len,
-                    center[0]+front_len,
-                    center[1]+side_len,
-                    center[2]+top_len, ]
-        else:
-            raise ValueError
-        colliding_els = mesh_aabb_collision(pm.bb_tree, aabb_bounds)
+        p0 = center - back_len * e
+        p1 = center + front_len * e
+        obb = OBB(p0, p1, side_len, top_len, bot_len, pm.dim)
+        colliding_els = obb.broad_collision(pm.bb_tree)
         pm.set_activation(colliding_els, finalize=False)
 
 def get_adim_back_len_paper(fine_adim_dt : float = 0.5, adim_dt : float = 2):

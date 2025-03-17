@@ -78,9 +78,11 @@ class ChimeraSubstepper(ABC):
             pm.in_plane_rotation(pf.source.x, self.rotation_angle)
 
         max_dt_substep = self.t1_macro_step - pf.time
+        max_dt_track = next_track.t1 - pf.time
+        max_dt = min(max_dt_track, max_dt_substep)
 
         def set_dt(dt : float):
-            dt = min(dt, max_dt_substep)
+            dt = min(dt, max_dt)
             for p in [pf, pm]:
                 p.set_dt(dt)
 
@@ -103,12 +105,18 @@ class ChimeraSubstepper(ABC):
                         dt = min(pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["max_adim_dt"]), current_dt + increment)
                         set_dt(dt)
 
-        if pf.dt.value > (max_dt_substep + 1e-7):
-            set_dt(max_dt_substep)
+        if pf.dt.value > (max_dt + 1e-7):
+            set_dt(max_dt)
 
     def is_steady_enough(self):
-        next_track = self.pf.source.path.get_track(self.pf.time)
-        return (((self.pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) >= 0.15)
+        if self.params["chimera_steadiness_workflow"]["enabled"]:
+            yes = (len(self.steadiness_measurements) > 1) and (((self.steadiness_measurements[-1] - self.steadiness_measurements[-2]) / self.steadiness_measurements[-2]) < 0.05)
+            if yes:
+                self.steadiness_measurements.clear()
+            return yes
+        else:
+            next_track = self.pf.source.path.get_track(self.pf.time)
+            return (((self.pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) >= 0.15)
 
     def chimera_micro_pre_iterate(self, forced_time_derivative=False):
         (pf, pm) = self.pf, self.pm
@@ -142,10 +150,11 @@ class ChimeraSubstepper(ABC):
     def chimera_micro_post_iterate(self):
         (pf, pm) = self.pf, self.pm
         pf.set_activation(self.fast_subproblem_els, finalize=False)
+        max_ft = abs(pf.u.x.array - pf.u_prev.x.array / pf.dt.value).max()
         self.steadiness_measurements.append(self.steadiness_metric.get_steadiness_metric())
         if rank==0:
             adim_dt = self.pm.adimensionalize_mhs_timestep(pm.source.path.current_track)
-            print(f"is Chimera ON? {self.chimera_on}, adim dt = {adim_dt}, steadiness metric = {self.steadiness_measurements[-1]}")
+            print(f"is Chimera ON? {self.chimera_on}, adim dt = {adim_dt}, steadiness metric = {self.steadiness_measurements[-1]}, max ft = {max_ft}")
 
     def chimera_interpolate_material_id(self):
         (pf, pm) = (self.pf, self.pm)

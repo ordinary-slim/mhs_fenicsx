@@ -8,11 +8,11 @@ source_terms :
     radius : *radius
     power : &power 500
     path: &path "Path.gcode"
-    #- initial_position : *p0
-    #  initial_speed : *speed
-    #  radius : *radius
-    #  power : 0.0
-    #  path: *path
+  - initial_position : *p0
+    initial_speed : *speed
+    radius : *radius
+    power : 0.0
+    path: *path
   - type : 4
     initial_position : *p0
     initial_speed : *speed
@@ -65,7 +65,7 @@ domain_width: 1
 domain_height: 1
 els_per_radius: 4
 
-max_timesteps: 2
+max_timesteps: 1
 dt : 1.0
 driver_type: "robin"
 initial_condition: False
@@ -77,7 +77,7 @@ max_ls_iters: 5
 
 substepping_parameters: {
   micro_adim_dt: 0.5,
-  macro_adim_dt: 10,
+  macro_adim_dt: 25,
   max_staggered_iters: 1,
   adim_lens: {
     back_pad : 3,

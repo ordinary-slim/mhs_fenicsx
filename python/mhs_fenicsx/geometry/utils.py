@@ -284,32 +284,10 @@ class OBB:
         ufl_mesh = ufl.Mesh(basix.ufl.element("Lagrange", el_type, 1, shape=(self.dim,), dtype=PETSc.RealType))
         return mesh.create_mesh(MPI.COMM_SELF, cells, points, ufl_mesh)
 
-def aabb_to_mesh(dim, bounds):
-    points = np.empty((2**dim, dim))
-    point_counter = 0
-    if dim==3:
-        for Y in [1, 4]:
-            for X in [0, 3]:
-                for Z in [2, 5]:
-                    points[point_counter, :] = np.array([bounds[X], bounds[Y], bounds[Z]])
-                    point_counter += 1
-        cells = [(0,1,2,3,4,5,6,7)]
-        el_type = "hexahedron"
-    else:
-        for X in [0, 2]:
-            for Z in [1, 3]:
-                    points[point_counter, :] = np.array([bounds[X], bounds[Z]])
-                    point_counter += 1
-        cells = [(0,1,2,3)]
-        el_type = "quadrilateral"
-    ufl_mesh = ufl.Mesh(basix.ufl.element("Lagrange", el_type, 1, shape=(dim,), dtype=PETSc.RealType))
-    return mesh.create_mesh(MPI.COMM_SELF, cells, points, ufl_mesh)
-
-def mesh_aabb_collision(bb_tree_mesh, aabb_bounds):
-    dim = int(len(aabb_bounds) / 2)
-    aabb_mesh = aabb_to_mesh(dim, aabb_bounds)
-    single_leaf_tree = geometry.bb_tree(
-            aabb_mesh, aabb_mesh.topology.dim, padding=1e-7)
-    cell_cell_collisions = geometry.compute_collisions_trees(
-        bb_tree_mesh, single_leaf_tree)
-    return cell_cell_collisions[:, 0]
+    def broad_collision(self, bb_tree_mesh):
+        obb_mesh = self.get_dolfinx_mesh()
+        single_leaf_tree = geometry.bb_tree(
+                obb_mesh, obb_mesh.topology.dim, padding=1e-7)
+        cell_cell_collisions = geometry.compute_collisions_trees(
+            bb_tree_mesh, single_leaf_tree)
+        return cell_cell_collisions[:, 0]

@@ -248,7 +248,7 @@ class Problem:
             if not(idx == self.current_source_term):
                 source.fem_function.x.array.fill(0.0)
 
-    def dimensionalize_mhs_timestep(self, track : Track, adim_dt : float, inverse = False):
+    def dimensionalize_mhs_timestep(self, track : Track, adim_dt : float):
         return float(adim_dt * self.source.R / track.speed)
 
     def adimensionalize_mhs_timestep(self, track : Track):

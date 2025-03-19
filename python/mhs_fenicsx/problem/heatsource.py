@@ -14,19 +14,21 @@ if TYPE_CHECKING:
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-def createHeatSources(p: 'Problem'):
+def create_heat_sources(p: 'Problem'):
     sources = []
     for hs in p.input_parameters["source_terms"]:
         try:
             hs_type = hs["type"]
-            if   hs_type == 1:
+            if   hs_type == "gaussian1d":
                 sources.append(Gaussian1D(p, hs))
-            elif hs_type == 2:
+            elif hs_type == "gaussian2d":
                 sources.append(Gaussian2D(p, hs))
-            elif hs_type == 3:
+            elif hs_type == "gaussian3d":
                 sources.append(Gaussian3D(p, hs))
-            elif hs_type == 4:
+            elif hs_type == "lumped":
                 sources.append(LumpedHeatSource(p, hs))
+            elif hs_type == "gusarov":
+                sources.append(Gusarov(p, hs))
             else:
                 raise ValueError(f"Unknown heat source type {hs_type}.")
         except KeyError:
@@ -40,10 +42,7 @@ def createHeatSources(p: 'Problem'):
 
 class HeatSource(ABC):
     def __init__(self, p: 'Problem', hs_params : dict):
-        '''
-        TODO: Unify interface so that only initialized with Path
-        '''
-        self.x      = np.array(hs_params["initial_position"],dtype=np.float64)
+        self.x      = np.array(hs_params["initial_position"], dtype=np.float64)
         self.R = hs_params["radius"]
         self.power = hs_params["power"]
         self.speed = np.array(hs_params["initial_speed"],dtype=np.float64)
@@ -54,12 +53,11 @@ class HeatSource(ABC):
         else:
             track = get_infinite_track(self.x, p.time, self.speed, self.power)
             self.path = Path([track])
-        self.tn = self.path.tracks[0].t0
         self.initialize_fem_function(p)
         self.attributes_to_reference = set() # attributes to reference upon copy
 
     @abstractmethod
-    def __call__(self,x):
+    def __call__(self, x):
         pass
 
     def set_fem_function(self, x):
@@ -68,7 +66,7 @@ class HeatSource(ABC):
     def initialize_fem_function(self,p:'Problem'):
         self.fem_function = fem.Function(p.v,name="source")
 
-    def pre_iterate(self,tn,dt,verbose=True):
+    def pre_iterate(self, tn, dt, verbose=True):
         self.tn = tn
         self.tnp1 = tn + dt
         self.path.update(tn)
@@ -97,19 +95,19 @@ class HeatSource(ABC):
         return result
 
 class Gaussian1D(HeatSource):
-    def __call__(self,x):
+    def __call__(self, x):
         r2 = (x[0] - self.x[0])**2
         return 2 * self.power / np.pi / self.R**2 * \
             np.exp(-2*(r2)/self.R**2 )
 
 class Gaussian2D(HeatSource):
-    def __call__(self,x):
+    def __call__(self, x):
         r2 = (x[0] - self.x[0])**2 + (x[1] - self.x[1])**2
         return 2 * self.power / np.pi / self.R**2 * \
             np.exp(-2*(r2)/self.R**2 )
 
 class Gaussian3D(HeatSource):
-    def __call__(self,x):
+    def __call__(self, x):
         r2 = (x[0] - self.x[0])**2 + (x[1] - self.x[1])**2 + (x[2] - self.x[2])**2
         return 6*np.sqrt(3)*(self.power) / np.power(np.pi, 1.5) / np.power(self.R, 3) * \
             np.exp(-3*(r2)/self.R**2 )
@@ -142,7 +140,7 @@ class LumpedHeatSource(HeatSource):
                                constant_map={})
 
     def initialize_fem_function(self,p:'Problem'):
-        self.fem_function = fem.Function(p.dg0,name="source")
+        self.fem_function = fem.Function(p.dg0, name="source")
 
     def set_fem_function(self, x):
         tracks = self.path.get_track_interval(self.tn, self.tnp1)
@@ -167,5 +165,40 @@ class LumpedHeatSource(HeatSource):
         self.fem_function.x.array[:] = 0.0
         self.fem_function.x.array[self.heated_els] = pd
 
-    def __call__(self,x):
+    def __call__(self, x):
         pass
+
+class Gusarov(HeatSource):
+    def __init__(self, p:'Problem', hs_params : dict):
+        assert(p.dim == 3)
+        super().__init__(p, hs_params)
+        self.beta = hs_params["extinction_coefficient"]
+        self.rho = hs_params["hemispherical_reflectivity"]
+        self.a = np.sqrt(1 - self.rho)
+        self.layer_thickness = hs_params["layer_thickness"]
+        self.optical_thickness = self.beta * self.layer_thickness
+        a, rho, l = self.a, self.rho, self.optical_thickness
+        self.D = + (1 - a) * (1 - a - rho * (1 + a)) * np.exp(-2*a*l) \
+                 - (1 + a) * (1 + a - rho * (1 - a)) * np.exp(+2*a*l)
+
+    def __call__(self, x):
+        beta, a, rho = self.beta, self.a, self.rho
+        l, D, R = self.optical_thickness, self.D, self.R
+        r = np.sqrt((x[0] - self.x[0])**2 + (x[1] - self.x[1])**2, dtype=np.float64)
+        xi = - beta * (x[2] - self.x[2])
+        rfrac = r / R
+        Q0 = 3 * self.power / np.pi / np.pow(R, 2, dtype=np.float64) * \
+                (1 - rfrac)**2 * (1 + rfrac)**2
+        Q0[np.where(rfrac > 1.0)] = 0
+        dqdxi1  = - (1 - a) * np.exp(-2*a*xi)
+        dqdxi1 += + (1 + a) * np.exp(+2*a*xi)
+        dqdxi1 *= (1 - rho**2) * np.exp(-l)
+        dqdxi2  = - (1 + a - rho*(1 - a)) * np.exp(-2*a*(xi - l))
+        dqdxi2 += + (1 - a - rho*(1 + a)) * np.exp(+2*a*(xi - l))
+        dqdxi2 *= -(3 + rho * np.exp(-2*l))
+        dqdxi3 = 3 * (1 - rho) * (np.exp(-xi) + rho * np.exp(xi - 2*l)) / (4 * rho - 3)
+        dqdxi = 2*rho*np.power(a, 2) / ((4*rho - 3)*D) * (dqdxi1 + dqdxi2)
+        dqdxi += dqdxi3
+        dqdxi[np.where(xi > l)] = 0
+        pd = (- beta * Q0 * dqdxi)
+        return pd

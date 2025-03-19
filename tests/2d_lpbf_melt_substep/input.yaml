@@ -12,7 +12,7 @@ source_terms :
     radius : *radius
     power : &power 650
     path: &path "Path.gcode"
-  - type : 4
+  - type : lumped
     initial_position : *p0
     initial_speed : *speed
     radius : *radius

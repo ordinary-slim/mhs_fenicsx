@@ -1,4 +1,3 @@
-from ._single_problem_driver import SingleProblemDriver
 from ._staggered_drivers import StaggeredDomainDecompositionDriver, StaggeredDNDriver, StaggeredRRDriver
 from ._monolithic_drivers import MonolithicDomainDecompositionDriver, MonolithicRRDriver
 from . import substeppers

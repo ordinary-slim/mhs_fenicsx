@@ -88,7 +88,7 @@ class Problem:
         self.dt_func.x.array[:] = self.dt.value
                          
         # Source term
-        self.sources = createHeatSources(self)
+        self.sources = create_heat_sources(self)
         self.source, self.current_source_term = self.sources[0], 0
 
         self.rhs = None # For python functions

@@ -13,7 +13,7 @@ source_terms :
     radius : *radius
     power : 0.0
     path: *path
-  - type : 4
+  - type : lumped
     initial_position : *p0
     initial_speed : *speed
     radius : *radius

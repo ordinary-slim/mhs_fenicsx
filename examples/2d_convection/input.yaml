@@ -1,6 +1,6 @@
 isSteady: False
 source_terms :
-  - type : 2
+  - type : gaussian2d
     initial_position : [0, 0, 0]
     initial_speed : [0.0, 0.0, 0]
     radius : 1

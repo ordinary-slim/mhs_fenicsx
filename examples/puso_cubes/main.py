@@ -79,7 +79,7 @@ def reference_run(params, writepos=True):
     adim_dt_print = params["substepping_parameters"]["micro_adim_dt"]
     adim_dt_cooling = params["substepping_parameters"]["cooling_adim_dt"]
     itime_step = 0
-    while not(ps.is_path_over()):
+    while (not(ps.is_path_over()) and itime_step < params["max_timesteps"]):
         itime_step += 1
         track = ps.source.path.get_track(ps.time)
         if ps.source.path.get_track(ps.time).type in [TrackType.RECOATING,

@@ -458,11 +458,11 @@ class Problem:
 
     def subtract_problem(self, p_ext : 'Problem', finalize=True):
         self.ext_nodal_activation[p_ext] = self.get_active_in_external(p_ext)
-        active_els, self.ext_colliding_els[p_ext] = mhs_fenicsx_cpp.deactivate_from_nodes(self.domain._cpp_object,
-                                                                                      self.active_els_func._cpp_object,
-                                                                                      self.ext_nodal_activation[p_ext])
+        self.ext_colliding_els[p_ext] = mhs_fenicsx_cpp.deactivate_from_nodes(self.domain._cpp_object,
+                                                                              self.active_els_func._cpp_object,
+                                                                              self.ext_nodal_activation[p_ext])
         self.ext_colliding_els[p_ext] = self.ext_colliding_els[p_ext][:np.searchsorted(self.ext_colliding_els[p_ext], self.cell_map.size_local)]
-        self.set_activation(active_els, finalize=finalize)
+        self.set_activation(self.active_els_func, finalize=finalize)
         if finalize:
             self.find_gamma(p_ext, self.ext_nodal_activation[p_ext])
 
@@ -482,11 +482,11 @@ class Problem:
 
     def intersect_problem(self, p_ext : 'Problem', finalize=True):
         self.ext_nodal_activation[p_ext] = self.get_active_in_external(p_ext)
-        active_els, self.ext_colliding_els[p_ext] = mhs_fenicsx_cpp.intersect_from_nodes(self.domain._cpp_object,
-                                                                                         self.active_els_func._cpp_object,
-                                                                                         self.ext_nodal_activation[p_ext])
+        self.ext_colliding_els[p_ext] = mhs_fenicsx_cpp.intersect_from_nodes(self.domain._cpp_object,
+                                                                             self.active_els_func._cpp_object,
+                                                                             self.ext_nodal_activation[p_ext])
         self.ext_colliding_els[p_ext] = self.ext_colliding_els[p_ext][:np.searchsorted(self.ext_colliding_els[p_ext], self.cell_map.size_local)]
-        self.set_activation(active_els, finalize=finalize)
+        self.set_activation(self.active_els_func, finalize=finalize)
         if finalize:
             self.find_gamma(p_ext, self.ext_nodal_activation[p_ext])
 

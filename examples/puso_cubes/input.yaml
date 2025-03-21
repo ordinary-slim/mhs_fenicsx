@@ -2,9 +2,9 @@ num_layers : 2
 isSteady: False
 edge_length : 9.9E-04
 el_size : 3.0E-05
-radius : &radius 3.0E-05
+radius : &radius 6.0E-05
+half_radius : &half_radius 3.0E-05
 layer_thickness : &layer_thickness 3.0E-05
-half_radius : &half_radius 1.5E-05
 source_terms :
   - type : gusarov
     initial_position : &p0 [-5.0, 0.0, 0.0]

@@ -30,10 +30,6 @@ class MonolithicDomainDecompositionDriver:
     def setup_coupling(self):
         ''' Find interface '''
         (p1,p2) = (self.p1,self.p2)
-        self.gamma_cells = {
-                    p1 : p1.gamma_integration_data[p2][::2],
-                    p2 : p2.gamma_integration_data[p1][::2],
-                    }
         self.gamma_qpoints = {
                     p1 : None,
                     p2 : None,
@@ -184,7 +180,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.gamma_qpoints_po[p][p_ext] = \
                 cellwise_determine_point_ownership(p_ext.domain._cpp_object,
                                                    self.gamma_qpoints[p],
-                                                   self.gamma_cells[p_ext],
+                                                   p_ext.local_active_els,
                                                    np.float64(1e-7))
         self.gamma_renumbered_cells_ext[p][p_ext], \
         self.gamma_mat_ids[p][p_ext], \

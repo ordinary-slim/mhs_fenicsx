@@ -29,6 +29,8 @@ def create_heat_sources(p: 'Problem'):
                 sources.append(LumpedHeatSource(p, hs))
             elif hs_type == "gusarov":
                 sources.append(Gusarov(p, hs))
+            elif hs_type == "penetrating_gaussian":
+                sources.append(PenetratingGaussian(p, hs))
             else:
                 raise ValueError(f"Unknown heat source type {hs_type}.")
         except KeyError:
@@ -202,3 +204,20 @@ class Gusarov(HeatSource):
         dqdxi[np.where(xi > l)] = 0
         pd = (- beta * Q0 * dqdxi)
         return pd
+
+class PenetratingGaussian(HeatSource):
+    def __init__(self, p:'Problem', hs_params : dict):
+        assert(p.dim == 3)
+        super().__init__(p, hs_params)
+        self.depth = hs_params["depth"]
+
+    def pd_in_plane(self, x):
+        r2_in_plane = (x[0] - self.x[0])**2 + (x[1] - self.x[1])**2
+        return self.power / 2 / np.pi / self.R**2 * np.exp( - r2_in_plane / 2 / self.R**2 )
+
+    def pd_depth(self, x):
+        z = np.sqrt((x[2] - self.x[2])**2)
+        return 2 / np.sqrt(2 * np.pi) / self.depth * np.exp( - z**2 / 2 / self.depth** 2)
+
+    def __call__(self, x):
+        return self.pd_depth(x) * self.pd_in_plane(x)

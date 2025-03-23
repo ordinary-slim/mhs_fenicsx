@@ -29,7 +29,7 @@ def shape_moving_problem(pm : Problem):
         radius = pm.source.R
         center = np.array(pm.source.x)
         e = next_track.get_direction()
-        back_len = get_adim_back_len_paper(0.5, adim_dt) * radius
+        back_len = pm.get_adim_back_len(0.5, adim_dt) * radius
         front_len = mdparams["adim_front_len"] * radius
         side_len = mdparams["adim_side_len"] * radius
         bot_len = mdparams["adim_bot_len"] * radius
@@ -46,13 +46,17 @@ def get_adim_back_len_paper(fine_adim_dt : float = 0.5, adim_dt : float = 2):
 def get_adim_back_len_simple(fine_adim_dt : float = 0.5, adim_dt : float = 2):
     return adim_dt + 4 * fine_adim_dt
 
-def build_moving_problem(p_fixed : Problem, els_per_radius=2, shift=None):
+def build_moving_problem(p_fixed : Problem, els_per_radius=2, shift=None, custom_get_adim_back_len=None):
     params = p_fixed.input_parameters.copy()
     mdparams = params["moving_domain_params"]
     if params["moving_domain_params"]["shape"]:
-        adim_back_len = get_adim_back_len_paper(0.5, mdparams["max_adim_dt"])
+        if custom_get_adim_back_len:
+            get_adim_back_len = custom_get_adim_back_len
+        else:
+            get_adim_back_len = get_adim_back_len_paper
     else:
-        adim_back_len = get_adim_back_len_simple(0.5, mdparams["max_adim_dt"])
+        get_adim_back_len = get_adim_back_len_simple
+    adim_back_len = get_adim_back_len(0.5, mdparams["max_adim_dt"])
     adim_front_len = mdparams["adim_front_len"]
     adim_side_len = mdparams["adim_side_len"]
     adim_bot_len = mdparams["adim_bot_len"]
@@ -66,6 +70,7 @@ def build_moving_problem(p_fixed : Problem, els_per_radius=2, shift=None):
     if "petsc_opts_moving" in params:
         params["petsc_opts"] = params["petsc_opts_moving"]
     p = Problem(moving_domain, params,name=p_fixed.name+"_moving")
+    p.get_adim_back_len = get_adim_back_len
     return p
 
 def mesh_around_hs(hs:HeatSource,

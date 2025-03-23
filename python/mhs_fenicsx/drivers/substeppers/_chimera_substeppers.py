@@ -78,8 +78,12 @@ class ChimeraSubstepper(ABC):
             pm.in_plane_rotation(pf.source.x, self.rotation_angle)
 
         max_dt_substep = self.t1_macro_step - pf.time
+        if isinstance(self, MHSSemiMonolithicSubstepper):
+            # Leave room for monolithic step
+            max_dt_substep -= pf.dt.value
         max_dt_track = next_track.t1 - pf.time
         max_dt = min(max_dt_track, max_dt_substep)
+        assert(max_dt > 0.0)
 
         def set_dt(dt : float):
             dt = min(dt, max_dt)
@@ -364,6 +368,11 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
 
     def monolithic_step(self):
         (ps, pf, pm) = (self.ps, self.pf, self.pm)
+        max_dt = self.t1_macro_step - self.pm.time
+        assert max_dt > 0.0
+        if pm.dt.value > max_dt:
+            for p in [pf, pm]:
+                p.set_dt(max_dt)
         ps.pre_iterate(forced_time_derivative=True)
         self.chimera_micro_pre_iterate(forced_time_derivative=((pf.time - self.t0_macro_step) < 1e-7))
 
@@ -425,6 +434,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         opts.destroy()
 
         ## POST-ITERATE
+        self.chimera_micro_post_iterate()
         for p in self.plist:
             p.post_modify_solution()
             p.post_iterate()

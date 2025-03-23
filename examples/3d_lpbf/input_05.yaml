@@ -1,11 +1,10 @@
 isSteady: False
-source_terms : {
-  type : 0,
-  radius : 0.1,
-  power : 50,
-  initial_position : [-10.0, 0.0, 1],
-  initial_speed : [1000, 0, 0],
-}
+source_terms :
+  - type : "gaussian3d"
+    radius : 0.1
+    power : 50
+    initial_position : [-10.0, 0.0, 1]
+    initial_speed : [1000, 0, 0]
 dt : 1
 adim_dt : 0.5
 cooling_dt: 0.5

@@ -161,7 +161,6 @@ class LumpedHeatSource(HeatSource):
         heated_volume_form = self.instantiate_volume_form()
         heated_volume = fem.assemble_scalar(heated_volume_form)
         heated_volume = comm.allreduce(heated_volume, op=MPI.SUM)
-        heated_volume = np.round(heated_volume,9)
         # Compute power density
         pd = self.power / heated_volume
         self.fem_function.x.array[:] = 0.0

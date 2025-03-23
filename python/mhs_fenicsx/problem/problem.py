@@ -272,7 +272,7 @@ class Problem:
             self.set_domain_speed(self.source.speed)
         # Mesh motion
         if self.domain_speed is not None and not(self.is_mesh_shared):
-            dx = np.round(self.domain_speed*self.dt.value,7)
+            dx = self.domain_speed * self.dt.value
             self.domain.geometry.x[:] += dx
             self.bb_tree.bbox_coordinates[:] += dx
             self.dof_coords += dx
@@ -780,7 +780,7 @@ class Problem:
         bnodes = indices_to_function(self.v,self.bfacets_mask.nonzero()[0], self.dim-1,name="bnodes")
         funcs.append(bnodes)
         funcs.extend(extra_funcs)
-        self.writers["vtk"].write_function(funcs,t=np.round(self.time,7))
+        self.writers["vtk"].write_function(funcs, t=np.round(self.time, 9))
 
     def writepos_vtx(self):
         self.writers["vtx"].write(self.time)

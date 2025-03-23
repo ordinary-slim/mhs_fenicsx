@@ -83,6 +83,8 @@ substepping_parameters: {
     back_pad : 3,
     front_pad : 3,
     side_pad : 3,
+    top_pad : 3,
+    bot_pad : 3,
   },
   predictor: {
     enabled :  True,

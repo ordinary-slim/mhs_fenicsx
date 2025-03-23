@@ -1,0 +1,186 @@
+import numpy as np
+import gmsh
+from dolfinx.io.gmshio import model_to_mesh
+from dolfinx.mesh import GhostMode, create_cell_partitioner
+from mpi4py import MPI
+
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+
+def boundary_layer_progression(extrusion_size, nboun_layers, fine_el_size, coarse_el_factor = 2):
+    approx_coarse_el_size = coarse_el_factor * fine_el_size
+    num_coarse_els = np.ceil( (extrusion_size - nboun_layers*fine_el_size) / approx_coarse_el_size )
+    coarsest_el_size = (extrusion_size - nboun_layers*fine_el_size) / num_coarse_els
+    num_mid_coarse_els = np.ceil( num_coarse_els / 2 )
+    mid_coarse_el_size = coarsest_el_size / 2.0
+    num_coarsest_els = num_coarse_els - num_mid_coarse_els
+
+    numElements_per_layer = np.array( [nboun_layers] + [num_mid_coarse_els] + [num_coarsest_els])
+    heights = np.array( [fine_el_size, mid_coarse_el_size, coarsest_el_size] )
+
+    # format heights to cumsum
+    heights *= numElements_per_layer
+    heights = np.cumsum( heights )
+    heights /= heights[-1]
+
+    return numElements_per_layer, heights
+
+def get_mesh(params):
+    gmsh.initialize()
+    if rank == 0:
+        # PARAMS
+        part_lens = np.array(params["part"])
+        substrate_lens = np.array(params["substrate"])
+        radius = params["source_terms"][0]["radius"]
+        els_per_radius = params["els_per_radius"]
+        fine_el_size = radius / els_per_radius
+        nboun_layers = params["num_boundary_layers"]
+        coarse_el_factor = params["coarse_el_factor"]
+        # Adjust lengths so that they are multiples of fine_el_size
+        for lens in [part_lens, substrate_lens]:
+            lens[:] = (np.ceil(lens / fine_el_size) * fine_el_size)[:]
+        half_lens_part = np.array(part_lens) / 2
+        half_lens_substrate = np.array(substrate_lens) / 2
+        # Bot surface part
+        gmsh.model.geo.addPoint( -half_lens_part[0], -half_lens_part[1], 0.0, tag = 1 )
+        gmsh.model.geo.addPoint( -half_lens_part[0], +half_lens_part[1], 0.0, tag = 2 )
+        gmsh.model.geo.addPoint( +half_lens_part[0], +half_lens_part[1], 0.0, tag = 3 )
+        gmsh.model.geo.addPoint( +half_lens_part[0], -half_lens_part[1], 0.0, tag = 4 )
+        linesBottomSurfacePart = []
+        linesBottomSurfacePart.append( gmsh.model.geo.addLine( 1, 2, tag = 1 ) )
+        linesBottomSurfacePart.append( gmsh.model.geo.addLine( 2, 3, tag = 2 ) )
+        linesBottomSurfacePart.append( gmsh.model.geo.addLine( 3, 4, tag = 3 ) )
+        linesBottomSurfacePart.append( gmsh.model.geo.addLine( 4, 1, tag = 4 ) )
+        for idx, line in enumerate(linesBottomSurfacePart):
+            if idx%2 != 0:
+                numEls = part_lens[0] / fine_el_size
+            else:
+                numEls = part_lens[1] / fine_el_size
+            numEls = np.rint(numEls).astype(int)
+            gmsh.model.geo.mesh.setTransfiniteCurve(line, numEls+1 )
+        curveLoopBotSurfacePart = gmsh.model.geo.addCurveLoop( linesBottomSurfacePart, 1 )
+        botSurfacePart = gmsh.model.geo.addPlaneSurface([curveLoopBotSurfacePart], 1)
+        gmsh.model.geo.mesh.setTransfiniteSurface(botSurfacePart)
+        gmsh.model.geo.mesh.setRecombine(2,botSurfacePart) 
+
+        # Substrate extrusions
+        ## Substrate extrusions Z
+        ## Uniform extrusion
+        nboun_layers_z = nboun_layers[2]
+        lenUniformBotExtrusion = nboun_layers_z*fine_el_size
+        uniformBotExtrusion = gmsh.model.geo.extrude([(2, botSurfacePart)], 0, 0, -lenUniformBotExtrusion, numElements =[nboun_layers_z], recombine= True)
+        midBotSurface, _, xSideMidBot1, ySideMidBot1, xSideMidBot2, ySideMidBot2 = uniformBotExtrusion
+        ## Coarsening
+        lenCoarseBotExtrusion = substrate_lens[2] - nboun_layers_z*fine_el_size
+        nElements, heights = boundary_layer_progression( lenCoarseBotExtrusion, nboun_layers_z, fine_el_size, coarse_el_factor = coarse_el_factor )
+        coarseBotExtrusion = gmsh.model.geo.extrude([(2, midBotSurface[1])], 0, 0, -lenCoarseBotExtrusion, numElements = nElements, heights= heights, recombine= True)
+        botBotSurface, _, xSideBotBot1, ySideBotBot1, xSideBotBot2, ySideBotBot2 = coarseBotExtrusion
+        ## Substrate extrusions Y
+        ### Uniform extrusions
+        uniformYExtrusions = []
+        nboun_layers_y = nboun_layers[1]
+        lenUniformYExtrusion = nboun_layers_y*fine_el_size
+        for idx, surface in enumerate([ySideMidBot1, ySideMidBot2, ySideBotBot1, ySideBotBot2]):
+            uniformYExtrusions.append( gmsh.model.geo.extrude([(2, surface[1])], 0.0, np.power(-1, idx)*lenUniformYExtrusion, 0.0, numElements =[nboun_layers_y], recombine= True) )
+
+        ### Coarse extrusions
+        coarseYExtrusions = []
+        lenCoarseYExtrusion = (substrate_lens[1] - part_lens[1])/2 - nboun_layers_y*fine_el_size
+        nElements, heights = boundary_layer_progression( lenCoarseYExtrusion, nboun_layers_y, fine_el_size, coarse_el_factor = coarse_el_factor )
+        for idx, extrusion in enumerate( uniformYExtrusions ):
+            tagSurface = extrusion[0][1]
+            coarseYExtrusions.append( gmsh.model.geo.extrude([(2, tagSurface)], 0.0, np.power(-1, idx)*lenCoarseYExtrusion, 0.0, numElements = nElements, heights= heights, recombine= True) )
+
+        ## Substrate extrusions X
+        ### Uniform extrusions
+        positiveUniformExtrusionsX = []
+        negativeUniformExtrusionsX = []
+        surfacesXPlus = []
+        surfacesXMinus = []
+        # Collect all X surfaces
+        for extrusion in [uniformBotExtrusion, coarseBotExtrusion]:
+            surfacesXMinus.append( extrusion[2][1] )
+            surfacesXPlus.append( extrusion[4][1] )
+        for idx, extrusion in enumerate(uniformYExtrusions + coarseYExtrusions):
+            if (idx%2 == 0):
+                surfacesXPlus.append( extrusion[3][1] )
+                surfacesXMinus.append( extrusion[5][1] )
+            else:
+                surfacesXMinus.append( extrusion[3][1] )
+                surfacesXPlus.append( extrusion[5][1] )
+        nboun_layers_x = nboun_layers[0]
+        extrusionLen = nboun_layers_x*fine_el_size
+        numElements = extrusionLen / fine_el_size
+        for surface in surfacesXPlus:
+            positiveUniformExtrusionsX.append( gmsh.model.geo.extrude([(2, surface)], extrusionLen, 0.0, 0.0, numElements =[numElements], recombine= True ) )
+        for surface in surfacesXMinus:
+            negativeUniformExtrusionsX.append( gmsh.model.geo.extrude([(2, surface)], -extrusionLen, 0.0, 0.0, numElements =[numElements], recombine= True ) )
+        ### Coarse extrusions
+        extrusionLen = (substrate_lens[0] - part_lens[0])/2 - nboun_layers_x*fine_el_size
+        nElements, heights = boundary_layer_progression( extrusionLen, nboun_layers_x, fine_el_size, coarse_el_factor = coarse_el_factor )
+        positiveCoarseExtrusionsX = []
+        negativeCoarseExtrusionsX = []
+        for extrusion in positiveUniformExtrusionsX:
+            positiveCoarseExtrusionsX.append ( gmsh.model.geo.extrude([extrusion[0]], +extrusionLen, 0.0, 0.0, numElements = nElements, heights = heights,  recombine = True ) )
+        for extrusion in negativeUniformExtrusionsX:
+            negativeCoarseExtrusionsX.append( gmsh.model.geo.extrude([extrusion[0]], -extrusionLen, 0.0, 0.0, numElements = nElements, heights = heights, recombine = True ) )
+
+        # Top extrusion
+        #nelsPartZ = part_lens[2] / fine_el_size
+        #substrateTopSurfaces = []
+        #substrateTopSurfaces.append( (2, botSurfacePart) )
+        #substrateTopSurfaces.append( uniformYExtrusions[0][2] )
+        #substrateTopSurfaces.append( uniformYExtrusions[1][2] )
+        #substrateTopSurfaces.append( coarseYExtrusions[0][2] )
+        #substrateTopSurfaces.append( coarseYExtrusions[1][2] )
+        #substrateTopSurfaces.append( positiveUniformExtrusionsX[0][2] )
+        #substrateTopSurfaces.append( positiveUniformExtrusionsX[2][-1] )
+        #substrateTopSurfaces.append( positiveUniformExtrusionsX[3][3] )
+        #substrateTopSurfaces.append( positiveUniformExtrusionsX[6][-1] )
+        #substrateTopSurfaces.append( positiveUniformExtrusionsX[7][3] )
+        #substrateTopSurfaces.append( positiveCoarseExtrusionsX[0][2] )
+        #substrateTopSurfaces.append( positiveCoarseExtrusionsX[2][-1] )
+        #substrateTopSurfaces.append( positiveCoarseExtrusionsX[3][3] )
+        #substrateTopSurfaces.append( positiveCoarseExtrusionsX[6][-1] )
+        #substrateTopSurfaces.append( positiveCoarseExtrusionsX[7][3] )
+        ##
+        #substrateTopSurfaces.append( negativeUniformExtrusionsX[0][2] )
+        #substrateTopSurfaces.append( negativeUniformExtrusionsX[2][3] )
+        #substrateTopSurfaces.append( negativeUniformExtrusionsX[3][-1] )
+        #substrateTopSurfaces.append( negativeUniformExtrusionsX[6][3] )
+        #substrateTopSurfaces.append( negativeUniformExtrusionsX[7][-1] )
+        #substrateTopSurfaces.append( negativeCoarseExtrusionsX[0][2] )
+        #substrateTopSurfaces.append( negativeCoarseExtrusionsX[2][3] )
+        #substrateTopSurfaces.append( negativeCoarseExtrusionsX[3][-1] )
+        #substrateTopSurfaces.append( negativeCoarseExtrusionsX[6][3] )
+        #substrateTopSurfaces.append( negativeCoarseExtrusionsX[7][-1] )
+        #topExtrusions = []
+        #for surface in substrateTopSurfaces:
+        #    topExtrusions.append( gmsh.model.geo.extrude([surface], 0, 0, +part_lens[2], numElements =[nelsPartZ], recombine= True) )
+
+
+        gmsh.model.geo.synchronize()
+        gmsh.model.mesh.generate(3)
+
+        volumeTags = []
+        for _, tag in gmsh.model.getEntities( 3 ):
+            volumeTags.append( tag )
+        gmsh.model.addPhysicalGroup(3, volumeTags, tag = 1, name="Domain")
+
+    model = MPI.COMM_WORLD.bcast(gmsh.model, root = 0)
+    partitioner = create_cell_partitioner(GhostMode.shared_facet)
+    msh_data = model_to_mesh(model, MPI.COMM_WORLD, 0, gdim = 3,partitioner= partitioner)
+    msh = msh_data[0]
+
+    gmsh.finalize()
+    MPI.COMM_WORLD.barrier()
+    return msh
+
+if __name__ == "__main__":
+    import yaml
+    from dolfinx import io
+    with open("input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    domain = get_mesh(params)
+    with io.VTKFile(domain.comm, "mesh.pvd", "wb") as f:
+        f.write_mesh(domain)

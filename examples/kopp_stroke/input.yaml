@@ -1,0 +1,126 @@
+isSteady: False
+substrate : [4.25E-03, 2.05E-03, 1.755E-03]
+part : [1.0E-03, 0.5E-03, 0.0]
+els_per_radius : 2.0
+radius : &radius 0.0425E-03
+half_radius : &half_radius 0.02125E-03
+num_boundary_layers : [4, 1, 4]
+coarse_el_factor : 4
+source_terms :
+  - type : penetrating_gaussian
+    initial_position : &p0 [-5.0, 0.0, 0.0]
+    initial_speed : &speed [0.8, 0.0, 0]
+    radius : *radius
+    power : &power 57.344
+    path: &path "Path.gcode"
+    depth : 0.0119E-03
+    #- type : lumped
+    #  initial_position : *p0
+    #  initial_speed : *speed
+    #  radius : *radius
+    #  power : *power
+    #  mdwidth  : *radius
+    #  mdheight : *half_radius
+    #  mddepth : *half_radius
+    #  path : *path
+  - type : penetrating_gaussian
+    initial_position : *p0
+    initial_speed : *speed
+    radius : *radius
+    power : 0.0
+    path: *path
+    depth : 0.0119E-03
+# PROPS
+material_in625 : {
+  phase_change : {
+    latent_heat : &latent_heat 280.0E+03,
+    solidus_temperature : &solidus_temperature 1290.0,
+    liquidus_temperature : &liquidus_temperature 1350.0,
+  },
+  density : 8.44E+03, # kg / mm3
+  conductivity : [[0.0, 9.5], [1320.0, 29.3], [2000.0, 29.3]],
+  specific_heat : [[0.0, 405.0], [1320.0, 731.04], [2000.0, 731.04]],
+}
+convection_coeff : 0.0
+radiation_coeff: 0.0
+smoothing_cte_phase_change : 1.0
+environment_temperature : &environment_temperature 25
+# END_ESSENTIAL
+petsc_opts_micro: {
+  "ksp_error_if_not_converged" : "true",
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-13,
+  "ksp_rtol" : 1e-13,
+  "pc_type" : "jacobi",
+}
+petsc_opts_macro: {
+  "ksp_error_if_not_converged" : "true",
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-13,
+  "ksp_rtol" : 1e-13,
+  "pc_type" : "jacobi",
+}
+petsc_opts_mono_robin: {
+  "ksp_error_if_not_converged" : "true",
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-13,
+  "ksp_rtol" : 1e-13,
+  "pc_type" : "fieldsplit",
+}
+petsc_opts_macro_chimera: {
+  "ksp_error_if_not_converged" : "true",
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-13,
+  "ksp_rtol" : 1e-13,
+  "pc_type" : "fieldsplit",
+}
+
+max_timesteps: 2
+dt : 1.0 #placeholder
+
+driver_type: "robin"
+initial_condition: False
+quadrature_metadata: {
+  #quadrature_rule : "vertex",
+  quadrature_degree : 4,
+}
+supg: 1
+
+max_nr_iters: 30
+max_ls_iters: 5
+
+substepping_parameters: {
+  micro_adim_dt: 0.5,
+  macro_adim_dt: 8.0,
+  cooling_adim_dt: 1,
+  max_staggered_iters: 1,
+  adim_lens: {
+    back_pad : 8,
+    front_pad : 8,
+    side_pad : 10,
+    top_pad : 1,
+    bot_pad : 6,
+  },
+  predictor: {
+    enabled :  True,
+    source_term : 1,
+  },
+  writepos: True,
+  chimera_always_on: True,
+  chimera_steadiness_workflow: {
+    enabled: True,
+    adim_dt_increment: 0.5,
+    max_adim_dt: &max_adim_dt 2.0
+  },
+}
+
+moving_domain_params : {
+  shape : True,
+  els_per_radius : 2,
+  max_adim_dt : *max_adim_dt,
+  adim_front_len : 5,
+  adim_side_len : 6,
+  adim_bot_len : 4,
+  adim_top_len : 0.0,
+}
+

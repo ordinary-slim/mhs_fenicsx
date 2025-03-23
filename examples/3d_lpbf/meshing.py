@@ -30,7 +30,7 @@ def get_mesh(params):
 
     partLens = params["part"]
     substrateLens = params["substrate"]
-    radiusHs = params["heat_source"]["radius"]
+    radiusHs = params["source_terms"][0]["radius"]
     layer_thickness = params["layer_thickness"]
     fineElFactor = params["fineElFactor"]
     fineElSize = min(radiusHs, layer_thickness) / fineElFactor
@@ -164,11 +164,14 @@ def get_mesh(params):
 
     model = MPI.COMM_WORLD.bcast(gmsh.model, root=0)
     partitioner = create_cell_partitioner(GhostMode.shared_facet)
-    msh, _, _ = model_to_mesh(model, MPI.COMM_WORLD, 0, gdim=3,partitioner=partitioner)
+    msh_data = model_to_mesh(model, MPI.COMM_WORLD, 0, gdim=3,partitioner=partitioner)
+    msh = msh_data[0]
 
     gmsh.finalize()
     MPI.COMM_WORLD.barrier()
     return msh
 
 if __name__=="__main__":
-    get_mesh()
+    with open("input_05.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    get_mesh(params)

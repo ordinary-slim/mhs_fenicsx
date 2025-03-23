@@ -42,6 +42,8 @@ class MHSSubstepper(ABC):
         ps, pf = self.ps, self.pf
         self.t0_macro_step = ps.time
         track = ps.source.path.get_track(self.t0_macro_step)
+        for i in range(len(self.plist)-1):
+            assert(abs(self.plist[i+1].time - self.plist[0].time) < 1e-9) # all problems are at the same time
         if track.type == TrackType.PRINTING:
             print("Step WITH substepping STARTS...", flush=True)
             pf.set_dt(pf.dimensionalize_mhs_timestep(track, self.params["micro_adim_dt"]))
@@ -126,7 +128,7 @@ class MHSSubstepper(ABC):
             w.close()
         shutil.rmtree(self.result_folder,ignore_errors=True)
         for p in self.plist:
-            self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{self.name}_{p.name}.pvd", "wb")
+            self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{p.name}.pvd", "wb")
 
     @abstractmethod
     def writepos(self,case="macro",extra_funs=[]):
@@ -154,13 +156,19 @@ class MHSSubstepper(ABC):
             adim_back_pad = adim_lens_substepper["back_pad"]
             adim_front_pad = adim_lens_substepper["front_pad"]
             adim_side_pad = adim_lens_substepper["side_pad"]
+            adim_top_pad = adim_lens_substepper["top_pad"]
+            adim_bot_pad = adim_lens_substepper["bot_pad"]
         else:
             adim_back_pad = 5
             adim_front_pad = 5
             adim_side_pad = 3
+            adim_top_pad = 3
+            adim_bot_pad = 3
         back_pad = adim_back_pad*hs_radius
         front_pad = adim_front_pad*hs_radius
         side_pad = adim_side_pad*hs_radius
+        top_pad = adim_top_pad * hs_radius
+        bot_pad = adim_bot_pad * hs_radius
         subproblem_els_mask = np.zeros((ps.cell_map.size_local + ps.cell_map.num_ghosts), dtype=np.bool_)
         for track in tracks:
             p0 = track.get_position(self.t0_macro_step, bound=True)
@@ -168,7 +176,7 @@ class MHSSubstepper(ABC):
             direction = track.get_direction()
             p0 -= direction*back_pad
             p1 += direction*front_pad
-            obb = OBB(p0,p1,width=back_pad,height=side_pad,depth=side_pad,dim=cdim,
+            obb = OBB(p0, p1, width=side_pad, height=top_pad, depth=bot_pad, dim=cdim,
                                            shrink=False)
             obb_mesh = obb.get_dolfinx_mesh()
             #subproblem_els = mhs_fenicsx.geometry.mesh_collision(ps.domain,obb_mesh,bb_tree_mesh_big=ps.bb_tree)

@@ -118,7 +118,7 @@ def run_staggered_chimera_rr(params, writepos=True):
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     ps = Problem(big_mesh, macro_params, name=f"chimera_staggered_rr")
     pm = build_moving_problem(ps,
-                              macro_params["moving_domain_params"],
+                              macro_params["moving_domain_params"]["els_per_radius"],
                               custom_get_adim_back_len=get_adim_back_len)
     ps.set_initial_condition(params["environment_temperature"])
     pm.set_initial_condition(params["environment_temperature"])

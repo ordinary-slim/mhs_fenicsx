@@ -14,6 +14,7 @@ import typing
 from petsc4py import PETSc
 from abc import ABC, abstractmethod
 import multiphenicsx.fem.petsc
+from mpi4py import MPI
 
 class MHSSubstepper(ABC):
     def __init__(self, slow_problem:Problem,
@@ -82,7 +83,11 @@ class MHSSubstepper(ABC):
         p.instantiate_forms()
 
     def __del__(self):
+        self.close_post()
+
+    def close_post(self):
         for w in self.writers.values():
+            MPI.COMM_WORLD.barrier()
             w.close()
 
     def update_fast_problem(self):
@@ -124,8 +129,7 @@ class MHSSubstepper(ABC):
     def initialize_post(self):
         if not(self.do_writepos):
             return
-        for w in self.writers.values():
-            w.close()
+        self.close_post()
         shutil.rmtree(self.result_folder,ignore_errors=True)
         for p in self.plist:
             self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{p.name}.pvd", "wb")
@@ -197,7 +201,8 @@ class MHSSubstepper(ABC):
         ps.pre_iterate()
         self.instantiate_forms(ps)
         ps.pre_assemble()
-        ps.non_linear_solve(snes_opts={'-snes_type': 'ksponly'})# LINEAR SOLVE
+        #ps.non_linear_solve(snes_opts={'-snes_type': 'ksponly'})# LINEAR SOLVE
+        ps.non_linear_solve()
         ps.post_iterate()
 
         # Reset iter to prev.
@@ -237,6 +242,7 @@ class MHSSubstepper(ABC):
         self.micro_iter = 0
         while self.is_substepping():
             self.prepare_micro_step()
+            self.micro_pre_iterate()
             self.micro_step()
             self.writepos(case="micro")
             self.micro_post_iterate()
@@ -253,6 +259,12 @@ class MHSSubstepper(ABC):
         self.micro_iter += 1
         for p in self.fplist:
             self.cap_timestep(p)
+
+    def micro_pre_iterate(self):
+        pf = self.pf
+        forced_time_derivative = (pf.time - self.t0_macro_step) < 1e-9
+        pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
+        self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
 
     def micro_post_iterate(self):
         pass
@@ -282,6 +294,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         for _ in range(self.max_staggered_iters):
             self.pre_iterate()
             self.micro_steps()
+            self.pre_monolithic_step()
             self.monolithic_step()
             self.post_iterate()
         self.post_loop()
@@ -338,12 +351,10 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 
     def micro_step(self):
         (ps,pf) = (self.ps,self.pf)
-        forced_time_derivative = (pf.time - self.t0_macro_step) < 1e-7
-        pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
         pf.clear_subdomain_data()
         pf.instantiate_forms()
-        f = self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
         # Update Dirichlet BC pf here!
+        f = self.fraction_macro_step
         self.fast_dirichlet_tcon.g.x.array[self.gamma_dofs_fast] = \
                 (1-f)*ps.u_prev.x.array[self.gamma_dofs_fast] + \
                 f*ps.u.x.array[self.gamma_dofs_fast]
@@ -428,13 +439,23 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         self.assemble_residual(snes, x, self.obj_vec)
         return self.obj_vec.norm()  # type: ignore[no-any-return]
 
+    def pre_monolithic_step(self):
+        pf = self.pf
+        max_dt = self.t1_macro_step - self.pf.time
+        assert max_dt > 0.0
+        if pf.dt.value > max_dt:
+            for p in self.fplist:
+                p.set_dt(max_dt)
+        pf.clear_dirchlet_bcs()
+
     def monolithic_step(self):
         (ps, pf) = (self.ps, self.pf)
-        pf.clear_dirchlet_bcs()
+
         pf.pre_iterate()
         ps.pre_iterate(forced_time_derivative=True)
 
         self.set_gamma_slow_to_fast()
+
         self.j_instance, self.r_instance = self.instantiate_monolithic_forms()
 
         self.A = multiphenicsx.fem.petsc.create_matrix(self.j_instance, restriction=(self.initial_restriction, self.initial_restriction))
@@ -444,7 +465,6 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         lin_algebra_objects = [self.A, self.R, self.x, self.obj_vec]
 
         # SOLVE
-        # Solve
         snes = PETSc.SNES().create(ps.domain.comm)
         snes.setTolerances(max_it=self.max_nr_iters)
         ksp_opts = PETSc.Options()
@@ -577,11 +597,9 @@ class MHSStaggeredSubstepper(MHSSubstepper):
     def micro_step(self):
         (ps,pf) = (self.ps,self.pf)
         sd = self.staggered_driver
-        forced_time_derivative = (pf.time - self.t0_macro_step) < 1e-7
-        pf.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
         pf.clear_subdomain_data()
         sd.instantiate_forms(pf)
-        self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
+        sd.assert_tag(pf)
         if type(sd)==StaggeredRRDriver:
             f = self.fraction_macro_step
             sd.net_ext_sol[pf].x.array[:] = (1-f)*self.ext_sol_tn[pf].x.array[:] + \

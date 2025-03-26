@@ -31,6 +31,7 @@ class ChimeraSubstepper(ABC):
         self.params : dict
         self.t0_macro_step : float
         self.t1_macro_step : float
+        self.fraction_macro_step : float
 
     def chimera_post_init(self, initial_orientation : npt.NDArray):
         self.chimera_driver = MonolithicRRDriver(self.pf, self.pm,
@@ -45,10 +46,18 @@ class ChimeraSubstepper(ABC):
             self.chimera_post_step_without_substepping()
         def prepare_micro_step():
             self.chimera_prepare_micro_step()
+
+        def micro_pre_iterate():
+            pf = self.pf
+            forced_time_derivative = (pf.time - self.t0_macro_step) < 1e-9
+            self.chimera_micro_pre_iterate(forced_time_derivative=forced_time_derivative)
+            self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
+
         def micro_post_iterate():
             self.chimera_micro_post_iterate()
         self.prepare_micro_step = prepare_micro_step
         self.post_step_wo_substepping = post_step_wo_substepping
+        self.micro_pre_iterate = micro_pre_iterate
         self.micro_post_iterate = micro_post_iterate
         # Steadiness workflow
         self.steadiness_workflow_params = self.params["chimera_steadiness_workflow"]
@@ -214,12 +223,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
         (ps,pf,pm) = plist = (self.ps,self.pf,self.pm)
         sd = self.staggered_driver
         cd = self.chimera_driver
-        sd.assert_tag(pf)
 
-        forced_time_derivative = (pf.time - self.t0_macro_step) < 1e-7
-        self.chimera_micro_pre_iterate(forced_time_derivative=forced_time_derivative)
-
-        self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
         f = self.fraction_macro_step
         sd.net_ext_sol[pf].x.array[:] = (1-f)*self.ext_sol_tn[pf].x.array[:] + \
                 f*self.ext_sol_array_tnp1[:]
@@ -227,8 +231,10 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
                 f*self.ext_flux_array_tnp1[:]
 
         sd.instantiate_forms(pf)
+        sd.assert_tag(pf)
 
         pf.pre_assemble()
+
         if self.chimera_on:
             self.instantiate_forms(pm)
             pm.pre_assemble()
@@ -290,12 +296,8 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         (ps,pf,pm) = plist = (self.ps,self.pf,self.pm)
         cd = self.chimera_driver
 
-        forced_time_derivative = (pf.time - self.t0_macro_step) < 1e-7
-        self.chimera_micro_pre_iterate(forced_time_derivative=forced_time_derivative)
-
         assert(check_assumptions(ps, pf, pm))
 
-        self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
         f = self.fraction_macro_step
         self.fast_dirichlet_tcon.g.x.array[self.gamma_dofs_fast] = \
                 (1-f)*ps.u_prev.x.array[self.gamma_dofs_fast] + \
@@ -368,26 +370,18 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
 
     def monolithic_step(self):
         (ps, pf, pm) = (self.ps, self.pf, self.pm)
-        max_dt = self.t1_macro_step - self.pm.time
-        assert max_dt > 0.0
-        if pm.dt.value > max_dt:
-            for p in [pf, pm]:
-                p.set_dt(max_dt)
         ps.pre_iterate(forced_time_derivative=True)
         self.chimera_micro_pre_iterate(forced_time_derivative=((pf.time - self.t0_macro_step) < 1e-7))
 
         assert(check_assumptions(ps, pf, pm))
 
         self.set_gamma_slow_to_fast()
-        self.j_instance, self.r_instance = self.instantiate_monolithic_forms()
 
-        # Set-up SNES solve
-        pf.clear_dirchlet_bcs()
-        pf.u.x.array[self.dofs_slow] = ps.u.x.array[self.dofs_slow]#useful before set_snes
+        self.j_instance, self.r_instance = self.instantiate_monolithic_forms()
 
         # Make a new restriction
         dofs_big_mesh = np.hstack((pf.active_dofs, self.dofs_slow))
-        dofs_big_mesh.sort()# TODO: maybe REMOVABLE
+        dofs_big_mesh.sort()
         self.restriction = multiphenicsx.fem.DofMapRestriction(pf.v.dofmap, dofs_big_mesh)
         pf.j_instance = self.j_instance
         pf.r_instance = self.r_instance

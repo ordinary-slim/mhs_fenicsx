@@ -32,6 +32,20 @@ petsc_opts_macro: {
   "ksp_rtol" : 1e-14,
   "pc_type" : "jacobi",
 }
+petsc_opts_mono_robin: {
+  "ksp_error_if_not_converged" : "true",
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-13,
+  "ksp_rtol" : 1e-13,
+  "pc_type" : "fieldsplit",
+}
+petsc_opts_macro_chimera: {
+  "ksp_error_if_not_converged" : "true",
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-13,
+  "ksp_rtol" : 1e-13,
+  "pc_type" : "fieldsplit",
+}
 domain_width: 1
 domain_height: 1
 domain_depth: 0.05

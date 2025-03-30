@@ -201,8 +201,8 @@ class MHSSubstepper(ABC):
         ps.pre_iterate()
         self.instantiate_forms(ps)
         ps.pre_assemble()
-        #ps.non_linear_solve(snes_opts={'-snes_type': 'ksponly'})# LINEAR SOLVE
-        ps.non_linear_solve()
+        ps.non_linear_solve(snes_opts={'-snes_type': 'ksponly'})# LINEAR SOLVE
+        #ps.non_linear_solve()
         ps.post_iterate()
 
         # Reset iter to prev.

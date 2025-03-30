@@ -22,7 +22,11 @@ add_custom_target(
 )
 
 # Find python
-find_package(Python 3.8 COMPONENTS Interpreter Development REQUIRED)
+find_package(
+  Python
+  COMPONENTS Interpreter Development
+  REQUIRED
+)
 
 # Build type
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -112,7 +116,6 @@ else()
   message(FATAL_ERROR "mpi4py could not be found.")
 endif()
 
-#target_sources(mhs_fenicsx_cpp PRIVATE locate_active_boundary.cpp)
 # Add DOLFINx C++ libraries
 target_link_libraries(mhs_fenicsx_cpp PRIVATE dolfinx)
 
@@ -125,7 +128,7 @@ target_include_directories(mhs_fenicsx_cpp PRIVATE ${MPI4PY_INCLUDE_DIR})
 # Define HAS_PETSC4PY for compatibility with DOLFINx python wrappers
 target_compile_definitions(mhs_fenicsx_cpp PRIVATE HAS_PETSC4PY)
 
-# Install the compiled library to the cpp subdirectory
+# Install the compiled library
 set_target_properties(
   mhs_fenicsx_cpp PROPERTIES INSTALL_RPATH_USE_LINK_PATH TRUE
 )

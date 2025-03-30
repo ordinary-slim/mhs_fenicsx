@@ -70,7 +70,7 @@ class Problem:
         self.dirichlet_bcs = []
 
         # BCs / Interface
-        self.ext_nodal_activation : dict['Problem', npt.NDArray[np.bool]] = {}
+        self.ext_nodal_activation : dict['Problem', npt.NDArray[np.bool_]] = {}
         self.ext_colliding_els : dict['Problem', npt.NDArray[np.int32]] = {}
         self.gamma_nodes : dict['Problem', fem.Function] = {}
         self.gamma_facets : dict['Problem', mesh.MeshTags] = {}
@@ -454,7 +454,7 @@ class Problem:
         owners = mhs_fenicsx_cpp.find_owner_rank(self.domain.geometry.x,
                                                  p_ext.bb_tree._cpp_object,
                                                  p_ext.active_els_func._cpp_object)
-        return np.array(owners>=0,dtype=np.bool)
+        return np.array(owners>=0,dtype=np.bool_)
 
     def subtract_problem(self, p_ext : 'Problem', finalize=True):
         self.ext_nodal_activation[p_ext] = self.get_active_in_external(p_ext)

@@ -130,7 +130,7 @@ class MHSSubstepper(ABC):
         if not(self.do_writepos):
             return
         self.close_post()
-        shutil.rmtree(self.result_folder,ignore_errors=True)
+        shutil.rmtree(self.result_folder, ignore_errors=True)
         for p in self.plist:
             self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{p.name}.pvd", "wb")
 

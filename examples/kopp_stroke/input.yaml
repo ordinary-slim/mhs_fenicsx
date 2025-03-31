@@ -1,7 +1,7 @@
 isSteady: False
 substrate : [4.25E-03, 2.05E-03, 1.755E-03]
 part : [2.0E-03, 0.5E-03, 0.0]
-els_per_radius : 2.0
+els_per_radius : 1.0
 radius : &radius 0.0425E-03
 half_radius : &half_radius 0.02125E-03
 num_boundary_layers : [4, 1, 4]
@@ -91,11 +91,11 @@ max_ls_iters: 5
 
 substepping_parameters: {
   micro_adim_dt: 0.5,
-  macro_adim_dt: 5.0,
+  macro_adim_dt: 6.0,
   cooling_adim_dt: 1,
   max_staggered_iters: 1,
   adim_lens: {
-    back_pad : 10,
+    back_pad : 12,
     front_pad : 8,
     side_pad : 10,
     top_pad : 1,
@@ -105,18 +105,18 @@ substepping_parameters: {
     enabled :  True,
     source_term : 2,
   },
-  writepos: True,
+  writepos: False,
   chimera_always_on: True,
   chimera_steadiness_workflow: {
     enabled: True,
     adim_dt_increment: 0.5,
-    max_adim_dt: &max_adim_dt 2.0
+    max_adim_dt: &max_adim_dt 3.0
   },
 }
 
 moving_domain_params : {
   shape : True,
-  els_per_radius : 4,
+  els_per_radius : 2,
   max_adim_dt : *max_adim_dt,
   adim_front_len : 5,
   adim_side_len : 6,

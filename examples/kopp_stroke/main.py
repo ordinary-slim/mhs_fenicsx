@@ -16,7 +16,7 @@ rank = comm.Get_rank()
 
 def get_adim_back_len(fine_adim_dt : float = 0.5, adim_dt : float = 2):
     ''' Back length of moving domain'''
-    return max(adim_dt + 4 * fine_adim_dt, 4)
+    return max(adim_dt + 6 * fine_adim_dt, 5)
 
 def get_k(p):
     return p.materials[0].k.Ys[:-1].mean()
@@ -62,7 +62,7 @@ def run_reference(params, writepos=True):
         ps.non_linear_solve()
         ps.post_iterate()
         if writepos:
-            ps.writepos(extra_funcs=[ps.u_av])
+            ps.writepos(extension="vtx", extra_funcs=[ps.u_av])
     return ps
 
 def run_staggered(params, writepos=True):
@@ -87,7 +87,7 @@ def run_staggered(params, writepos=True):
         itime_step += 1
         substeppin_driver.do_timestep()
         if writepos:
-            ps.writepos(extra_funcs=[ps.u_prev])
+            ps.writepos(extension="vtx", extra_funcs=[ps.u_prev])
     return ps
 
 def run_hodge(params, writepos=True):
@@ -106,8 +106,7 @@ def run_hodge(params, writepos=True):
         itime_step += 1
         substeppin_driver.do_timestep()
         if writepos:
-            for p in [ps,pf]:
-                p.writepos(extra_funcs=[p.u_prev])
+            ps.writepos(extension="vtx", extra_funcs=[ps.u_prev])
     return ps
 
 def run_staggered_chimera_rr(params, writepos=True):
@@ -138,7 +137,8 @@ def run_staggered_chimera_rr(params, writepos=True):
         itime_step += 1
         substeppin_driver.do_timestep()
         if writepos:
-            ps.writepos()
+            for p in [ps, pm]:
+                p.writepos(extension="vtx")
     return ps
 
 def run_chimera_hodge(params, writepos=True):
@@ -162,7 +162,7 @@ def run_chimera_hodge(params, writepos=True):
         substeppin_driver.do_timestep()
         if writepos:
             for p in [ps, pm]:
-                p.writepos(extra_funcs=[p.u_prev])
+                p.writepos(extension="vtx", extra_funcs=[p.u_prev])
     return ps
 if __name__=="__main__":
     with open("input.yaml", 'r') as f:

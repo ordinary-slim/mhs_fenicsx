@@ -755,12 +755,20 @@ class Problem:
         self.result_folder = f"post_{self.name}"
         shutil.rmtree(self.result_folder,ignore_errors=True)
         self.writers["vtk"] = io.VTKFile(self.domain.comm, f"{self.result_folder}/{self.name}.pvd", "wb")
-        self.writers["vtx"] = io.VTXWriter(self.domain.comm, f"{self.result_folder}/{self.name}.bp",output=[self.u,self.source.fem_function,self.active_nodes_func])
+        self.writers["vtx"] = io.VTXWriter(self.domain.comm,
+                                           f"{self.result_folder}/{self.name}.bp",
+                                           output=[self.u, self.source.fem_function, self.active_nodes_func])
         self.is_post_initialized = True
 
-    def writepos(self,extra_funcs=[]):
+    def writepos(self, extension="vtk", extra_funcs=[]):
         if not(self.is_post_initialized):
             self.initialize_post()
+        if extension=="vtk":
+            self.writepos_vtk(extra_funcs=extra_funcs)
+        elif extension=="vtx":
+            self.writepos_vtx()
+
+    def writepos_vtk(self, extra_funcs=[]):
         funcs = [self.u,
                  self.active_els_func,
                  self.active_nodes_func,
@@ -776,7 +784,6 @@ class Problem:
         partition.x.array[:] = rank
         funcs.append(partition)
         #EPARTITIONTAG
-
         bnodes = indices_to_function(self.v,self.bfacets_mask.nonzero()[0], self.dim-1,name="bnodes")
         funcs.append(bnodes)
         funcs.extend(extra_funcs)

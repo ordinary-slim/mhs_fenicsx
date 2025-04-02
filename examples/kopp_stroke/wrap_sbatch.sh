@@ -17,5 +17,5 @@ sbatch <<EOT
 #SBATCH --error=$jobName.err
 source /data0/home/mslimani/bin/FEniCSx/load_setup_functions.sh
 setup_fenicsx_env
-mpirun -n $nps python3 main.py -$runType -d $descriptor
+mpirun -n $nps python3 main.py -$runType -d _${descriptor}
 EOT

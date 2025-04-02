@@ -16,32 +16,32 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
 class MonolithicDomainDecompositionDriver:
-    def __init__(self, sub_problem_1 : Problem, sub_problem_2:Problem,
+    def __init__(self, sub_problem_1: Problem, sub_problem_2: Problem,
                  quadrature_degree):
-        (p1,p2) = (sub_problem_1,sub_problem_2)
+        (p1, p2) = (sub_problem_1, sub_problem_2)
         self.p1 = p1
         self.p2 = p2
         self.quadrature_degree = quadrature_degree
         if "petsc_opts_mono_robin" in p1.input_parameters:
             self.solver_opts = dict(p1.input_parameters["petsc_opts_mono_robin"])
         else:
-            self.solver_opts = {"pc_type" : "lu", "pc_factor_mat_solver_type" : "mumps",}
+            self.solver_opts = {"pc_type": "lu", "pc_factor_mat_solver_type": "mumps"}
 
     def setup_coupling(self):
         ''' Find interface '''
         (p1,p2) = (self.p1,self.p2)
         self.gamma_qpoints = {
-                    p1 : None,
-                    p2 : None,
+                    p1: None,
+                    p2: None,
                     }
         self.gamma_qpoints_po = {
-                    p1 : { p2 : None },
-                    p2 : { p1 : None },
+                    p1: { p2: None },
+                    p2: { p1: None },
                     }
-        self.gamma_renumbered_cells_ext = { p1 : {}, p2 : {}}
-        self.gamma_mat_ids = { p1 : {}, p2 : {}}
-        self.gamma_dofs_cells_ext = { p1 : {}, p2 : {}}
-        self.gamma_geoms_cells_ext = { p1 : {}, p2 : {}}
+        self.gamma_renumbered_cells_ext = { p1: {}, p2: {}}
+        self.gamma_mat_ids = { p1: {}, p2: {}}
+        self.gamma_dofs_cells_ext = { p1: {}, p2: {}}
+        self.gamma_geoms_cells_ext = { p1: {}, p2: {}}
         self.gdofs_communicators = {}
 
     def post_iterate(self):
@@ -49,7 +49,7 @@ class MonolithicDomainDecompositionDriver:
 
 class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
     def __init__(self, sub_problem_1:Problem, sub_problem_2:Problem,
-                 robin_coeff1 : float, robin_coeff2 : float,
+                 robin_coeff1: float, robin_coeff2: float,
                  quadrature_degree):
         (p1,p2) = (sub_problem_1,sub_problem_2)
         super().__init__(p1, p2, quadrature_degree)
@@ -405,10 +405,9 @@ class GdofsCommunicator:
         llindices = imap.global_to_local(self.gdofs_p_needs[lindices])
         self.my_dofs_i_need = p_ext.restriction.unrestrict(llindices)
 
-        self.data_i_rcv = {ghost_owner : np.zeros(rcv_sizes[ghost_owner], dtype=np.float64) for ghost_owner in other_ranks}
-        self.data_i_snd = {ghost_owner : np.zeros(snd_sizes[ghost_owner], dtype=np.float64) for ghost_owner in other_ranks}
+        self.data_i_rcv = {ghost_owner: np.zeros(rcv_sizes[ghost_owner], dtype=np.float64) for ghost_owner in other_ranks}
+        self.data_i_snd = {ghost_owner: np.zeros(snd_sizes[ghost_owner], dtype=np.float64) for ghost_owner in other_ranks}
         self.u_ext_coeffs = np.zeros(self.gdofs_p_needs.size, np.float64)
-
 
     def point_to_point_comm(self):
         p_ext = self.p_ext

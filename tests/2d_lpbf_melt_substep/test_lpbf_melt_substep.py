@@ -28,7 +28,7 @@ def write_gcode(params):
         gcode_lines.append(f"G4 P0.5")
         gcode_lines.append(f"G4 P0.5 R1")
         E += 0.1
-        gcode_lines.append(f"G1 X{np.pow(-1, layer)*hlenx} E{E:2.2f}")
+        gcode_lines.append(f"G1 X{np.power(-1, layer)*hlenx} E{E:2.2f}")
     with open(params["source_terms"][0]["path"],'w') as f:
         f.writelines("\n".join(gcode_lines))
 

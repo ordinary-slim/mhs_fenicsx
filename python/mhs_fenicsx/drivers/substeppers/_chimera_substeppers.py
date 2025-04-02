@@ -129,7 +129,7 @@ class ChimeraSubstepper(ABC):
             return yes
         else:
             next_track = self.pf.source.path.get_track(self.pf.time)
-            return (((self.pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) >= 0.05)
+            return (((self.pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) >= 0.15)
 
     def chimera_micro_pre_iterate(self, forced_time_derivative=False):
         (pf, pm) = self.pf, self.pm

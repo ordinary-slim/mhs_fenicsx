@@ -48,6 +48,12 @@ petsc_opts_mono_robin: {
   "ksp_rtol" : 1e-13,
   "pc_type" : "fieldsplit",
 }
+petsc_opts_macro_chimera: {
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-13,
+  "ksp_rtol" : 1e-13,
+  "pc_type" : "fieldsplit",
+}
 domain_width: 1
 domain_height: 0.5
 els_per_radius: 2

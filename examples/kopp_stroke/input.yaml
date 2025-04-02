@@ -1,11 +1,12 @@
 isSteady: False
 substrate : [4.25E-03, 2.05E-03, 1.755E-03]
-part : [2.0E-03, 0.5E-03, 0.0]
-els_per_radius : 1.0
+part : [2.0E-03, 0.425E-03, 0.0]
+els_per_radius : 2.0
 radius : &radius 0.0425E-03
 half_radius : &half_radius 0.02125E-03
-num_boundary_layers : [4, 1, 4]
-coarse_el_factor : 4
+num_boundary_layers : [8, 4, 12]
+coarsest_el_factor : 8.0
+coarsening_factor : 1.5
 source_terms :
   - type : penetrating_gaussian
     initial_position : &p0 [-5.0, 0.0, 0.0]
@@ -38,12 +39,12 @@ material_in625 : {
     liquidus_temperature : &liquidus_temperature 1350.0,
   },
   density : 8.44E+03, # kg / mm3
-  conductivity : [[0.0, 9.5], [1320.0, 29.3], [2000.0, 29.3]],
-  specific_heat : [[0.0, 405.0], [1320.0, 731.04], [2000.0, 731.04]],
+  conductivity : [[0.0, 9.5], [1320.0, 28.85], [2000.0, 28.85]],
+  specific_heat : [[0.0, 405.0], [1320.0, 723.63], [2000.0, 723.63]],
 }
 convection_coeff : 0.0
 radiation_coeff: 0.0
-smoothing_cte_phase_change : 1.0
+smoothing_cte_phase_change : 4.0
 environment_temperature : &environment_temperature 25
 # END_ESSENTIAL
 petsc_opts_micro: {
@@ -62,10 +63,14 @@ petsc_opts_macro: {
 }
 petsc_opts_mono_robin: {
   "ksp_error_if_not_converged" : "true",
-  "ksp_type" : "gmres",
-  "ksp_atol" : 1e-13,
-  "ksp_rtol" : 1e-13,
+  "ksp_type" : "preonly",
   "pc_type" : "fieldsplit",
+  "pc_fieldsplit_type" : "schur",
+  "pc_fieldsplit_schur_factorization_type" : "full",
+  "fieldsplit_0_pc_type" : "lu",
+  "fieldsplit_0_pc_factor_mat_solver_type" : "superlu_dist",
+  "fieldsplit_1_pc_type" : "lu",
+  "fieldsplit_1_pc_factor_mat_solver_type" : "superlu_dist"
 }
 petsc_opts_macro_chimera: {
   "ksp_error_if_not_converged" : "true",
@@ -90,7 +95,7 @@ max_nr_iters: 30
 max_ls_iters: 5
 
 substepping_parameters: {
-  micro_adim_dt: 0.5,
+  micro_adim_dt: 0.25,
   macro_adim_dt: 6.0,
   cooling_adim_dt: 1,
   max_staggered_iters: 1,
@@ -109,8 +114,8 @@ substepping_parameters: {
   chimera_always_on: True,
   chimera_steadiness_workflow: {
     enabled: True,
-    adim_dt_increment: 0.5,
-    max_adim_dt: &max_adim_dt 3.0
+    adim_dt_increment: 0.25,
+    max_adim_dt: &max_adim_dt 0.25
   },
 }
 

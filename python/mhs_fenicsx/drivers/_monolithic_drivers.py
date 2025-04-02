@@ -342,7 +342,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         snes.setObjective(self.obj_snes)
         snes.setFunction(self.R_snes, self.L)
         snes.setJacobian(self.J_snes, J=self.A, P=None)
-        snes.setMonitor(lambda _, it, residual: print(it, residual))
+        snes.setMonitor(lambda _, it, residual: print(it, residual, flush=True) if rank == 0 else None)
         self.set_snes_sol_vector()
         snes.solve(None, self.x)
         self.update_solution(self.x)

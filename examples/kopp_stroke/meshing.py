@@ -7,23 +7,16 @@ from mpi4py import MPI
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-def boundary_layer_progression(extrusion_size, nboun_layers, fine_el_size, coarse_el_factor = 2):
-    approx_coarse_el_size = coarse_el_factor * fine_el_size
-    num_coarse_els = np.ceil( (extrusion_size - nboun_layers*fine_el_size) / approx_coarse_el_size )
-    coarsest_el_size = (extrusion_size - nboun_layers*fine_el_size) / num_coarse_els
-    num_mid_coarse_els = np.ceil( num_coarse_els / 2 )
-    mid_coarse_el_size = coarsest_el_size / 2.0
-    num_coarsest_els = num_coarse_els - num_mid_coarse_els
-
-    numElements_per_layer = np.array( [nboun_layers] + [num_mid_coarse_els] + [num_coarsest_els])
-    heights = np.array( [fine_el_size, mid_coarse_el_size, coarsest_el_size] )
+def boundary_layer_progression(fine_el_size, coarsest_el_factor, coarsening_factor):
+    num_layers = np.rint(np.ceil(np.emath.logn(coarsening_factor, coarsest_el_factor))).astype(int)
+    heights = [((coarsening_factor)**(i+1))*fine_el_size for i in range(num_layers)] # el sizes
+    num_elements_per_layer = [1 for _ in range(num_layers)]
 
     # format heights to cumsum
-    heights *= numElements_per_layer
     heights = np.cumsum( heights )
     heights /= heights[-1]
 
-    return numElements_per_layer, heights
+    return num_elements_per_layer, heights
 
 def get_mesh(params):
     gmsh.initialize()
@@ -35,7 +28,8 @@ def get_mesh(params):
         els_per_radius = params["els_per_radius"]
         fine_el_size = radius / els_per_radius
         nboun_layers = params["num_boundary_layers"]
-        coarse_el_factor = params["coarse_el_factor"]
+        coarsest_el_factor = params["coarsest_el_factor"]
+        coarsening_factor = params["coarsening_factor"]
         # Adjust lengths so that they are multiples of fine_el_size
         for lens in [part_lens, substrate_lens]:
             lens[:] = (np.ceil(lens / fine_el_size) * fine_el_size)[:]
@@ -72,7 +66,7 @@ def get_mesh(params):
         midBotSurface, _, xSideMidBot1, ySideMidBot1, xSideMidBot2, ySideMidBot2 = uniformBotExtrusion
         ## Coarsening
         lenCoarseBotExtrusion = substrate_lens[2] - nboun_layers_z*fine_el_size
-        nElements, heights = boundary_layer_progression( lenCoarseBotExtrusion, nboun_layers_z, fine_el_size, coarse_el_factor = coarse_el_factor )
+        nElements, heights = boundary_layer_progression(fine_el_size, coarsest_el_factor, coarsening_factor)
         coarseBotExtrusion = gmsh.model.geo.extrude([(2, midBotSurface[1])], 0, 0, -lenCoarseBotExtrusion, numElements = nElements, heights= heights, recombine= True)
         botBotSurface, _, xSideBotBot1, ySideBotBot1, xSideBotBot2, ySideBotBot2 = coarseBotExtrusion
         ## Substrate extrusions Y
@@ -86,7 +80,7 @@ def get_mesh(params):
         ### Coarse extrusions
         coarseYExtrusions = []
         lenCoarseYExtrusion = (substrate_lens[1] - part_lens[1])/2 - nboun_layers_y*fine_el_size
-        nElements, heights = boundary_layer_progression( lenCoarseYExtrusion, nboun_layers_y, fine_el_size, coarse_el_factor = coarse_el_factor )
+        nElements, heights = boundary_layer_progression(fine_el_size, coarsest_el_factor, coarsening_factor)
         for idx, extrusion in enumerate( uniformYExtrusions ):
             tagSurface = extrusion[0][1]
             coarseYExtrusions.append( gmsh.model.geo.extrude([(2, tagSurface)], 0.0, np.power(-1, idx)*lenCoarseYExtrusion, 0.0, numElements = nElements, heights= heights, recombine= True) )
@@ -117,7 +111,7 @@ def get_mesh(params):
             negativeUniformExtrusionsX.append( gmsh.model.geo.extrude([(2, surface)], -extrusionLen, 0.0, 0.0, numElements =[numElements], recombine= True ) )
         ### Coarse extrusions
         extrusionLen = (substrate_lens[0] - part_lens[0])/2 - nboun_layers_x*fine_el_size
-        nElements, heights = boundary_layer_progression( extrusionLen, nboun_layers_x, fine_el_size, coarse_el_factor = coarse_el_factor )
+        nElements, heights = boundary_layer_progression(fine_el_size, coarsest_el_factor, coarsening_factor)
         positiveCoarseExtrusionsX = []
         negativeCoarseExtrusionsX = []
         for extrusion in positiveUniformExtrusionsX:

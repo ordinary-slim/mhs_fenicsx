@@ -36,10 +36,10 @@ def write_gcode(params):
     with open(gcode_file,'w') as f:
         f.writelines("\n".join(gcode_lines))
 
-def run_reference(params, writepos=True):
+def run_reference(params, writepos=True, descriptor=""):
     domain = get_mesh(params)
     params["petsc_opts"] = params["petsc_opts_macro"]
-    ps = Problem(domain, params, name="ref")
+    ps = Problem(domain, params, name="ref" + descriptor)
 
     ps.set_initial_condition(  params["environment_temperature"] )
 
@@ -65,12 +65,12 @@ def run_reference(params, writepos=True):
             ps.writepos(extension="vtx", extra_funcs=[ps.u_av])
     return ps
 
-def run_staggered(params, writepos=True):
+def run_staggered(params, writepos=True, descriptor=""):
     big_mesh = get_mesh(params)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(big_mesh, macro_params, finalize_activation=False, name="staggered_rr")
+    ps = Problem(big_mesh, macro_params, finalize_activation=False, name="staggered_rr" + descriptor)
     ps.set_initial_condition(  params["environment_temperature"] )
 
     max_timesteps = params["max_timesteps"]
@@ -90,12 +90,12 @@ def run_staggered(params, writepos=True):
             ps.writepos(extension="vtx", extra_funcs=[ps.u_prev])
     return ps
 
-def run_hodge(params, writepos=True):
+def run_hodge(params, writepos=True, descriptor=""):
     big_mesh = get_mesh(params)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(big_mesh, macro_params, finalize_activation=True, name="hodge")
+    ps = Problem(big_mesh, macro_params, finalize_activation=True, name="hodge" + descriptor)
     ps.set_initial_condition(  params["environment_temperature"] )
     max_timesteps = params["max_timesteps"]
     substeppin_driver = MHSSemiMonolithicSubstepper(ps,)
@@ -109,13 +109,13 @@ def run_hodge(params, writepos=True):
             ps.writepos(extension="vtx", extra_funcs=[ps.u_prev])
     return ps
 
-def run_staggered_chimera_rr(params, writepos=True):
+def run_staggered_chimera_rr(params, writepos=True, descriptor=""):
     initial_relaxation_factors=[1.0,1.0]
     big_mesh = get_mesh(params)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(big_mesh, macro_params, name=f"chimera_staggered_rr")
+    ps = Problem(big_mesh, macro_params, name="chimera_staggered_rr" + descriptor)
     pm = build_moving_problem(ps,
                               macro_params["moving_domain_params"]["els_per_radius"],
                               custom_get_adim_back_len=get_adim_back_len)
@@ -141,12 +141,12 @@ def run_staggered_chimera_rr(params, writepos=True):
                 p.writepos(extension="vtx")
     return ps
 
-def run_chimera_hodge(params, writepos=True):
+def run_chimera_hodge(params, writepos=True, descriptor=""):
     big_mesh = get_mesh(params)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(big_mesh, macro_params, name=f"chimera_hodge")
+    ps = Problem(big_mesh, macro_params, name="chimera_hodge" + descriptor)
     pm = build_moving_problem(ps,
                               macro_params["moving_domain_params"]["els_per_radius"],
                               custom_get_adim_back_len=get_adim_back_len)
@@ -170,30 +170,31 @@ if __name__=="__main__":
     write_gcode(params)
     parser = argparse.ArgumentParser()
     parser.add_argument('-r', '--run-ref', action='store_true')
-    parser.add_argument('-ss','--run-stagg-sub',action='store_true')
-    parser.add_argument('-sms','--run-hodge',action='store_true')
-    parser.add_argument('-css','--run-chimera-stagg',action='store_true')
-    parser.add_argument('-csms','--run-chimera-hodge',action='store_true')
+    parser.add_argument('-ss','--run-stagg-sub', action='store_true')
+    parser.add_argument('-sms','--run-hodge', action='store_true')
+    parser.add_argument('-css','--run-chimera-stagg', action='store_true')
+    parser.add_argument('-csms','--run-chimera-hodge', action='store_true')
+    parser.add_argument('-d','--descriptor')
     lp = LineProfiler()
     lp.add_module(Problem)
     args = parser.parse_args()
     profiling_file = ""
     if args.run_ref:
         lp_wrapper = lp(run_reference)
-        lp_wrapper(params, writepos = True)
+        lp_wrapper(params, writepos = True, descriptor = args.descriptor)
         profiling_file = f"profiling_ref_{rank}.txt"
     if args.run_stagg_sub:
         lp.add_module(MHSSubstepper)
         lp.add_module(MHSStaggeredSubstepper)
         lp.add_module(StaggeredRRDriver)
         lp_wrapper = lp(run_staggered)
-        lp_wrapper(params, writepos = True)
+        lp_wrapper(params, writepos = True, descriptor = args.descriptor)
         profiling_file = f"profiling_ss_{rank}.txt"
     if args.run_hodge:
         lp.add_module(MHSSubstepper)
         lp.add_module(MHSSemiMonolithicSubstepper)
         lp_wrapper = lp(run_hodge)
-        lp_wrapper(params, writepos = True)
+        lp_wrapper(params, writepos = True, descriptor = args.descriptor)
         profiling_file = f"profiling_sms_{rank}.txt"
     if args.run_chimera_stagg:
         lp.add_module(MHSStaggeredChimeraSubstepper)
@@ -203,7 +204,7 @@ if __name__=="__main__":
         lp.add_module(MonolithicRRDriver)
         lp.add_module(ChimeraSubstepper)
         lp_wrapper = lp(run_staggered_chimera_rr)
-        lp_wrapper(params, writepos = True)
+        lp_wrapper(params, writepos = True, descriptor = args.descriptor)
         profiling_file = f"profiling_chimera_rss_{rank}.txt"
     if args.run_chimera_hodge:
         lp.add_module(MHSSubstepper)
@@ -212,7 +213,7 @@ if __name__=="__main__":
         lp.add_module(MonolithicRRDriver)
         lp.add_module(ChimeraSubstepper)
         lp_wrapper = lp(run_chimera_hodge)
-        lp_wrapper(params, True)
+        lp_wrapper(params, writepos = True, descriptor = args.descriptor)
         profiling_file = f"profiling_chimera_hodge_{rank}.txt"
     if profiling_file:
         with open(profiling_file, 'w') as pf:

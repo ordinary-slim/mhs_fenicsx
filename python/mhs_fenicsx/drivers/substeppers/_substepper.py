@@ -474,7 +474,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         snes.setObjective(self.obj)
         snes.setFunction(self.assemble_residual, self.R)
         snes.setJacobian(self.assemble_jacobian, J=self.A, P=None)
-        snes.setMonitor(lambda _, it, residual: print(it, residual))
+        snes.setMonitor(lambda _, it, residual: print(it, residual, flush=True) if self.ps.domain.comm.Get_rank() == 0 else None)
         self.set_snes_sol_vector(self.x)
         snes.solve(None, self.x)
         self.update_solution(self.x)

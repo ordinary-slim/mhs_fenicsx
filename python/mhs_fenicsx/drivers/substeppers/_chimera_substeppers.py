@@ -129,7 +129,7 @@ class ChimeraSubstepper(ABC):
             return yes
         else:
             next_track = self.pf.source.path.get_track(self.pf.time)
-            return (((self.pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) >= 0.15)
+            return (((self.pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) >= 0.05)
 
     def chimera_micro_pre_iterate(self, forced_time_derivative=False):
         (pf, pm) = self.pf, self.pm
@@ -164,7 +164,8 @@ class ChimeraSubstepper(ABC):
         (pf, pm) = self.pf, self.pm
         pf.set_activation(self.fast_subproblem_els, finalize=False)
         max_ft = abs(pf.u.x.array - pf.u_prev.x.array / pf.dt.value).max()
-        self.steadiness_measurements.append(self.steadiness_metric.get_steadiness_metric())
+        #self.steadiness_measurements.append(self.steadiness_metric.get_steadiness_metric())
+        self.steadiness_measurements.append(max_ft)
         if rank==0:
             adim_dt = self.pm.adimensionalize_mhs_timestep(pm.source.path.current_track)
             print(f"is Chimera ON? {self.chimera_on}, adim dt = {adim_dt}, steadiness metric = {self.steadiness_measurements[-1]}, max ft = {max_ft}")
@@ -418,7 +419,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         snes.setObjective(self.obj)
         snes.setFunction(self.assemble_residual, self.L)
         snes.setJacobian(self.assemble_jacobian, J=self.A, P=None)
-        snes.setMonitor(lambda _, it, residual: print(it, residual))
+        snes.setMonitor(lambda _, it, residual: print(it, residual, flush=True) if rank == 0 else None)
         self.set_snes_sol_vector(self.x)
         snes.solve(None, self.x)
         self.update_solution(self.x, interpolate=True)

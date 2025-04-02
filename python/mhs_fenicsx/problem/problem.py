@@ -852,7 +852,7 @@ class Problem:
         snes.setObjective(self.obj)
         snes.setFunction(self.R, self.L)
         snes.setJacobian(self.J, J=self.A, P=None)
-        snes.setMonitor(lambda _, it, residual: print(it, residual))
+        snes.setMonitor(lambda _, it, residual: print(it, residual, flush=True) if rank == 0 else None)
         self.set_snes_sol_vector()
         snes.solve(None, self.x)
         assert (snes.getConvergedReason() > 0), f"did not converge : {snes.getConvergedReason()}"

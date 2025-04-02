@@ -16,6 +16,9 @@ from abc import ABC, abstractmethod
 import multiphenicsx.fem.petsc
 from mpi4py import MPI
 
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+
 class MHSSubstepper(ABC):
     def __init__(self, slow_problem:Problem,
                  max_nr_iters=25, max_ls_iters=5,
@@ -46,13 +49,15 @@ class MHSSubstepper(ABC):
         for i in range(len(self.plist)-1):
             assert(abs(self.plist[i+1].time - self.plist[0].time) < 1e-9) # all problems are at the same time
         if track.type == TrackType.PRINTING:
-            print("Step WITH substepping STARTS...", flush=True)
+            if rank == 0:
+                print("Step WITH substepping STARTS...", flush=True)
             pf.set_dt(pf.dimensionalize_mhs_timestep(track, self.params["micro_adim_dt"]))
             ps.set_dt(ps.dimensionalize_mhs_timestep(track, self.params["macro_adim_dt"]))
             self.cap_timestep(ps)
             self.do_substepped_timestep()
         else:
-            print("Step WITHOUT substepping STARTS...", flush=True)
+            if rank == 0:
+                print("Step WITHOUT substepping STARTS...", flush=True)
             for p in self.plist:
                 p.set_dt(p.dimensionalize_waiting_timestep(track, self.params["cooling_adim_dt"]))
             self.step_without_substepping()
@@ -474,7 +479,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         snes.setObjective(self.obj)
         snes.setFunction(self.assemble_residual, self.R)
         snes.setJacobian(self.assemble_jacobian, J=self.A, P=None)
-        snes.setMonitor(lambda _, it, residual: print(it, residual, flush=True) if self.ps.domain.comm.Get_rank() == 0 else None)
+        snes.setMonitor(lambda _, it, residual: print(it, residual, flush=True) if rank == 0 else None)
         self.set_snes_sol_vector(self.x)
         snes.solve(None, self.x)
         self.update_solution(self.x)

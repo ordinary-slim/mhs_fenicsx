@@ -136,6 +136,9 @@ def run_staggered_chimera_rr(params, writepos=True, descriptor=""):
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
         itime_step += 1
         substeppin_driver.do_timestep()
+        if itime_step == 1:
+            substeppin_driver.params["micro_adim_dt"] = 0.5
+            substeppin_driver.params["chimera_steadiness_workflow"]["adim_dt_increment"] = 0.5
         if writepos:
             for p in [ps, pm]:
                 p.writepos(extension="vtx")
@@ -174,7 +177,7 @@ if __name__=="__main__":
     parser.add_argument('-sms','--run-hodge', action='store_true')
     parser.add_argument('-css','--run-chimera-stagg', action='store_true')
     parser.add_argument('-csms','--run-chimera-hodge', action='store_true')
-    parser.add_argument('-d','--descriptor')
+    parser.add_argument('-d','--descriptor', default="")
     lp = LineProfiler()
     lp.add_module(Problem)
     args = parser.parse_args()

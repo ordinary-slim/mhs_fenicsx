@@ -164,6 +164,7 @@ class ChimeraSubstepper(ABC):
         (pf, pm) = self.pf, self.pm
         pf.set_activation(self.fast_subproblem_els, finalize=False)
         max_ft = abs(pf.u.x.array - pf.u_prev.x.array / pf.dt.value).max()
+        max_ft = comm.allreduce(max_ft, MPI.MAX)
         #self.steadiness_measurements.append(self.steadiness_metric.get_steadiness_metric())
         self.steadiness_measurements.append(max_ft)
         if rank==0:

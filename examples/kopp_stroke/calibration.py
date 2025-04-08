@@ -4,11 +4,13 @@ from dolfinx import mesh
 from mpi4py import MPI
 from mhs_fenicsx.problem import Problem
 import argparse
-from line_profiler import LineProfiler
 from petsc4py import PETSc
+import subprocess
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
+
+paraview_python = r"/home/mslimani/bin/ParaView-5.13.2-MPI-Linux-Python3.10-x86_64/bin/pvpython"
 
 def build_moving_problem(params):
     mdparams = params["moving_domain_params"]
@@ -52,10 +54,11 @@ def build_moving_problem(params):
     p = Problem(domain, params,name="calibration")
     return p
 
-def run(params, writepos=True, descriptor=""):
+def run(params, descriptor=""):
     pm = build_moving_problem(params)
     pm.set_initial_condition(  params["environment_temperature"])
     pm.set_forms()
+    pm.name = "calibration_" + descriptor
     pm.compile_create_forms()
     dt = float(float(params["adim_dt"]) * pm.source.R / np.linalg.norm(pm.advection_speed.value))
     pm.set_dt(dt)
@@ -64,21 +67,21 @@ def run(params, writepos=True, descriptor=""):
         pm.pre_assemble()
         pm.non_linear_solve()
         pm.post_iterate()
-        pm.writepos(extension="vtx")
+    pm.writepos(extension="vtx")
+    return pm
 
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-d','--descriptor', default="")
-    lp = LineProfiler()
-    lp.add_module(Problem)
-    args = parser.parse_args()
+def iterate(smoothing_cte, absorptivity, depth_factor):
     params_file = "calibration_input.yaml"
     with open(params_file, 'r') as f:
         params = yaml.safe_load(f)
-    lp_wrapper = lp(run)
-    lp_wrapper(params, writepos = True, descriptor = args.descriptor)
-    profiling_file = f"profiling_chimera_rss_{rank}.txt"
-    if profiling_file:
-        with open(profiling_file, 'w') as pf:
-            lp.print_stats(stream=pf)
+    params["smoothing_cte"] = smoothing_cte
+    params["source_terms"][0]["power"] = 179.2 * absorptivity
+    params["source_terms"][0]["depth"] = params["radius"] * depth_factor
+    descriptor = f"S{smoothing_cte}-nu{absorptivity}-d{depth_factor}".replace(".", "_")
+    pm = run(params, descriptor)
+    bp_file = "./" + pm.result_folder + "/" + pm.name + ".bp/"
+    result = subprocess.run([paraview_python, bp_file], capture_output=True, text=True)
+    stdout = result.stdout
+
+if __name__ == "__main__":
+    iterate(0.25, 0.32, 0.28)

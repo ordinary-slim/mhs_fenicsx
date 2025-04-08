@@ -14,9 +14,14 @@ from line_profiler import LineProfiler
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
+
+#def get_adim_back_len(fine_adim_dt: float = 0.5, adim_dt: float = 2):
+#    ''' Back length of moving domain'''
+#    return max(4, np.round(4*(1 + adim_dt + (adim_dt**2.3)*fine_adim_dt)) / 4)
+
 def get_adim_back_len(fine_adim_dt : float = 0.5, adim_dt : float = 2):
     ''' Back length of moving domain'''
-    return max(adim_dt + 6 * fine_adim_dt, 5)
+    return 8
 
 def get_k(p):
     return p.materials[0].k.Ys[:-1].mean()
@@ -118,7 +123,8 @@ def run_staggered_chimera_rr(params, writepos=True, descriptor=""):
     ps = Problem(big_mesh, macro_params, name="chimera_staggered_rr" + descriptor)
     pm = build_moving_problem(ps,
                               macro_params["moving_domain_params"]["els_per_radius"],
-                              custom_get_adim_back_len=get_adim_back_len)
+                              custom_get_adim_back_len=get_adim_back_len,
+                              shift=np.array([-1.41e-6, 0, 0]))
     ps.set_initial_condition(params["environment_temperature"])
     pm.set_initial_condition(params["environment_temperature"])
 
@@ -136,11 +142,8 @@ def run_staggered_chimera_rr(params, writepos=True, descriptor=""):
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
         itime_step += 1
         substeppin_driver.do_timestep()
-        if itime_step == 1:
-            substeppin_driver.params["micro_adim_dt"] = 0.5
-            substeppin_driver.params["chimera_steadiness_workflow"]["adim_dt_increment"] = 0.5
         if writepos:
-            for p in [ps, pm]:
+            for p in [ps, substeppin_driver.pf, pm]:
                 p.writepos(extension="vtx")
     return ps
 
@@ -152,7 +155,8 @@ def run_chimera_hodge(params, writepos=True, descriptor=""):
     ps = Problem(big_mesh, macro_params, name="chimera_hodge" + descriptor)
     pm = build_moving_problem(ps,
                               macro_params["moving_domain_params"]["els_per_radius"],
-                              custom_get_adim_back_len=get_adim_back_len)
+                              custom_get_adim_back_len=get_adim_back_len,
+                              shift=np.array([-1.41e-6, 0, 0]))
     ps.set_initial_condition(params["environment_temperature"])
     pm.set_initial_condition(params["environment_temperature"])
 
@@ -164,13 +168,12 @@ def run_chimera_hodge(params, writepos=True, descriptor=""):
         itime_step += 1
         substeppin_driver.do_timestep()
         if writepos:
-            for p in [ps, pm]:
-                p.writepos(extension="vtx", extra_funcs=[p.u_prev])
+            for p in [ps, substeppin_driver.pf, pm]:
+                p.writepos(extension="vtx")
     return ps
-if __name__=="__main__":
-    with open("input.yaml", 'r') as f:
-        params = yaml.safe_load(f)
-    write_gcode(params)
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-r', '--run-ref', action='store_true')
     parser.add_argument('-ss','--run-stagg-sub', action='store_true')
@@ -181,6 +184,13 @@ if __name__=="__main__":
     lp = LineProfiler()
     lp.add_module(Problem)
     args = parser.parse_args()
+    if args.run_chimera_stagg or args.run_chimera_hodge:
+        params_file = "chimera_input.yaml"
+    else:
+        params_file = "input.yaml"
+    with open(params_file, 'r') as f:
+        params = yaml.safe_load(f)
+    write_gcode(params)
     profiling_file = ""
     if args.run_ref:
         lp_wrapper = lp(run_reference)

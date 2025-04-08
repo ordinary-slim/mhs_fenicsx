@@ -188,7 +188,7 @@ class Gusarov(HeatSource):
         r = np.sqrt((x[0] - self.x[0])**2 + (x[1] - self.x[1])**2, dtype=np.float64)
         xi = - beta * (x[2] - self.x[2])
         rfrac = r / R
-        Q0 = 3 * self.power / np.pi / np.pow(R, 2, dtype=np.float64) * \
+        Q0 = 3 * self.power / np.pi / np.power(R, 2, dtype=np.float64) * \
                 (1 - rfrac)**2 * (1 + rfrac)**2
         Q0[np.where(rfrac > 1.0)] = 0
         dqdxi1  = - (1 - a) * np.exp(-2*a*xi)

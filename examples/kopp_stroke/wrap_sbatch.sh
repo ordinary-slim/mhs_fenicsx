@@ -1,10 +1,10 @@
 #!/bin/bash
-runType=$1
-descriptor=$2
+nps=$1
+runType=$2
+descriptor=$3
 jobName="kopp_stroke_${runType}_${descriptor}"
 partition=R640
 printFile=$jobName.print
-nps=10
 echo $jobName
 sbatch <<EOT
 #!/bin/bash

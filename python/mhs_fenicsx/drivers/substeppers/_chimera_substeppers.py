@@ -26,7 +26,6 @@ class ChimeraSubstepper(ABC):
     def __init__(self):
         self.pf : Problem
         self.pm : Problem
-        self.quadrature_degree : int
         self.fast_subproblem_els : npt.NDArray[np.int32]
         self.params : dict
         self.t0_macro_step : float
@@ -34,6 +33,8 @@ class ChimeraSubstepper(ABC):
         self.fraction_macro_step : float
 
     def chimera_post_init(self, initial_orientation : npt.NDArray):
+        # Quadrature degree at interface
+        self.quadrature_degree = self.params["mono_robin_gamma_quadrature_degree"]
         self.chimera_driver = MonolithicRRDriver(self.pf, self.pm,
                                                  1.0, 1.0,
                                                  quadrature_degree=self.quadrature_degree)
@@ -61,6 +62,8 @@ class ChimeraSubstepper(ABC):
         self.micro_post_iterate = micro_post_iterate
         # Steadiness workflow
         self.steadiness_workflow_params = self.params["chimera_steadiness_workflow"]
+        self.steadiness_threshold = self.steadiness_workflow_params["threshold"] \
+            if "threshold" in self.steadiness_workflow_params else 0.05
         self.steadiness_metric = L2Differ(self.pm)
         self.steadiness_measurements = []
 
@@ -123,7 +126,7 @@ class ChimeraSubstepper(ABC):
 
     def is_steady_enough(self):
         if self.params["chimera_steadiness_workflow"]["enabled"]:
-            yes = (len(self.steadiness_measurements) > 1) and (((self.steadiness_measurements[-1] - self.steadiness_measurements[-2]) / self.steadiness_measurements[-2]) < 0.05)
+            yes = (len(self.steadiness_measurements) > 1) and (((self.steadiness_measurements[-1] - self.steadiness_measurements[-2]) / self.steadiness_measurements[-2]) < self.steadiness_threshold)
             if yes:
                 self.steadiness_measurements.clear()
             return yes
@@ -196,8 +199,6 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
                          compile_forms)
         self.plist.append(self.pm)
         self.fplist.append(self.pm)
-        self.quadrature_degree = 2 # Gamma Chimera
-        self.name = "staggered_chimera_substepper"
         self.chimera_post_init(initial_orientation)
 
     def compile_forms(self):
@@ -286,8 +287,6 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         self.plist.append(self.pm)
         self.fplist.append(self.pm)
         self.compile_forms()
-        self.quadrature_degree = 2 # Gamma Chimera
-        self.name = "semi_monolithic_chimera_substepper"
         self.chimera_post_init(initial_orientation)
 
     def pre_loop(self, prepare_fast_problem=False):

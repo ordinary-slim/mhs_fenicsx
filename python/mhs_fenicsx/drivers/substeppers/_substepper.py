@@ -24,6 +24,7 @@ class MHSSubstepper(ABC):
                  max_nr_iters=25, max_ls_iters=5,
                  compile_forms=True):
         self.ps = slow_problem
+        self.name = f"{self.ps.name}_substeps"
         self.params = self.ps.input_parameters["substepping_parameters"]
         self.pf = self.ps.copy(name=f"{self.ps.name}_micro_iters")
         self.plist = [self.ps, self.pf]
@@ -196,6 +197,8 @@ class MHSSubstepper(ABC):
 
     def predictor_step(self, writepos=False):
         ''' Always linear '''
+        if rank == 0:
+            print("PREDICTOR step...", flush=True)
         ps = self.ps
         # Save current data
         slow_subdomain_data = ps.form_subdomain_data
@@ -244,6 +247,8 @@ class MHSSubstepper(ABC):
         # TODO: Update pm
 
     def micro_steps(self):
+        if rank == 0:
+            print("SUBSTEPS...", flush=True)
         self.micro_iter = 0
         while self.is_substepping():
             self.prepare_micro_step()
@@ -288,7 +293,6 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
                  max_nr_iters=25,max_ls_iters=5,
                  compile_forms=True):
         super().__init__(slow_problem, max_nr_iters, max_ls_iters, compile_forms)
-        self.name = "semi_monolithic_substepper"
         self.max_staggered_iters = self.params["max_staggered_iters"]
 
     def do_substepped_timestep(self):
@@ -533,7 +537,6 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         self.staggered_driver = staggered_driver_class(self.pf, self.ps,
                                                        max_staggered_iters=self.params["max_staggered_iters"],
                                                        initial_relaxation_factors=staggered_relaxation_factors)
-        self.name = "staggered_substepper"
 
     def do_substepped_timestep(self):
         (ps, pf) = (self.ps, self.pf)

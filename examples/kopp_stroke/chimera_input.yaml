@@ -3,10 +3,8 @@ substrate : [4.25E-03, 2.05E-03, 1.755E-03]
 part : [2.0E-03, 0.425E-03, 0.0]
 els_per_radius : 8.0
 radius : &radius 0.0425E-03
-layer_thickness : &layer_thickness 0.0425E-03
 half_radius : &half_radius 0.02125E-03
-heat_source_depth : &heat_source_depth 0.0119E-03
-num_boundary_layers : [12, 4, 16]
+num_boundary_layers : [12, 4, 12]
 coarsest_el_factor : 32.0
 coarsening_factor : 1.5
 source_terms :
@@ -16,7 +14,8 @@ source_terms :
     radius : *radius
     power : &power 57.344
     path: &path "Path.gcode"
-    depth : *heat_source_depth
+    #depth : &depth 0.02125E-03
+    depth : &depth 0.0119E-03
   - type : lumped
     initial_position : *p0
     initial_speed : *speed
@@ -32,7 +31,7 @@ source_terms :
     radius : *radius
     power : 0.0
     path: *path
-    depth : *heat_source_depth
+    depth : *depth
 # PROPS
 material_in625 : {
   phase_change : {
@@ -46,7 +45,7 @@ material_in625 : {
 }
 convection_coeff : 0.0
 radiation_coeff: 0.0
-smoothing_cte_phase_change : 8.0
+smoothing_cte_phase_change : 0.25
 environment_temperature : &environment_temperature 25
 # END_ESSENTIAL
 petsc_opts_micro: {
@@ -64,26 +63,21 @@ petsc_opts_macro: {
   "pc_type" : "jacobi",
 }
 petsc_opts_mono_robin: {
-  "snes_max_it" : 30,
-  "ksp_atol" : 1e-09,
-  "ksp_rtol" : 1e-09,
-  #"snes_stol" : 1e-3,
-  "snes_linesearch_max_it" : 15,
+  #"snes_max_it" : 30,
+  "snes_atol" : 1e-05,
+  "snes_rtol" : 1e-05,
+    #"snes_linesearch_max_it" : 30,
   "ksp_error_if_not_converged" : "true",
-  "ksp_type" : "preonly",
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-13,
+  "ksp_rtol" : 1e-13,
   "pc_type" : "fieldsplit",
-  "pc_fieldsplit_type" : "schur",
-  "pc_fieldsplit_schur_factorization_type" : "full",
-  "fieldsplit_0_pc_type" : "lu",
-  "fieldsplit_0_pc_factor_mat_solver_type" : "superlu_dist",
-  "fieldsplit_1_pc_type" : "lu",
-  "fieldsplit_1_pc_factor_mat_solver_type" : "superlu_dist"
 }
 petsc_opts_macro_chimera: {
   "snes_max_it" : 30,
-  "ksp_atol" : 1e-09,
-  "ksp_rtol" : 1e-09,
-  "snes_linesearch_max_it" : 15,
+  "snes_atol" : 1e-06,
+  "snes_rtol" : 1e-06,
+    #"snes_linesearch_max_it" : 30,
   "ksp_error_if_not_converged" : "true",
   "ksp_type" : "gmres",
   "ksp_atol" : 1e-13,
@@ -97,22 +91,24 @@ dt : 1.0 #placeholder
 driver_type: "robin"
 initial_condition: False
 quadrature_metadata: {
+  #quadrature_rule : "vertex",
   quadrature_degree : 4,
 }
 supg: 1
+scale_stabilization: 4.0
 
 max_nr_iters: 30
 max_ls_iters: 5
 
 substepping_parameters: {
-  micro_adim_dt: 0.25,
+  micro_adim_dt: 2.0,
   macro_adim_dt: 6.0,
   cooling_adim_dt: 1,
   max_staggered_iters: 1,
   adim_lens: {
     back_pad : 12,
     front_pad : 8,
-    side_pad : 10,
+    side_pad : 11,
     top_pad : 1,
     bot_pad : 6,
   },
@@ -126,17 +122,19 @@ substepping_parameters: {
   chimera_steadiness_workflow: {
     enabled: True,
     adim_dt_increment: 0.5,
-    max_adim_dt: &max_adim_dt 1
+    max_adim_dt: &max_adim_dt 2.0,
+    threshold : 0.05,
   },
 }
 
 moving_domain_params : {
   shape : True,
-  els_per_radius : 12,
+  els_per_radius : 8,
   max_adim_dt : *max_adim_dt,
-  adim_front_len : 3,
-  adim_side_len : 6,
-  adim_bot_len : 2.5,
+  adim_front_len : 4,
+  adim_side_len : 9,
+  adim_bot_len : 3,
   adim_top_len : 0.0,
 }
 
+carry_on_non_convergence: true

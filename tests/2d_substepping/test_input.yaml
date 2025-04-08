@@ -68,6 +68,7 @@ substepping_parameters: {
   },
   writepos: False,
   chimera_always_on: True,
+  mono_robin_gamma_quadrature_degree : 2,
   chimera_steadiness_workflow: {
     enabled: False,
   }

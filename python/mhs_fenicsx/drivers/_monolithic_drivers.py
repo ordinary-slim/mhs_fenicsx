@@ -351,18 +351,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
             return snes.getConvergedReason()
 
         converged_reason = solve()
-        if converged_reason <= 0:
-            if (p1.phase_change) or (p2.phase_change):
-                initial_smoothing_ctes = [p.smoothing_cte_phase_change.value.copy() for p in [p1, p2]]
-                for p in (p1, p2):
-                    p.smoothing_cte_phase_change.value = 1.0
-                if rank == 0:
-                    print(f"Solving with smoothing cte 1.0...", flush=True)
-                converged_reason = solve()
-                for p, initial_smoothing_cte in zip((p1, p2), initial_smoothing_ctes):
-                    p.smoothing_cte_phase_change.value = initial_smoothing_cte
-            assert (converged_reason > 0), f"did not converge : {converged_reason}"
-
+        assert (converged_reason > 0), f"did not converge : {converged_reason}"
 
         snes.destroy()
         [opts.__delitem__(k) for k in opts.getAll().keys()] # Clear options data-base

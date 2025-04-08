@@ -100,15 +100,17 @@ class Problem:
         self.domain_speed     = np.array(parameters["domain_speed"]) if "domain_speed" in parameters else None
         self.attached_to_hs   = bool(parameters["attached_to_hs"]) if "attached_to_hs" in parameters else False
         advection_speed = parameters["advection_speed"][:self.domain.topology.dim] if "advection_speed" in parameters else np.zeros(self.domain.topology.dim)
-        self.advection_speed = fem.Constant(self.domain,advection_speed)
+        self.advection_speed = fem.Constant(self.domain, advection_speed)
         angular_advection_speed = parameters["angular_advection_speed"] if "angular_advection_speed" in parameters else np.zeros(3)
         if self.domain.topology.dim < 3:
             angular_advection_speed = np.sum(angular_advection_speed)
-        self.angular_advection_speed = fem.Constant(self.domain,angular_advection_speed)
+        self.angular_advection_speed = fem.Constant(self.domain, angular_advection_speed)
         rotation_center = parameters["rotation_center"][:self.domain.topology.dim] if "rotation_center" in parameters else np.zeros(self.domain.topology.dim)
-        self.rotation_center = fem.Constant(self.domain,rotation_center)
+        self.rotation_center = fem.Constant(self.domain, rotation_center)
         # Stabilization
         self.is_supg = (("supg" in parameters) and bool(parameters["supg"]))
+        self.scale_stabilization = parameters["scale_stabilization"] if "scale_stabilization" in parameters else 1.0
+        self.scale_stabilization = fem.Constant(self.domain, np.float64(self.scale_stabilization))
         self.advected_el_size : typing.Optional[fem.Function] = fem.Function(self.dg0,name="supg_tau") if self.is_supg else None
         # Integration
         self.quadrature_metadata = parameters["quadrature_metadata"] \
@@ -117,6 +119,10 @@ class Problem:
         self.is_post_initialized = False
         self.is_mesh_shared = False
         self.set_linear_solver(parameters["petsc_opts"] if "petsc_opts" in parameters else None)
+        if "carry_on_non_convergence" in parameters:
+            self.carry_on_non_convergence = parameters["carry_on_non_convergence"]
+        else:
+            self.carry_on_non_convergence = False
 
     def __del__(self):
         try:
@@ -602,7 +608,7 @@ class Problem:
                     assert(self.advected_el_size is not None)
                     supg_coeff = self.advected_el_size**2 / (2 * self.advected_el_size * \
                             advection_coefficient * advection_norm + \
-                             4 * mat.k.ufl(u))
+                             4 * mat.k.ufl(u)) * self.scale_stabilization
                     if not(self.is_steady):
                         a_ufl.append(supg_coeff * time_derivative_coefficient * \
                                 (u - self.u_prev)/self.dt_func * \

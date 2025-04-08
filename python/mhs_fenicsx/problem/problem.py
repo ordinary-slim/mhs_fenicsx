@@ -861,7 +861,11 @@ class Problem:
         snes.setMonitor(lambda _, it, residual: print(it, residual, flush=True) if rank == 0 else None)
         self.set_snes_sol_vector()
         snes.solve(None, self.x)
-        assert (snes.getConvergedReason() > 0), f"did not converge : {snes.getConvergedReason()}"
+        try:
+            assert (snes.getConvergedReason() > 0), f"did not converge : {snes.getConvergedReason()}"
+        except AssertionError:
+            if not(self.carry_on_non_convergence):
+                raise
         self._update_solution(self.x)  # TODO can this be safely removed?
         snes.destroy()
         [opts.__delitem__(k) for k in opts.getAll().keys()] # Clear options data-base

@@ -1,0 +1,58 @@
+isSteady: False
+substrate : [4.25E-03, 2.05E-03, 1.755E-03]
+part : [2.0E-03, 0.425E-03, 0.0]
+els_per_radius : 8.0
+radius : &radius 0.0425E-03
+half_radius : &half_radius 0.02125E-03
+num_boundary_layers : [12, 4, 12]
+coarsest_el_factor : 32.0
+coarsening_factor : 1.5
+source_terms :
+  - type : penetrating_gaussian
+    initial_position : &p0 [0.0, 0.0, 0.0]
+    initial_speed : &speed [0.8, 0.0, 0]
+    radius : *radius
+    power : &power 57.344
+    depth : &depth 0.0119E-03
+# PROPS
+material_in625 : {
+  phase_change : {
+    latent_heat : &latent_heat 280.0E+03,
+    solidus_temperature : &solidus_temperature 1290.0,
+    liquidus_temperature : &liquidus_temperature 1350.0,
+  },
+  density : 8.44E+03, # kg / mm3
+  conductivity : [[0.0, 9.5], [1320.0, 28.85], [2000.0, 28.85]],
+  specific_heat : [[0.0, 405.0], [1320.0, 723.63], [2000.0, 723.63]],
+}
+convection_coeff : 0.0
+radiation_coeff: 0.0
+smoothing_cte_phase_change : 0.25
+environment_temperature : &environment_temperature 25
+# END_ESSENTIAL
+
+max_timesteps: 20
+dt : 1.0 #placeholder
+adim_dt : 2.0
+
+quadrature_metadata: {
+  #quadrature_rule : "vertex",
+  quadrature_degree : 4,
+}
+supg: 1
+scale_stabilization: 4.0
+
+max_nr_iters: 30
+max_ls_iters: 5
+
+moving_domain_params : {
+  shape : True,
+  els_per_radius : 2,
+  max_adim_dt : 2,
+  adim_front_len : 6,
+  adim_side_len : 8,
+  adim_bot_len : 5,
+  adim_top_len : 0.0,
+}
+
+carry_on_non_convergence: true

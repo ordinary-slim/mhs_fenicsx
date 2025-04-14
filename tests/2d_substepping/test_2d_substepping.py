@@ -20,6 +20,9 @@ def get_initial_condition(params):
         initial_condition_fun = lambda x : T_env*np.ones_like(x[0])
     return initial_condition_fun
 
+def get_max_timestep(params):
+    return int(params["max_timesteps"]) if params["max_timesteps"] > 0.0 else np.iinfo(int).max
+
 def get_dt(adim_dt, radius, speed):
     return adim_dt * (radius / speed)
 
@@ -37,7 +40,15 @@ def write_gcode(params):
     with open(params["source_terms"][0]["path"],'w') as f:
         f.writelines(gcode_lines)
 
-def get_mesh(params, els_per_radius, radius, dim):
+def get_mesh(params, radius, dim):
+    els_per_radius = params["els_per_radius"]
+    if (dim == 2) and (params["el_type"] == "quadrilateral"):
+        el_type = mesh.CellType.quadrilateral
+    elif (dim == 3) and (params["el_type"] == "hexahedron"):
+        el_type = mesh.CellType.hexahedron
+    else:
+        el_type = mesh.CellType.triangle if dim == 2 else mesh.CellType.tetrahedron
+
     el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)
     (Lx, Ly) = (params["domain_width"], params["domain_height"])
     Lz = params["domain_depth"] if "domain_depth" in params else 1.0
@@ -45,17 +56,16 @@ def get_mesh(params, els_per_radius, radius, dim):
     nx = np.round((box[3]-box[0]) * el_density).astype(np.int32)
     ny = np.round((box[4]-box[1]) * el_density).astype(np.int32)
     nz = np.round((box[5]-box[2]) * el_density).astype(np.int32)
-    if dim==2:
+    if dim == 2:
         return mesh.create_rectangle(MPI.COMM_WORLD,
-               [box[:2], box[3:5]],
-               [nx, ny],
-               #mesh.CellType.quadrilateral,
-               )
+                                     [box[:2], box[3:5]],
+                                     [nx, ny],
+                                     el_type,)
     else:
         return mesh.create_box(MPI.COMM_WORLD,
-               [box[:3], box[3:]],
-               [nx, ny, nz],
-               )
+                               [box[:3], box[3:]],
+                               [nx, ny, nz],
+                               el_type)
 
 
 def run_staggered(params, driver_type, writepos=True):
@@ -68,7 +78,7 @@ def run_staggered(params, driver_type, writepos=True):
         initial_relaxation_factors=[0.5,1]
     else:
         raise ValueError("Undefined staggered driver type.")
-    big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
+    big_mesh = get_mesh(params, radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
@@ -76,7 +86,7 @@ def run_staggered(params, driver_type, writepos=True):
     initial_condition_fun = get_initial_condition(params)
     big_p.set_initial_condition(  initial_condition_fun )
 
-    max_timesteps = params["max_timesteps"]
+    max_timesteps = get_max_timestep(params)
 
     substeppin_driver = MHSStaggeredSubstepper(driver_constructor, initial_relaxation_factors, big_p)
     staggered_driver = substeppin_driver.staggered_driver
@@ -93,12 +103,12 @@ def run_staggered(params, driver_type, writepos=True):
         itime_step += 1
         substeppin_driver.do_timestep()
         if writepos:
-            ps.writepos()
+            ps.writepos(extension="vtx")
     return big_p
 
 def run_semi_monolithic(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
-    big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
+    big_mesh = get_mesh(params, radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
@@ -106,7 +116,7 @@ def run_semi_monolithic(params, writepos=True):
     initial_condition_fun = get_initial_condition(params)
     big_p.set_initial_condition(  initial_condition_fun )
 
-    max_timesteps = params["max_timesteps"]
+    max_timesteps = get_max_timestep(params)
     substeppin_driver = MHSSemiMonolithicSubstepper(big_p)
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
 
@@ -116,34 +126,40 @@ def run_semi_monolithic(params, writepos=True):
         substeppin_driver.do_timestep()
         if writepos:
             for p in [ps,pf]:
-                p.writepos(extra_funcs=[p.u_prev])
+                p.writepos(extension="vtx")
     return big_p
 
-def run_reference(params):
+def run_reference(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
     speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
-    big_mesh = get_mesh(params, params["els_per_radius"], radius, 2)
+    domain = get_mesh(params, radius, 2)
 
     macro_params = params.copy()
-    macro_params["dt"] = get_dt(params["micro_adim_dt"], radius, speed)
+    print_dt = get_dt(params["substepping_parameters"]["micro_adim_dt"], radius, speed)
+    macro_params["dt"] = print_dt
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    big_p = Problem(big_mesh, macro_params, name="big")
+    ps = Problem(domain, macro_params, finalize_activation=True, name="big")
 
     initial_condition_fun = get_initial_condition(params)
-    big_p.set_initial_condition(  initial_condition_fun )
+    ps.set_initial_condition(initial_condition_fun)
 
-    big_p.set_forms()
-    big_p.compile_create_forms()
+    ps.set_forms()
+    ps.compile_forms()
     itime_step = 0
-    while ((itime_step < params["max_timesteps"]) and not(big_p.is_path_over())):
+    ps.set_dt(print_dt)
+    max_timesteps = get_max_timestep(params) * (params["substepping_parameters"]["macro_adim_dt"] / params["substepping_parameters"]["micro_adim_dt"])
+    macro_dt = ps.dimensionalize_mhs_timestep(ps.source.path.tracks[0], params["substepping_parameters"]["macro_adim_dt"])
+    while ((itime_step < max_timesteps) and not(ps.is_path_over())):
         itime_step += 1
-        big_p.pre_iterate()
-        big_p.pre_assemble()
+        ps.pre_iterate()
+        ps.instantiate_forms()
+        ps.pre_assemble()
+        ps.non_linear_solve()
+        ps.post_iterate()
+        if writepos and (abs(ps.time / macro_dt - np.rint(ps.time / macro_dt)) < 1e-7):
+            ps.writepos(extension="vtx")
+    return ps
 
-        big_p.non_linear_solve()
-
-        big_p.post_iterate()
-        big_p.writepos()
 
 def test_staggered_robin_substepper():
     with open("test_input.yaml", 'r') as f:

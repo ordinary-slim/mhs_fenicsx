@@ -64,6 +64,8 @@ class ChimeraSubstepper(ABC):
         self.steadiness_workflow_params = self.params["chimera_steadiness_workflow"]
         self.steadiness_threshold = self.steadiness_workflow_params["threshold"] \
             if "threshold" in self.steadiness_workflow_params else 0.05
+        self.min_steps_at_dt = int(self.steadiness_workflow_params["min_steps_at_dt"]) \
+            if "min_steps_at_dt" in self.steadiness_workflow_params else 1
         self.steadiness_metric = L2Differ(self.pm)
         self.steadiness_measurements = []
 
@@ -106,6 +108,7 @@ class ChimeraSubstepper(ABC):
         # STEADINESS WORKFLOW
         # Unsteady reset
         if self.direction_change:
+            self.steadiness_measurements.clear()
             if not(self.chimera_always_on):
                 self.chimera_on = False
             if increasing_dt:
@@ -126,7 +129,8 @@ class ChimeraSubstepper(ABC):
 
     def is_steady_enough(self):
         if self.params["chimera_steadiness_workflow"]["enabled"]:
-            yes = (len(self.steadiness_measurements) > 1) and (((self.steadiness_measurements[-1] - self.steadiness_measurements[-2]) / self.steadiness_measurements[-2]) < self.steadiness_threshold)
+            yes = (len(self.steadiness_measurements) > self.min_steps_at_dt) and \
+                    (((self.steadiness_measurements[-1] - self.steadiness_measurements[-2]) / self.steadiness_measurements[-2]) < self.steadiness_threshold)
             if yes:
                 self.steadiness_measurements.clear()
             return yes

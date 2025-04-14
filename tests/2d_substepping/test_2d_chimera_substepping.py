@@ -3,7 +3,7 @@ from mpi4py import MPI
 
 from mhs_fenicsx.drivers import MonolithicRRDriver, MonolithicDomainDecompositionDriver, StaggeredRRDriver
 from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, ChimeraSubstepper, MHSStaggeredChimeraSubstepper, MHSSemiMonolithicChimeraSubstepper
-from test_2d_substepping import get_initial_condition, get_dt, write_gcode, get_mesh
+from test_2d_substepping import get_initial_condition, get_dt, write_gcode, get_mesh, get_max_timestep
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.chimera import build_moving_problem
 from mhs_fenicsx.problem.helpers import assert_pointwise_vals, print_vals
@@ -17,20 +17,20 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
 def run_staggered_RR(params, writepos=True):
-    els_per_radius = params["els_per_radius"]
     radius = params["source_terms"][0]["radius"]
     initial_relaxation_factors=[1.0,1.0]
-    big_mesh = get_mesh(params, els_per_radius, radius, 2)
+    big_mesh = get_mesh(params, radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     ps = Problem(big_mesh, macro_params, name=f"big_chimera_ss_RR")
+    els_per_radius = macro_params["moving_domain_params"]["els_per_radius"]
     pm = build_moving_problem(ps, els_per_radius)
     initial_condition_fun = get_initial_condition(params)
     ps.set_initial_condition(  initial_condition_fun )
     pm.set_initial_condition(  initial_condition_fun )
 
-    max_timesteps = params["max_timesteps"]
+    max_timesteps = get_max_timestep(params)
 
     substeppin_driver = MHSStaggeredChimeraSubstepper(
             StaggeredRRDriver,
@@ -48,23 +48,24 @@ def run_staggered_RR(params, writepos=True):
         itime_step += 1
         substeppin_driver.do_timestep()
         if writepos:
-            ps.writepos()
+            ps.writepos(extension="vtx")
     return ps
 
 def run_hodge(params, writepos=True):
     els_per_radius = params["els_per_radius"]
     radius = params["source_terms"][0]["radius"]
-    big_mesh = get_mesh(params, els_per_radius, radius, 2)
+    big_mesh = get_mesh(params, radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     ps = Problem(big_mesh, macro_params, name=f"big_chimera_sms")
+    els_per_radius = macro_params["moving_domain_params"]["els_per_radius"]
     pm = build_moving_problem(ps, els_per_radius)
     initial_condition_fun = get_initial_condition(params)
     ps.set_initial_condition(  initial_condition_fun )
     pm.set_initial_condition(  initial_condition_fun )
 
-    max_timesteps = params["max_timesteps"]
+    max_timesteps = get_max_timestep(params)
 
     substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm)
     pf = substeppin_driver.pf
@@ -73,8 +74,8 @@ def run_hodge(params, writepos=True):
         itime_step += 1
         substeppin_driver.do_timestep()
         if writepos:
-            for p in [ps,pf]:
-                p.writepos(extra_funcs=[p.u_prev])
+            for p in [ps, pf]:
+                p.writepos(extension="vtx")
     return ps
 
 def test_staggered_robin_chimera_substepper():

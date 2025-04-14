@@ -18,7 +18,7 @@ def boundary_layer_progression(fine_el_size, coarsest_el_factor, coarsening_fact
 
     return num_elements_per_layer, heights
 
-def get_mesh(params):
+def get_mesh(params, symmetry=False):
     gmsh.initialize()
     if rank == 0:
         # PARAMS
@@ -36,20 +36,30 @@ def get_mesh(params):
         half_lens_part = np.array(part_lens) / 2
         half_lens_substrate = np.array(substrate_lens) / 2
         # Bot surface part
-        gmsh.model.geo.addPoint( -half_lens_part[0], -half_lens_part[1], 0.0, tag = 1 )
-        gmsh.model.geo.addPoint( -half_lens_part[0], +half_lens_part[1], 0.0, tag = 2 )
-        gmsh.model.geo.addPoint( +half_lens_part[0], +half_lens_part[1], 0.0, tag = 3 )
-        gmsh.model.geo.addPoint( +half_lens_part[0], -half_lens_part[1], 0.0, tag = 4 )
+        llcorner = np.array([-half_lens_part[0], -half_lens_part[1], 0.0])
+        lrcorner = np.array([-half_lens_part[0], +half_lens_part[1], 0.0])
+        urcorner = np.array([+half_lens_part[0], +half_lens_part[1], 0.0])
+        ulcorner = np.array([+half_lens_part[0], -half_lens_part[1], 0.0])
+        if symmetry:
+            llcorner[1] = 0.0
+            ulcorner[1] = 0.0
+        gmsh.model.geo.addPoint(*llcorner, tag=1)
+        gmsh.model.geo.addPoint(*lrcorner, tag=2)
+        gmsh.model.geo.addPoint(*urcorner, tag=3)
+        gmsh.model.geo.addPoint(*ulcorner, tag=4)
         linesBottomSurfacePart = []
-        linesBottomSurfacePart.append( gmsh.model.geo.addLine( 1, 2, tag = 1 ) )
-        linesBottomSurfacePart.append( gmsh.model.geo.addLine( 2, 3, tag = 2 ) )
-        linesBottomSurfacePart.append( gmsh.model.geo.addLine( 3, 4, tag = 3 ) )
-        linesBottomSurfacePart.append( gmsh.model.geo.addLine( 4, 1, tag = 4 ) )
+        linesBottomSurfacePart.append(gmsh.model.geo.addLine(1, 2, tag=1))
+        linesBottomSurfacePart.append(gmsh.model.geo.addLine(2, 3, tag=2))
+        linesBottomSurfacePart.append(gmsh.model.geo.addLine(3, 4, tag=3))
+        linesBottomSurfacePart.append(gmsh.model.geo.addLine(4, 1, tag=4))
         for idx, line in enumerate(linesBottomSurfacePart):
-            if idx%2 != 0:
-                numEls = part_lens[0] / fine_el_size
+            if (idx % 2) != 0:
+                pL = part_lens[0]
             else:
-                numEls = part_lens[1] / fine_el_size
+                pL = part_lens[1]
+                if symmetry:
+                    pL /= 2.0
+            numEls = pL / fine_el_size
             numEls = np.rint(numEls).astype(int)
             gmsh.model.geo.mesh.setTransfiniteCurve(line, numEls+1 )
         curveLoopBotSurfacePart = gmsh.model.geo.addCurveLoop( linesBottomSurfacePart, 1 )
@@ -69,24 +79,32 @@ def get_mesh(params):
         nElements, heights = boundary_layer_progression(fine_el_size, coarsest_el_factor, coarsening_factor)
         coarseBotExtrusion = gmsh.model.geo.extrude([(2, midBotSurface[1])], 0, 0, -lenCoarseBotExtrusion, numElements = nElements, heights= heights, recombine= True)
         botBotSurface, _, xSideBotBot1, ySideBotBot1, xSideBotBot2, ySideBotBot2 = coarseBotExtrusion
-        ## Substrate extrusions Y
-        ### Uniform extrusions
+        # Substrate extrusions Y
+        ## Uniform extrusions
         uniformYExtrusions = []
         nboun_layers_y = nboun_layers[1]
         lenUniformYExtrusion = nboun_layers_y*fine_el_size
         for idx, surface in enumerate([ySideMidBot1, ySideMidBot2, ySideBotBot1, ySideBotBot2]):
-            uniformYExtrusions.append( gmsh.model.geo.extrude([(2, surface[1])], 0.0, np.power(-1, idx)*lenUniformYExtrusion, 0.0, numElements =[nboun_layers_y], recombine= True) )
+            if symmetry:
+                if idx % 2 == 1:
+                    uniformYExtrusions.append(None)
+                    continue
+            uniformYExtrusions.append(gmsh.model.geo.extrude([(2, surface[1])], 0.0, np.power(-1, idx)*lenUniformYExtrusion, 0.0, numElements =[nboun_layers_y], recombine=True))
 
-        ### Coarse extrusions
+        ## Coarse extrusions
         coarseYExtrusions = []
         lenCoarseYExtrusion = (substrate_lens[1] - part_lens[1])/2 - nboun_layers_y*fine_el_size
         nElements, heights = boundary_layer_progression(fine_el_size, coarsest_el_factor, coarsening_factor)
-        for idx, extrusion in enumerate( uniformYExtrusions ):
+        for idx, extrusion in enumerate(uniformYExtrusions):
+            if extrusion is None:
+                coarseYExtrusions.append(None)
+                continue
+            dy = np.power(-1, idx)*lenCoarseYExtrusion
             tagSurface = extrusion[0][1]
-            coarseYExtrusions.append( gmsh.model.geo.extrude([(2, tagSurface)], 0.0, np.power(-1, idx)*lenCoarseYExtrusion, 0.0, numElements = nElements, heights= heights, recombine= True) )
+            coarseYExtrusions.append( gmsh.model.geo.extrude([(2, tagSurface)], 0.0, dy, 0.0, numElements = nElements, heights= heights, recombine= True) )
 
-        ## Substrate extrusions X
-        ### Uniform extrusions
+        # Substrate extrusions X
+        ## Uniform extrusions
         positiveUniformExtrusionsX = []
         negativeUniformExtrusionsX = []
         surfacesXPlus = []
@@ -96,6 +114,8 @@ def get_mesh(params):
             surfacesXMinus.append( extrusion[2][1] )
             surfacesXPlus.append( extrusion[4][1] )
         for idx, extrusion in enumerate(uniformYExtrusions + coarseYExtrusions):
+            if extrusion is None:
+                continue
             if (idx%2 == 0):
                 surfacesXPlus.append( extrusion[3][1] )
                 surfacesXMinus.append( extrusion[5][1] )
@@ -109,7 +129,7 @@ def get_mesh(params):
             positiveUniformExtrusionsX.append( gmsh.model.geo.extrude([(2, surface)], extrusionLen, 0.0, 0.0, numElements =[numElements], recombine= True ) )
         for surface in surfacesXMinus:
             negativeUniformExtrusionsX.append( gmsh.model.geo.extrude([(2, surface)], -extrusionLen, 0.0, 0.0, numElements =[numElements], recombine= True ) )
-        ### Coarse extrusions
+        ## Coarse extrusions
         extrusionLen = (substrate_lens[0] - part_lens[0])/2 - nboun_layers_x*fine_el_size
         nElements, heights = boundary_layer_progression(fine_el_size, coarsest_el_factor, coarsening_factor)
         positiveCoarseExtrusionsX = []

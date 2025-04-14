@@ -23,12 +23,14 @@ def get_adim_back_len(fine_adim_dt : float = 0.5, adim_dt : float = 2):
     ''' Back length of moving domain'''
     return 8
 
+
 def get_k(p):
     return p.materials[0].k.Ys[:-1].mean()
 
-def get_h(p):
-    radius = params["source_terms"][0]["radius"]
-    el_density = np.round((1.0 / radius) * params["els_per_radius"]).astype(np.int32)
+
+def get_h(p, els_per_radius):
+    radius = p.source.R
+    el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)
     return 1.0 / el_density
 
 def write_gcode(params):
@@ -85,7 +87,8 @@ def run_staggered(params, writepos=True, descriptor=""):
                                                ps,)
     ps = substeppin_driver.ps
     staggered_driver = substeppin_driver.staggered_driver
-    staggered_driver.set_dirichlet_coefficients(get_h(ps), get_k(ps))
+    staggered_driver.set_dirichlet_coefficients(
+            get_h(ps, params["els_per_radius"]), get_k(ps))
 
     itime_step = 0
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
@@ -94,6 +97,7 @@ def run_staggered(params, writepos=True, descriptor=""):
         if writepos:
             ps.writepos(extension="vtx", extra_funcs=[ps.u_prev])
     return ps
+
 
 def run_hodge(params, writepos=True, descriptor=""):
     big_mesh = get_mesh(params)
@@ -136,7 +140,8 @@ def run_staggered_chimera_rr(params, writepos=True, descriptor=""):
             ps, pm)
 
     staggered_driver = substeppin_driver.staggered_driver
-    staggered_driver.set_dirichlet_coefficients(get_h(ps), get_k(ps))
+    staggered_driver.set_dirichlet_coefficients(get_h(ps,
+                                                      params["els_per_radius"]), get_k(ps))
 
     itime_step = 0
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):

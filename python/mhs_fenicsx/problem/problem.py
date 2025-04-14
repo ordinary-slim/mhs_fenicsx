@@ -205,7 +205,7 @@ class Problem:
     def set_rhs( self, rhs ):
         self.rhs = rhs
 
-    def define_materials(self,parameters):
+    def define_materials(self, parameters):
         self.T_env = fem.Constant(self.domain, PETSc.ScalarType(parameters["environment_temperature"]))
         self.T_dep = parameters["deposition_temperature"] if "deposition_temperature" in parameters else None
         self.convection_coeff = fem.Constant(self.domain, PETSc.ScalarType(parameters["convection_coeff"])) if "convection_coeff" \
@@ -215,16 +215,22 @@ class Problem:
 
         self.materials = []
         self.phase_change, self.melting = False, False
-        for key in parameters.keys():
-            if key.startswith("material"):
-                name = key.split('_')[-1]
-                material = Material(parameters[key], name=name)
-                self.materials.append(material)
-                self.phase_change = (self.phase_change or material.phase_change)
-                self.melting = (self.melting or (material.melts_to is not None))
+        if "materials" in parameters and \
+                isinstance(parameters["materials"], list) and \
+                all(isinstance(mat, Material) for mat in parameters["materials"]):
+                    self.materials = parameters["materials"]
+        else:
+            for key in parameters.keys():
+                if key.startswith("material"):
+                    name = key.split('_')[-1]
+                    material = Material(parameters[key], name=name)
+                    self.materials.append(material)
         self.material_library = {mat.name : mat for mat in self.materials}
-        self.local_cells = {mat: np.array([], dtype=np.int32) for mat in self.materials}
         self.material_library[None] = None
+        for material in self.materials:
+            self.phase_change = (self.phase_change or material.phase_change)
+            self.melting = (self.melting or (material.melts_to is not None))
+        self.local_cells = {mat: np.array([], dtype=np.int32) for mat in self.materials}
         if self.melting:
             for mat in self.materials:
                 mat.melts_to = self.material_library[mat.melts_to]
@@ -268,21 +274,24 @@ class Problem:
             self.advected_el_size = fem.Function(self.dg0,name="supg_tau")
         mhs_fenicsx_cpp.compute_el_size_along_vector(self.advected_el_size._cpp_object,self.advection_speed._cpp_object)
 
+    def move(self, dx):
+        self.domain.geometry.x[:] += dx
+        self.bb_tree.bbox_coordinates[:] += dx
+        self.dof_coords += dx
+        self.clear_gamma_data()
+
     def pre_iterate(self, forced_time_derivative=False, verbose=True, finalize_activation=True):
         # Pre-iterate source first, current track is tn's
-        if rank==0 and verbose:
+        if rank == 0 and verbose:
             print(f"\nProblem {self.name} about to solve for iter {self.iter+1}, time {self.time+self.dt.value}")
-        self.source.pre_iterate(self.time,self.dt.value,verbose=verbose)
+        self.source.pre_iterate(self.time, self.dt.value, verbose=verbose)
         # If chimera, update domain speed here
         if self.attached_to_hs:
             self.set_domain_speed(self.source.speed)
         # Mesh motion
-        if self.domain_speed is not None and not(self.is_mesh_shared):
+        if self.domain_speed is not None and not (self.is_mesh_shared):
             dx = self.domain_speed * self.dt.value
-            self.domain.geometry.x[:] += dx
-            self.bb_tree.bbox_coordinates[:] += dx
-            self.dof_coords += dx
-            self.clear_gamma_data()
+            self.move(dx)
 
         if self.is_supg and (np.linalg.norm(self.advection_speed.value) > 1e-7):
             self.compute_advected_el_size()
@@ -759,7 +768,9 @@ class Problem:
     
     def initialize_post(self):
         self.result_folder = f"post_{self.name}"
-        shutil.rmtree(self.result_folder,ignore_errors=True)
+        shutil.rmtree(self.result_folder, ignore_errors=True)
+        for writer in self.writers.values():
+            writer.close()
         self.writers["vtk"] = io.VTKFile(self.domain.comm, f"{self.result_folder}/{self.name}.pvd", "wb")
         self.writers["vtx"] = io.VTXWriter(self.domain.comm,
                                            f"{self.result_folder}/{self.name}.bp",
@@ -796,7 +807,7 @@ class Problem:
         self.writers["vtk"].write_function(funcs, t=np.round(self.time, 9))
 
     def writepos_vtx(self):
-        self.writers["vtx"].write(self.time)
+        self.writers["vtx"].write(np.round(self.time, 12))
 
     def clear_dirchlet_bcs(self):
         self.dirichlet_bcs = []

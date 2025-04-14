@@ -18,6 +18,7 @@ material_metal : {
     liquidus_temperature : 1750.0
   }
 }
+el_type : triangle
 smoothing_cte_phase_change : 5.0
 #convection_coeff : 1.0E-00
 environment_temperature : 25
@@ -75,6 +76,7 @@ substepping_parameters: {
 }
 
 moving_domain_params : {
+  els_per_radius : 2,
   shape : False,
   max_adim_dt : 2,
   adim_front_len : 2,

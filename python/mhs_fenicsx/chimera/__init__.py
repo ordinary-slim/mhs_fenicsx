@@ -47,7 +47,7 @@ def get_adim_back_len_paper(fine_adim_dt : float = 0.5, adim_dt : float = 2):
 def get_adim_back_len_simple(fine_adim_dt : float = 0.5, adim_dt : float = 2):
     return adim_dt + 4 * fine_adim_dt
 
-def build_moving_problem(p_fixed : Problem, els_per_radius=2, shift=None, custom_get_adim_back_len=None):
+def build_moving_problem(p_fixed : Problem, els_per_radius=2, shift=None, custom_get_adim_back_len=None, symmetries=[]):
     params = p_fixed.input_parameters.copy()
     mdparams = params["moving_domain_params"]
     if params["moving_domain_params"]["shape"]:
@@ -63,7 +63,8 @@ def build_moving_problem(p_fixed : Problem, els_per_radius=2, shift=None, custom
     adim_bot_len = mdparams["adim_bot_len"]
     adim_top_len = mdparams["adim_top_len"]
     moving_domain = mesh_around_hs(p_fixed.source, p_fixed.domain.topology.dim, els_per_radius, shift,
-                                   adim_back_len, adim_front_len, adim_side_len, adim_bot_len, adim_top_len)
+                                   adim_back_len, adim_front_len, adim_side_len, adim_bot_len, adim_top_len,
+                                   symmetries=symmetries)
     params["attached_to_hs"] = 1
     # Placeholders
     params["domain_speed"] = np.array([1.0, 0.0, 0.0])
@@ -82,7 +83,8 @@ def mesh_around_hs(hs:HeatSource,
                    adim_front_len = 2.0,
                    adim_side_len = 2.0,
                    adim_bot_len = 2.0,
-                   adim_top_len = 2.0):
+                   adim_top_len = 2.0,
+                   symmetries = []):
     center_of_mesh = np.array(hs.x)
     back_length  = hs.R * adim_back_len
     front_length = hs.R * adim_front_len
@@ -90,9 +92,9 @@ def mesh_around_hs(hs:HeatSource,
     bot_length   = hs.R * adim_bot_len
     top_length   = hs.R * adim_top_len
 
-    el_size      = hs.R / float(els_per_radius)
+    el_size = hs.R / float(els_per_radius)
 
-    mesh_bounds  = [
+    mesh_bounds = [
             center_of_mesh[0]-back_length,
             center_of_mesh[1]-side_length,
             center_of_mesh[2]-bot_length,
@@ -108,22 +110,30 @@ def mesh_around_hs(hs:HeatSource,
     nx = np.rint((back_length+front_length)/el_size).astype(int)
     ny = np.rint(side_length*2/el_size).astype(int)
     nz = np.rint((top_length+bot_length)/el_size).astype(int)
+    nels = [nx, ny, nz]
+
+    for symmetry in symmetries:
+        axis, side = symmetry[0], symmetry[1]
+        nels[axis] /= 2
+        nels[axis] = np.ceil(nels[axis]).astype(int)
+        mesh_bounds[axis+(1-side)*3] = center_of_mesh[axis]
+
     if dim==1:
         return dolfinx.mesh.create_interval(MPI.COMM_WORLD,
-                                            nx,
+                                            nels[:dim],
                                             [mesh_bounds[0],mesh_bounds[3]],
                                             ghost_mode=dolfinx.mesh.GhostMode.shared_facet,)
     elif dim==2:
         return dolfinx.mesh.create_rectangle(MPI.COMM_WORLD,
                                              [mesh_bounds[:2],mesh_bounds[3:5]],
-                                             [nx,ny],
+                                             nels[:dim],
                                              dolfinx.mesh.CellType.quadrilateral,
                                              ghost_mode=dolfinx.mesh.GhostMode.shared_facet,
                                              )
     else:
         return dolfinx.mesh.create_box(MPI.COMM_WORLD,
                                        [mesh_bounds[:3],mesh_bounds[3:]],
-                                       [nx,ny,nz],
+                                       nels[:dim],
                                        dolfinx.mesh.CellType.hexahedron,
                                        ghost_mode=dolfinx.mesh.GhostMode.shared_facet,
                                        )

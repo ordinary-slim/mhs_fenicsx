@@ -716,6 +716,9 @@ std::vector<int> find_owner_rank(
       }
     }
   }
+
+  MPI_Comm_free(&forward_comm);
+  MPI_Comm_free(&reverse_comm);
   return point_owners;
 }
 

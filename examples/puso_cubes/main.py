@@ -10,21 +10,20 @@ rank = comm.Get_rank()
 
 def get_mesh(params):
     el_size = params["el_size"]
-    edge_len = params["edge_length"]
-    num_layers = params["num_layers"]
-    Lx, Ly = edge_len, edge_len
-    part_height = el_size * num_layers 
-    Lz = edge_len + part_height
-    box = [-Lx/2.0, -Ly/2.0, -edge_len, +Lx/2.0, +Ly/2.0, part_height]
-    num_els = [np.round(L / el_size).astype(int) for L in [Lx, Ly, Lz]]
+    part_height = params["part_height"]
+    substrate_height = params["substrate_height"]
+    width = params["width"]
+    depth = params["depth"]
+    box = [-width/2.0, -depth/2.0, -substrate_height, +width/2.0, +depth/2.0, part_height]
+    num_els = [(np.round(box[i+3]-box[i]) / el_size).astype(int) for i in range(3)]
     return mesh.create_box(comm, [box[:3], box[3:]], num_els, cell_type=mesh.CellType.hexahedron)
 
 def write_gcode(params):
     el_size = params["el_size"]
     num_layers = params["num_layers"]
-    edge_len = params["edge_length"]
-    half_len = edge_len / 2.0
-    num_hatches = np.rint(edge_len / el_size).astype(int)
+    width = params["width"]
+    half_len = width / 2.0
+    num_hatches = np.rint(width / el_size).astype(int)
     speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     gcode_lines = []
     gcode_lines.append(f"G0 F{speed:g}")

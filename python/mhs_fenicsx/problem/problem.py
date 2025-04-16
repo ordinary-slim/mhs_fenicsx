@@ -774,7 +774,7 @@ class Problem:
         self.writers["vtk"] = io.VTKFile(self.domain.comm, f"{self.result_folder}/{self.name}.pvd", "wb")
         self.writers["vtx"] = io.VTXWriter(self.domain.comm,
                                            f"{self.result_folder}/{self.name}.bp",
-                                           output=[self.u, self.source.fem_function, self.active_nodes_func])
+                                           output=[self.u, self.source.fem_function, self.active_nodes_func, self.active_els_func, self.material_id])
         self.is_post_initialized = True
 
     def writepos(self, extension="vtk", extra_funcs=[]):

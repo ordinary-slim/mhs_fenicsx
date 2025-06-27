@@ -3,25 +3,15 @@ isSteady: False
 radius : &radius 0.05
 half_radius : &half_radius 0.025
 source_terms :
-  - initial_position : &p0 [-5.0, 0.0, 0.0]
+  - type : lumped
+    initial_position : &p0 [-5.0, 0.0, 0.0]
     initial_speed : &speed [1000.0, 0.0, 0]
     radius : *radius
     power : &power 500
     path: &path "Path.gcode"
-  - initial_position : *p0
-    initial_speed : *speed
-    radius : *radius
-    power : 0.0
-    path: *path
-  - type : lumped
-    initial_position : *p0
-    initial_speed : *speed
-    radius : *radius
-    power : *power
     mdwidth  : *radius
     mdheight : *half_radius
     mddepth: *half_radius
-    path : *path
 # PROPS
 el_type : quadrilateral
 material_metal : {
@@ -64,7 +54,7 @@ petsc_opts_macro_chimera: {
 }
 domain_width: 1
 domain_height: 1
-els_per_radius: &els_per_radius 8
+els_per_radius: &els_per_radius 4
 
 max_timesteps: -1
 dt : 1.0
@@ -78,8 +68,8 @@ max_ls_iters: 5
 post_freq : 8
 
 substepping_parameters: {
-  micro_adim_dt: 0.5,
-  macro_adim_dt: 15.0,
+  micro_adim_dt: 8.0,
+  macro_adim_dt: 8.0,
   max_staggered_iters: 1,
   adim_lens: {
     back_pad : 3,

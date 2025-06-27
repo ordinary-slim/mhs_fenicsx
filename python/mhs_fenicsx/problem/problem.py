@@ -86,7 +86,7 @@ class Problem:
         self.dt       = fem.Constant(self.domain, dt)
         self.dt_func  = fem.Function(self.v, name="dt")
         self.dt_func.x.array[:] = self.dt.value
-                         
+
         # Source term
         self.sources = create_heat_sources(self)
         self.source, self.current_source_term = self.sources[0], 0
@@ -98,31 +98,26 @@ class Problem:
 
         # Motion
         self.domain_speed     = np.array(parameters["domain_speed"]) if "domain_speed" in parameters else None
-        self.attached_to_hs   = bool(parameters["attached_to_hs"]) if "attached_to_hs" in parameters else False
-        advection_speed = parameters["advection_speed"][:self.domain.topology.dim] if "advection_speed" in parameters else np.zeros(self.domain.topology.dim)
+        self.attached_to_hs   = bool(parameters.get("attached_to_hs", False))
+        advection_speed = parameters.get("advection_speed", np.zeros(self.domain.topology.dim))[:self.domain.topology.dim]
         self.advection_speed = fem.Constant(self.domain, advection_speed)
-        angular_advection_speed = parameters["angular_advection_speed"] if "angular_advection_speed" in parameters else np.zeros(3)
+        angular_advection_speed = parameters.get("angular_advection_speed", np.zeros(3))
         if self.domain.topology.dim < 3:
             angular_advection_speed = np.sum(angular_advection_speed)
         self.angular_advection_speed = fem.Constant(self.domain, angular_advection_speed)
-        rotation_center = parameters["rotation_center"][:self.domain.topology.dim] if "rotation_center" in parameters else np.zeros(self.domain.topology.dim)
+        rotation_center = parameters.get("rotation_center", np.zeros(self.domain.topology.dim))[:self.domain.topology.dim]
         self.rotation_center = fem.Constant(self.domain, rotation_center)
         # Stabilization
         self.is_supg = (("supg" in parameters) and bool(parameters["supg"]))
-        self.scale_stabilization = parameters["scale_stabilization"] if "scale_stabilization" in parameters else 1.0
+        self.scale_stabilization = parameters.get("scale_stabilization", 1.0)
         self.scale_stabilization = fem.Constant(self.domain, np.float64(self.scale_stabilization))
         self.advected_el_size : typing.Optional[fem.Function] = fem.Function(self.dg0,name="supg_tau") if self.is_supg else None
         # Integration
-        self.quadrature_metadata = parameters["quadrature_metadata"] \
-                if "quadrature_metadata" in parameters \
-                else {"quadrature_rule":"vertex", "quadrature_degree":1, }
+        self.quadrature_metadata = parameters.get("quadrature_metadata", {"quadrature_rule":"vertex", "quadrature_degree":1, })
         self.is_post_initialized = False
         self.is_mesh_shared = False
-        self.set_linear_solver(parameters["petsc_opts"] if "petsc_opts" in parameters else None)
-        if "carry_on_non_convergence" in parameters:
-            self.carry_on_non_convergence = parameters["carry_on_non_convergence"]
-        else:
-            self.carry_on_non_convergence = False
+        self.set_linear_solver(parameters.get("petsc_opts", None))
+        self.carry_on_non_convergence = parameters.get("carry_on_non_convergence", False)
 
     def __del__(self):
         try:
@@ -207,7 +202,7 @@ class Problem:
 
     def define_materials(self, parameters):
         self.T_env = fem.Constant(self.domain, PETSc.ScalarType(parameters["environment_temperature"]))
-        self.T_dep = parameters["deposition_temperature"] if "deposition_temperature" in parameters else None
+        self.T_dep = parameters.get("deposition_temperature", None)
         self.convection_coeff = fem.Constant(self.domain, PETSc.ScalarType(parameters["convection_coeff"])) if "convection_coeff" \
                 in parameters else None
         self.radiation_coeff = fem.Constant(self.domain, PETSc.ScalarType(parameters["radiation_coeff"])) if "radiation_coeff" \
@@ -231,6 +226,8 @@ class Problem:
             self.phase_change = (self.phase_change or material.phase_change)
             self.melting = (self.melting or (material.melts_to is not None))
         self.local_cells = {mat: np.array([], dtype=np.int32) for mat in self.materials}
+        if self.phase_change:
+            self.latent_heat_treatment = parameters.get("latent_heat_treatment", "celentano")
         if self.melting:
             for mat in self.materials:
                 mat.melts_to = self.material_library[mat.melts_to]
@@ -599,13 +596,21 @@ class Problem:
             if self.phase_change:
                 advection_coefficient += mat.rho.ufl(u) * mat.L.ufl(u) * dliquid_fraction(u)
             if not(self.is_steady):
+                if self.phase_change:
+                    # Celentano (source-based method)
+                    if self.latent_heat_treatment == "celentano":
+                        a_ufl.append(mat.rho.ufl(u) * mat.L.ufl(u) * \
+                                (liquid_fraction(u) - liquid_fraction(self.u_prev))/self.dt_func * \
+                                v * dx(itag))
+                    # Apparent heat capacity
+                    elif self.latent_heat_treatment == "capp":
+                        time_derivative_coefficient += mat.rho.ufl(u) * mat.L.ufl(u) * dliquid_fraction(u)
+                    else:
+                        raise ValueError(f"Unknown latent heat treatment {self.latent_heat_treatment}!")
+                # Main time derivative term
                 a_ufl.append(time_derivative_coefficient * \
                         (u - self.u_prev)/self.dt_func * \
                         v * dx(itag))
-                if self.phase_change:
-                    a_ufl.append(mat.rho.ufl(u) * mat.L.ufl(u) * \
-                            (liquid_fraction(u) - liquid_fraction(self.u_prev))/self.dt_func * \
-                            v * dx(itag))
 
             # Translational advection
             has_advection = (np.linalg.norm(self.advection_speed.value) > 1e-7)

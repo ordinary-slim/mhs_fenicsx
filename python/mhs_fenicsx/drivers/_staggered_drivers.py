@@ -25,7 +25,7 @@ class StaggeredDomainDecompositionDriver(ABC):
         self.convergence_threshold = 1e-6
         self.writers = dict()
         self.iter = -1
-        self.is_chimera = not(p1.domain == p2.domain) # Different meshes
+        self.is_chimera = not(p1.domain == p2.domain)# Different meshes
         self.active_gamma_cells = dict()
         assert(p1.materials == p2.materials)
         self.gamma_subdomain_data = {p1: [], p2:[]}
@@ -221,13 +221,13 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
                  p_neumann:Problem,
                  max_staggered_iters=40,
                  initial_relaxation_factors=[1.0,1.0]):
-        initial_relaxation_factors[0] = 0.5 # Force relaxation of Dirichlet problem (Aitken)
         (self.p_dirichlet, self.p_neumann) = (p_dirichlet, p_neumann)
         StaggeredDomainDecompositionDriver.__init__(self,
                                                     p_dirichlet,
                                                     p_neumann,
                                                     max_staggered_iters,
                                                     initial_relaxation_factors)
+        self.aitken_relaxation = self.p1.input_parameters.get("aitken_relaxation", True)
 
     def initialize_coupling_functions(self):
         (pd,pn) = plist = (self.p_dirichlet,self.p_neumann)
@@ -337,11 +337,11 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         self.dirichlet_res.x.array[self.gamma_dofs[pd]] = self.ext_sol[pd].x.array[self.gamma_dofs[pd]] - \
                                pd.u.x.array[self.gamma_dofs[pd]]
         self.dirichlet_res.x.scatter_forward()
-        if self.iter > 1:
+        if self.aitken_relaxation and (self.iter > 1):
             self.dirichlet_res_diff.x.array[self.gamma_dofs[pd]] = self.dirichlet_res.x.array[self.gamma_dofs[pd]] - \
                     self.dirichlet_prev_res.x.array[self.gamma_dofs[pd]]
             self.dirichlet_res_diff.x.scatter_forward()
-            self.relaxation_coeff[pd].value = - self.relaxation_coeff[pd].value * self.l2_dot[pd](self.dirichlet_prev_res,self.dirichlet_res_diff)
+            self.relaxation_coeff[pd].value = - self.relaxation_coeff[pd].value * self.l2_dot[pd](self.dirichlet_prev_res, self.dirichlet_res_diff)
             self.relaxation_coeff[pd].value /= self.l2_dot[pd](self.dirichlet_res_diff)
 
 
@@ -350,7 +350,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         self.dirichlet_tcon.g.x.array[:] = self.relaxation_coeff[pd].value*self.ext_sol[pd].x.array + \
                                  (1-self.relaxation_coeff[pd].value)*pd.u.x.array
         self.dirichlet_tcon.g.x.scatter_forward()
-    
+
     def set_neumann_interface(self):
         (p, p_ext) = (self.p_neumann, self.p_dirichlet)
         # Custom measure

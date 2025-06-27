@@ -9,8 +9,9 @@ from mhs_fenicsx.submesh import build_subentity_to_parent_mapping,compute_dg0_in
         find_submesh_interface
 from line_profiler import LineProfiler
 import yaml
-from mhs_fenicsx.drivers.staggered_drivers import StaggeredDNDriver, StaggeredRRDriver
+from mhs_fenicsx.drivers import StaggeredDNDriver, StaggeredRRDriver
 import trace, sys
+import argparse
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -99,14 +100,16 @@ def run(run_type="dd"):
     f_exact = dict()
     for p in [p_left,p_right]:
         p.set_activation(active_els[p])
-        f_exact[p] = fem.Function(p.v,name="exact")
+        f_exact[p] = fem.Function(p.v, name="exact")
         f_exact[p].interpolate(exact_sol_2d)
         p.set_rhs(rhs)
     if run_type=="submesh":
         set_same_mesh_interface(p_left, p_right)
 
-    driver = driver_type(p_right,p_left,max_staggered_iters=params["max_staggered_iters"],
-                         initial_relaxation_factors=[0.5,1.0])
+    driver = driver_type(p_right,
+                         p_left,
+                         max_staggered_iters=params["max_staggered_iters"],
+                         initial_relaxation_factors=params["initial_relaxation_factors"])
 
     if (type(driver)==StaggeredRRDriver):
         h = 1.0 / els_side
@@ -115,7 +118,7 @@ def run(run_type="dd"):
         driver.dirichlet_coeff[driver.p2] =  k / (4 * h)
         driver.relaxation_coeff[driver.p1].value = 2.0 / 3.0
 
-    driver.pre_loop(set_bc=set_bc)
+    driver.pre_loop(set_bc=set_bc, preassemble=True)
     for _ in range(driver.max_staggered_iters):
         driver.pre_iterate()
         driver.iterate()
@@ -195,11 +198,40 @@ def run_same_mesh(run_type="_"):
     for p in [p_left, p_right]:
         p.writepos(extra_funcs=[res[p]])
 
+def run_no_dd(run_type="_"):
+    # Mesh and problems
+    els_side = params["els_side"]
+    domain  = mesh.create_unit_square(MPI.COMM_WORLD, els_side, els_side, mesh.CellType.quadrilateral)
+    p = Problem(domain, params, name=f"no_dd_{els_side:d}")
+
+    f_exact = fem.Function(p.v, name="exact")
+    f_exact.interpolate(exact_sol_2d)
+    p.set_rhs(rhs)
+
+    p.add_dirichlet_bc(exact_sol_2d, marker=right_marker_dirichlet, reset=False)
+    p.add_dirichlet_bc(exact_sol_2d, marker=left_marker_dirichlet, reset=False)
+
+    p.set_forms()
+    p.compile_create_forms()
+    p.pre_assemble()
+    p.non_linear_solve()
+    p.writepos(extra_funcs=[f_exact])
+
+
 if __name__=="__main__":
-    profiling = True
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-p', '--profile', action='store_true', help='Enable profiling')
+    args = parser.parse_args()
+
+    profiling = args.profile
     tracing = False
     run_type = params["run_type"]
-    func = run_same_mesh if run_type=="same_mesh" else run
+    if run_type=="no_dd":
+        func = run_no_dd
+    elif run_type=="same_mesh":
+        func = run_same_mesh
+    else:
+        func = run
     if profiling:
         lp = LineProfiler()
         lp.add_module(StaggeredDNDriver)

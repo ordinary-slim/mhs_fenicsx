@@ -8,7 +8,7 @@ source_terms :
 # PROPS
 material : {
   density : 1,
-  conductivity : 1,
+  conductivity : 1.0,
   specific_heat : 1,
 }
 #convection_coeff : 1.0E-00
@@ -18,10 +18,10 @@ advection_speed : [0.0, 0.0, 0]
 # END_ESSENTIAL
 case_name: "poisson_square"
 max_iter: 1
-max_staggered_iters: 100
-els_side: 16
-dd_type: "robin"
+max_staggered_iters: 1000
+els_side: 4
 run_type: "chimera"
-initial_relaxation_factors: [1.0, 1.0]
-aitken_relaxation: False
+dd_type: "dn"
+initial_relaxation_factors: [0.5, 1.0]
+aitken_relaxation: True
 dim: 2

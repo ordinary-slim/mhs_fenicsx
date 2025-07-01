@@ -1,11 +1,11 @@
 from mhs_fenicsx import problem
 from mhs_fenicsx.chimera import build_moving_problem, interpolate_solution_to_inactive
+from mhs_fenicsx.drivers import StaggeredDNDriver, StaggeredRRDriver
 import numpy as np
+import yaml
 from mpi4py import MPI
 from dolfinx import mesh
-import yaml
 from line_profiler import LineProfiler
-from mhs_fenicsx.drivers.staggered_drivers import StaggeredDNDriver, StaggeredRRDriver
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -41,24 +41,37 @@ def main():
     p_fixed = problem.Problem(domain, params, name="staggered")
     p_moving = build_moving_problem(p_fixed,els_per_radius)
 
-    p_fixed.set_initial_condition(T_env)
-    p_moving.set_initial_condition(T_env)
+    for p in [p_fixed, p_moving]:
+        p.set_initial_condition(T_env)
 
-    driver = StaggeredRRDriver(p_moving,p_fixed,params["max_staggered_iters"],
-                               initial_relaxation_factors=[1.0,1.0])
+    dd_type=params["dd_type"]
+    if dd_type=="robin":
+        driver_type = StaggeredRRDriver
+    elif dd_type=="dn":
+        driver_type = StaggeredDNDriver
+    else:
+        raise ValueError("dd_type must be 'dn' or 'robin'")
+
+    driver = driver_type(p_moving,
+                         p_fixed,
+                         initial_relaxation_factors=params["initial_relaxation_factors"],
+                         max_staggered_iters=params["max_staggered_iters"])
+
     if (type(driver)==StaggeredRRDriver):
-        h = get_el_size(els_per_radius)
+        h = 1.0 / get_el_size(els_per_radius)
         k = float(params["material_metal"]["conductivity"])
-        driver.dirichlet_coeff[driver.p1] = 1/2.0
-        driver.dirichlet_coeff[driver.p2] = k / h
-        driver.relaxation_coeff[driver.p1].value = 1.0
+        driver.dirichlet_coeff[driver.p1].value = k / (np.sqrt(h))
+        driver.dirichlet_coeff[driver.p2].value =  k / (np.sqrt(h))
+        driver.relaxation_coeff[driver.p1].value = 3.0 / 3.0
 
     for _ in range(max_temporal_iters):
-        p_fixed.pre_iterate()
-        p_moving.pre_iterate()
-        p_fixed.subtract_problem(p_moving)
+        for p in [p_fixed, p_moving]:
+            p.pre_iterate()
+        physical_active_els = p_fixed.local_active_els
+        p_fixed.subtract_problem(p_moving, finalize=True)
         p_moving.find_gamma(p_fixed)
-        driver.pre_loop()
+
+        driver.pre_loop(prepare_subproblems=True, preassemble=True)
         for _ in range(driver.max_staggered_iters):
             driver.pre_iterate()
             driver.iterate()
@@ -69,8 +82,10 @@ def main():
         driver.post_loop()
         #TODO: Interpolate solution at inactive nodes
         interpolate_solution_to_inactive(p_fixed,p_moving)
-        p_moving.writepos()
-        p_fixed.writepos()
+        for p in [p_fixed, p_moving]:
+            p.post_iterate()
+            p.writepos()
+        p_fixed.set_activation(physical_active_els)
 
 if __name__=="__main__":
     profiling = True

@@ -341,7 +341,8 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
             self.dirichlet_res_diff.x.array[self.gamma_dofs[pd]] = self.dirichlet_res.x.array[self.gamma_dofs[pd]] - \
                     self.dirichlet_prev_res.x.array[self.gamma_dofs[pd]]
             self.dirichlet_res_diff.x.scatter_forward()
-            self.relaxation_coeff[pd].value = - self.relaxation_coeff[pd].value * self.l2_dot[pd](self.dirichlet_prev_res, self.dirichlet_res_diff)
+            self.relaxation_coeff[pd].value = - self.relaxation_coeff[pd].value * \
+                self.l2_dot[pd](self.dirichlet_prev_res, self.dirichlet_res_diff)
             self.relaxation_coeff[pd].value /= self.l2_dot[pd](self.dirichlet_res_diff)
 
 

@@ -16,9 +16,6 @@ import argparse
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-with open("input.yaml", 'r') as f:
-    params = yaml.safe_load(f)
-
 def exact_sol_2d(x):
     return 2 -(x[0]**2 + x[1]**2)
 def grad_exact_sol_2d(domain):
@@ -44,12 +41,6 @@ class Rhs:
         return_val = -2*self.rho*self.cp*self.v[0]*x[0] + -2*self.rho*self.cp*self.v[1]*x[1] + (2*self.dim)*self.k
         return return_val
 
-rhs = Rhs(params["material"]["density"],
-          params["material"]["specific_heat"],
-          params["material"]["conductivity"],
-          params["advection_speed"],
-          params["dim"])
-
 # Bcs
 def left_marker_dirichlet(x):
     return np.logical_or( np.isclose(x[1],1), np.logical_or(
@@ -70,7 +61,13 @@ def set_bc(pd:Problem,pn:Problem):
     pd.add_dirichlet_bc(exact_sol_2d,marker=right_marker_dirichlet, reset=True)
     pn.add_dirichlet_bc(exact_sol_2d,marker=left_marker_dirichlet,reset=True)
 
-def run(run_type="dd"):
+def run(params):
+    rhs = Rhs(params["material"]["density"],
+              params["material"]["specific_heat"],
+              params["material"]["conductivity"],
+              params["advection_speed"],
+              params["dim"])
+
     dd_type=params["dd_type"]
     if dd_type=="robin":
         driver_type = StaggeredRRDriver
@@ -82,6 +79,7 @@ def run(run_type="dd"):
     # Mesh and problems
     els_side = params["els_side"]
     left_mesh  = mesh.create_unit_square(MPI.COMM_WORLD, els_side, els_side, mesh.CellType.quadrilateral)
+    run_type = params["run_type"]
     if run_type=="submesh":
         dd_type += "_submesh"
     p_left = Problem(left_mesh, params, name=f"left_{dd_type}")
@@ -111,12 +109,12 @@ def run(run_type="dd"):
                          max_staggered_iters=params["max_staggered_iters"],
                          initial_relaxation_factors=params["initial_relaxation_factors"])
 
-    if (type(driver)==StaggeredRRDriver):
-        h = 1.0 / els_side
-        k = float(params["material"]["conductivity"])
-        driver.dirichlet_coeff[driver.p1] = 4.0
-        driver.dirichlet_coeff[driver.p2] =  k / (4 * h)
-        driver.relaxation_coeff[driver.p1].value = 2.0 / 3.0
+    #if (type(driver)==StaggeredRRDriver):
+    #    h = 1.0 / els_side
+    #    k = float(params["material"]["conductivity"])
+    #    driver.dirichlet_coeff[driver.p1].value = k / (np.sqrt(h))
+    #    driver.dirichlet_coeff[driver.p2].value =  k / (np.sqrt(h))
+    #    driver.relaxation_coeff[driver.p1].value = 3.0 / 3.0
 
     driver.pre_loop(set_bc=set_bc, preassemble=True)
     for _ in range(driver.max_staggered_iters):
@@ -127,6 +125,7 @@ def run(run_type="dd"):
         if driver.convergence_crit < driver.convergence_threshold:
             break
     driver.post_loop()
+    return driver
 
 def run_same_mesh(run_type="_"):
     from petsc4py import PETSc
@@ -219,29 +218,37 @@ def run_no_dd(run_type="_"):
 
 
 if __name__=="__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-p', '--profile', action='store_true', help='Enable profiling')
-    args = parser.parse_args()
+    #parser = argparse.ArgumentParser()
+    #parser.add_argument('-p', '--profile', action='store_true', help='Enable profiling')
+    #args = parser.parse_args()
 
-    profiling = args.profile
-    tracing = False
-    run_type = params["run_type"]
-    if run_type=="no_dd":
-        func = run_no_dd
-    elif run_type=="same_mesh":
-        func = run_same_mesh
-    else:
-        func = run
-    if profiling:
-        lp = LineProfiler()
-        lp.add_module(StaggeredDNDriver)
-        lp.add_module(StaggeredRRDriver)
-        lp.add_module(Problem)
-        lp.add_function(fem.Function.interpolate)
-        lp.add_function(interpolate_dg_at_facets)
-        lp_wrapper = lp(func)
-        lp_wrapper(run_type=run_type)
-        with open(f"profiling_rank{rank}.txt", 'w') as pf:
-            lp.print_stats(stream=pf)
-    else:
-        func(run_type=run_type)
+    #profiling = args.profile
+    #tracing = False
+    #run_type = params["run_type"]
+    #if run_type=="no_dd":
+    #    func = run_no_dd
+    #elif run_type=="same_mesh":
+    #    func = run_same_mesh
+    #else:
+    #    func = run
+    #if profiling:
+    #    lp = LineProfiler()
+    #    lp.add_module(StaggeredDNDriver)
+    #    lp.add_module(StaggeredRRDriver)
+    #    lp.add_module(Problem)
+    #    lp.add_function(fem.Function.interpolate)
+    #    lp.add_function(interpolate_dg_at_facets)
+    #    lp_wrapper = lp(func)
+    #    lp_wrapper(run_type=run_type)
+    #    with open(f"profiling_rank{rank}.txt", 'w') as pf:
+    #        lp.print_stats(stream=pf)
+    #else:
+    #    func(run_type=run_type)
+    with open("input.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    iters = []
+    for els_side in 2.**np.arange(2, 7):
+        params["els_side"] = int(els_side)
+        d = run(params)
+        iters.append((params["els_side"], d.iter))
+    print("Iterations per mesh size:", iters)

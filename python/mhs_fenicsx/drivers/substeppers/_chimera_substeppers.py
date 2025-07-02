@@ -139,6 +139,7 @@ class ChimeraSubstepper(ABC):
             return (((self.pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) >= 0.15)
 
     def chimera_micro_pre_iterate(self, forced_time_derivative=False):
+        # TODO: Move this to Chimera driver?
         (pf, pm) = self.pf, self.pm
         prev_pm_active_nodes_mask = pm.active_nodes_func.x.array.copy()
         shape_moving_problem(pm)

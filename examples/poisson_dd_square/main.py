@@ -109,12 +109,12 @@ def run(params):
                          max_staggered_iters=params["max_staggered_iters"],
                          initial_relaxation_factors=params["initial_relaxation_factors"])
 
-    #if (type(driver)==StaggeredRRDriver):
-    #    h = 1.0 / els_side
-    #    k = float(params["material"]["conductivity"])
-    #    driver.dirichlet_coeff[driver.p1].value = k / (np.sqrt(h))
-    #    driver.dirichlet_coeff[driver.p2].value =  k / (np.sqrt(h))
-    #    driver.relaxation_coeff[driver.p1].value = 3.0 / 3.0
+    if (type(driver)==StaggeredRRDriver):
+        h = 1.0 / els_side
+        k = float(params["material"]["conductivity"])
+        driver.dirichlet_coeff[driver.p1].value = 1.0
+        driver.dirichlet_coeff[driver.p2].value =  k / h
+        driver.relaxation_coeff[driver.p1].value = 2.0 / 3.0
 
     driver.pre_loop(set_bc=set_bc, preassemble=True)
     for _ in range(driver.max_staggered_iters):

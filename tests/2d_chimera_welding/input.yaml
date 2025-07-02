@@ -5,7 +5,6 @@ source_terms :
     initial_speed : [1000.0, 0.0, 0]
     radius : 0.1
     power : 500
-adim_dt: 1.0
 # PROPS
 material_metal : {
   density : 4.3E-06, # kg / mm3
@@ -22,10 +21,12 @@ material_metal : {
 #convection_coeff : 1.0E-00
 environment_temperature : 25
 # END_ESSENTIAL
-max_iter: 5
+adim_dts : [0.125, 0.5, 1.0, 2.0]
+adim_tresholds : [0.0, 0.5, 2.0, 7.0]
+
+adim_t_final: 17.0
 supg: 1
-max_staggered_iters: 40
-els_per_radius: 4
+max_staggered_iters: 1000
 petsc_opts_fixed: {
   "ksp_type" : "cg",
   "ksp_rtol" : 1e-10,
@@ -39,13 +40,17 @@ petsc_opts_moving: {
 
 moving_domain_params : {
   shape : True,
-  max_adim_dt : 2,
+  max_adim_dt : 4,
   adim_front_len : 2,
-  adim_side_len : 2,
+  adim_side_len : 2.5,
   adim_bot_len : 2,
   adim_top_len : 2,
 }
 
+els_per_radius: 8
+fine_dt: 0.125
+run_type: staggered
 dd_type: "robin"
 initial_relaxation_factors: [1.0, 1.0]
-aitken_relaxation: True
+aitken_relaxation: False
+convergence_threshold: 1.0E-06

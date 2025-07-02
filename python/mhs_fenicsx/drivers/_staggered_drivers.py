@@ -16,13 +16,15 @@ rank = comm.Get_rank()
 class StaggeredDomainDecompositionDriver(ABC):
     def __init__(self,sub_problem_1:Problem,sub_problem_2:Problem,
                  max_staggered_iters=40,
-                 initial_relaxation_factors=[1.0,1.0]):
+                 initial_relaxation_factors=[1.0,1.0],
+                 convergence_threshold=1e-6
+                 ):
         (p1,p2) = (sub_problem_1,sub_problem_2)
         self.p1 = p1
         self.p2 = p2
         self.max_staggered_iters = max_staggered_iters
         self.convergence_crit = 1e9
-        self.convergence_threshold = 1e-6
+        self.convergence_threshold = convergence_threshold
         self.writers = dict()
         self.iter = -1
         self.is_chimera = not(p1.domain == p2.domain)# Different meshes
@@ -220,13 +222,16 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
                  p_dirichlet:Problem,
                  p_neumann:Problem,
                  max_staggered_iters=40,
-                 initial_relaxation_factors=[1.0,1.0]):
+                 initial_relaxation_factors=[1.0,1.0],
+                 convergence_threshold=1e-6
+                 ):
         (self.p_dirichlet, self.p_neumann) = (p_dirichlet, p_neumann)
         StaggeredDomainDecompositionDriver.__init__(self,
                                                     p_dirichlet,
                                                     p_neumann,
                                                     max_staggered_iters,
-                                                    initial_relaxation_factors)
+                                                    initial_relaxation_factors,
+                                                    convergence_threshold)
         self.aitken_relaxation = self.p1.input_parameters.get("aitken_relaxation", True)
 
     def initialize_coupling_functions(self):
@@ -413,13 +418,15 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
                  p1:Problem,
                  p2:Problem,
                  max_staggered_iters=40,
-                 initial_relaxation_factors=[1.0,1.0]):
+                 initial_relaxation_factors=[1.0,1.0],
+                 convergence_threshold=1e-6):
         self.dirichlet_coeff = {p1:fem.Constant(p1.domain, 1.0),p2:fem.Constant(p2.domain, 1.0)}
         StaggeredDomainDecompositionDriver.__init__(self,
                                                     p1,
                                                     p2,
                                                     max_staggered_iters,
-                                                    initial_relaxation_factors)
+                                                    initial_relaxation_factors,
+                                                    convergence_threshold)
         self.dirichlet_tcon = None
 
     def initialize_coupling_functions(self):

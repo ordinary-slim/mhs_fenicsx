@@ -273,8 +273,8 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
 
         self.L = PETSc.Vec().createNest([p1.L, p2.L])
         self.A = PETSc.Mat().createNest([[p1.A, self.A12], [self.A21, p2.A]])
-        self.x = multiphenicsx.fem.petsc.create_vector_nest(r_instance, restriction=self.restriction)
-        self.obj_vec = multiphenicsx.fem.petsc.create_vector_nest(r_instance, restriction=self.restriction)
+        self.x = multiphenicsx.fem.petsc.create_vector(r_instance, kind=PETSc.Vec.Type.NEST, restriction=self.restriction)
+        self.obj_vec = multiphenicsx.fem.petsc.create_vector(r_instance, kind=PETSc.Vec.Type.NEST, restriction=self.restriction)
 
     def set_snes_sol_vector(self) -> PETSc.Vec:  # type: ignore[no-any-unimported]
         """

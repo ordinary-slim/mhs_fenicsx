@@ -2,7 +2,7 @@
 
 template <dolfinx::scalar T,
           std::floating_point U = dolfinx::scalar_value_t<T>>
-void eval_affine(const fem::Function<T, U> &f, std::span<const U> x, std::array<std::size_t, 2> xshape,
+void eval_affine(const dolfinx::fem::Function<T, U> &f, std::span<const U> x, std::array<std::size_t, 2> xshape,
     std::span<const std::int32_t> cells, std::span<T> u,
     std::array<std::size_t, 2> ushape)
 {
@@ -37,7 +37,7 @@ void eval_affine(const fem::Function<T, U> &f, std::span<const U> x, std::array<
   auto map = mesh->topology()->index_map(tdim);
 
   // Get coordinate map
-  const fem::CoordinateElement<U>& cmap = mesh->geometry().cmap();
+  const dolfinx::fem::CoordinateElement<U>& cmap = mesh->geometry().cmap();
 
   // Get geometry data
   auto x_dofmap = mesh->geometry().dofmap();
@@ -66,7 +66,7 @@ void eval_affine(const fem::Function<T, U> &f, std::span<const U> x, std::array<
   std::vector<T> coefficients(space_dimension * bs_element);
 
   // Get dofmap
-  std::shared_ptr<const fem::DofMap> dofmap = f.function_space()->dofmap();
+  std::shared_ptr<const dolfinx::fem::DofMap> dofmap = f.function_space()->dofmap();
   assert(dofmap);
   const int bs_dof = dofmap->bs();
 
@@ -148,15 +148,15 @@ void eval_affine(const fem::Function<T, U> &f, std::span<const U> x, std::array<
         Xp(Xpb.data(), 1, tdim);
 
     // Compute reference coordinates X, and J, detJ and K
-    fem::CoordinateElement<U>::compute_jacobian(dphi0, coord_dofs,
+    dolfinx::fem::CoordinateElement<U>::compute_jacobian(dphi0, coord_dofs,
                                                        _J);
-    fem::CoordinateElement<U>::compute_jacobian_inverse(_J, _K);
+    dolfinx::fem::CoordinateElement<U>::compute_jacobian_inverse(_J, _K);
     std::array<U, 3> x0 = {0, 0, 0};
     for (std::size_t i = 0; i < coord_dofs.extent(1); ++i)
       x0[i] += coord_dofs(0, i);
-    fem::CoordinateElement<U>::pull_back_affine(Xp, _K, x0, xp);
+    dolfinx::fem::CoordinateElement<U>::pull_back_affine(Xp, _K, x0, xp);
     detJ[p]
-        = fem::CoordinateElement<U>::compute_jacobian_determinant(
+        = dolfinx::fem::CoordinateElement<U>::compute_jacobian_determinant(
             _J, det_scratch);
 
     for (std::size_t j = 0; j < X.extent(1); ++j)

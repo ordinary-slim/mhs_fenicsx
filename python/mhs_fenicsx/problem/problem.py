@@ -710,13 +710,10 @@ class Problem:
 
     def pre_assemble(self):
         self._destroy()
-        self.A = multiphenicsx.fem.petsc.create_matrix(self.j_instance,
-                                                  (self.restriction, self.restriction),
-                                                  )
-        self.L = multiphenicsx.fem.petsc.create_vector(self.r_instance,
-                                                       self.restriction)
-        self.x = multiphenicsx.fem.petsc.create_vector(self.r_instance, restriction=self.restriction)
-        self._obj_vec = multiphenicsx.fem.petsc.create_vector(self.r_instance, self.restriction)
+        self.A = multiphenicsx.fem.petsc.create_matrix(self.j_instance, kind=None, restriction=(self.restriction, self.restriction))
+        self.L = multiphenicsx.fem.petsc.create_vector(self.r_instance, kind=None, restriction=self.restriction)
+        self.x = multiphenicsx.fem.petsc.create_vector(self.r_instance, kind=None, restriction=self.restriction)
+        self._obj_vec = multiphenicsx.fem.petsc.create_vector(self.r_instance, kind=None, restriction=self.restriction)
         self.has_preassembled = True
 
     def assemble_jacobian(self,

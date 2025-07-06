@@ -23,7 +23,7 @@ std::vector<int> locate_active_boundary(const dolfinx::mesh::Mesh<T> &domain,
   assert(con_facet_cell);
   auto facet_map = topology->index_map(cdim-1);
   std::int32_t num_facets = facet_map->size_local();
-  la::Vector<int> bfacet_marker = la::Vector<int>(facet_map, 1);
+  dolfinx::la::Vector<int> bfacet_marker = dolfinx::la::Vector<int>(facet_map, 1);
   auto bfacet_marker_vals = bfacet_marker.mutable_array();
   float num_incident_active_els;
   int num_bfacets = 0;
@@ -51,15 +51,15 @@ std::vector<int> locate_active_boundary(const dolfinx::mesh::Mesh<T> &domain,
 }
 
 template <std::floating_point T>
-std::tuple<la::Vector<std::int8_t>,
-  la::Vector<std::int8_t>> node_mask_to_el_mask(const dolfinx::mesh::Mesh<T> &domain,
+std::tuple<dolfinx::la::Vector<std::int8_t>,
+  dolfinx::la::Vector<std::int8_t>> node_mask_to_el_mask(const dolfinx::mesh::Mesh<T> &domain,
                                       const std::span<const bool> node_mask) {
   // 1. Make vector
   auto topology = domain.topology();
   auto dofmap_x = domain.geometry().dofmap();
   auto cell_map = topology->index_map(topology->dim());
   const std::int32_t num_local_cells = cell_map->size_local();
-  la::Vector<std::int8_t> els_mask(cell_map, 1), colliding_els_mask(cell_map, 1);
+  dolfinx::la::Vector<std::int8_t> els_mask(cell_map, 1), colliding_els_mask(cell_map, 1);
   els_mask.set(0);
   colliding_els_mask.set(0);
   auto els_mask_vals = els_mask.mutable_array();
@@ -140,8 +140,8 @@ intersect_from_nodes(const dolfinx::mesh::Mesh<T> &domain,
 }
 
 template <std::floating_point T>
-mesh::MeshTags<std::int8_t> find_interface(const dolfinx::mesh::Mesh<T> &domain,
-    mesh::MeshTags<std::int8_t> &bfacet_tag,
+dolfinx::mesh::MeshTags<std::int8_t> find_interface(const dolfinx::mesh::Mesh<T> &domain,
+    dolfinx::mesh::MeshTags<std::int8_t> &bfacet_tag,
     const dolfinx::common::IndexMap& dofs_index_map,
     const std::span<const bool> &ext_active_dofs_flags) {
   // Initialize arrays
@@ -178,7 +178,7 @@ mesh::MeshTags<std::int8_t> find_interface(const dolfinx::mesh::Mesh<T> &domain,
 
   std::vector<std::int32_t> ents(total_facet_count);
   std::iota(ents.begin(),ents.end(),0);
-  return mesh::MeshTags<std::int8_t>(topology,cdim-1,std::move(ents),std::move(tags));
+  return dolfinx::mesh::MeshTags<std::int8_t>(topology,cdim-1,std::move(ents),std::move(tags));
 }
 
 namespace nb = nanobind;
@@ -213,7 +213,7 @@ void templated_declare_activation_utils(nb::module_ &m) {
       );
   m.def("find_interface",
       [](const dolfinx::mesh::Mesh<T> &domain,
-         mesh::MeshTags<std::int8_t> &bfacet_tag,
+         dolfinx::mesh::MeshTags<std::int8_t> &bfacet_tag,
          const dolfinx::common::IndexMap& dofs_index_map,
          nb::ndarray<const bool, nb::ndim<1>, nb::c_contig> ext_active_dofs_flags)
       {

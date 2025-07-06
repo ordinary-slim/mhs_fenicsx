@@ -358,7 +358,7 @@ class MonolithicRobinRobinAssembler {
       const dolfinx::fem::FunctionSpace<double>& V_j,
       const multiphenicsx::fem::DofMapRestriction& restriction_j,
       std::span<const std::int32_t> gamma_integration_data_i,
-      const geometry::PointOwnershipData<U>& po_mesh_j,
+      const dolfinx::geometry::PointOwnershipData<U>& po_mesh_j,
       std::span<const int> renumbering_cells_po_mesh_j,
       std::span<const std::int64_t> _dofs_cells_mesh_j,
       std::span<const T> _u_ext_coeffs,
@@ -401,7 +401,7 @@ class MonolithicRobinRobinAssembler {
       const dolfinx::fem::FunctionSpace<double>& V_j,
       const multiphenicsx::fem::DofMapRestriction& restriction_j,
       std::span<const std::int32_t> gamma_integration_data_i,
-      const geometry::PointOwnershipData<U>& po_mesh_j,
+      const dolfinx::geometry::PointOwnershipData<U>& po_mesh_j,
       std::span<const int> renumbering_cells_po_mesh_j,
       std::span<const std::int64_t> _dofs_cells_mesh_j,
       std::span<const T> _u_ext_coeffs,
@@ -454,7 +454,7 @@ class MonolithicRobinRobinAssembler {
       const dolfinx::fem::FunctionSpace<double>& V_j,
       const multiphenicsx::fem::DofMapRestriction& restriction_j,
       std::span<const std::int32_t> gamma_integration_data_i,
-      const geometry::PointOwnershipData<U>& po_mesh_j,
+      const dolfinx::geometry::PointOwnershipData<U>& po_mesh_j,
       std::span<const int> renumbering_cells_po_mesh_j,
       std::span<const std::int64_t> _dofs_cells_mesh_j,
       std::span<const T> _u_ext_coeffs,
@@ -467,7 +467,7 @@ class MonolithicRobinRobinAssembler {
     auto element_j = V_j.element()->basix_element();
 
     const std::size_t tdim = mesh_i->topology()->dim();
-    std::shared_ptr<const common::IndexMap> cmap = mesh_i->topology()->index_map(tdim);
+    std::shared_ptr<const dolfinx::common::IndexMap> cmap = mesh_i->topology()->index_map(tdim);
     auto con_cf_i = mesh_i->topology()->connectivity(tdim,tdim-1);
     assert(con_cf_i);
 

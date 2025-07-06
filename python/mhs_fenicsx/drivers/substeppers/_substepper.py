@@ -467,10 +467,10 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 
         self.j_instance, self.r_instance = self.instantiate_monolithic_forms()
 
-        self.A = multiphenicsx.fem.petsc.create_matrix(self.j_instance, restriction=(self.initial_restriction, self.initial_restriction))
-        self.R = multiphenicsx.fem.petsc.create_vector(self.r_instance, restriction=self.initial_restriction)
-        self.x = multiphenicsx.fem.petsc.create_vector(self.r_instance, restriction=self.initial_restriction)
-        self.obj_vec = multiphenicsx.fem.petsc.create_vector(self.r_instance, restriction=self.initial_restriction)
+        self.A = multiphenicsx.fem.petsc.create_matrix(self.j_instance, kind=None, restriction=(self.initial_restriction, self.initial_restriction))
+        self.R = multiphenicsx.fem.petsc.create_vector(self.r_instance, kind=None, restriction=self.initial_restriction)
+        self.x = multiphenicsx.fem.petsc.create_vector(self.r_instance, kind=None, restriction=self.initial_restriction)
+        self.obj_vec = multiphenicsx.fem.petsc.create_vector(self.r_instance, kind=None, restriction=self.initial_restriction)
         lin_algebra_objects = [self.A, self.R, self.x, self.obj_vec]
 
         # SOLVE

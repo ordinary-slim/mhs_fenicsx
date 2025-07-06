@@ -19,9 +19,9 @@ template <std::floating_point T>
 void interpolate_dg0_at_facets(std::vector<std::reference_wrapper<const dolfinx::fem::Function<T>>> &sending_fs,
                                std::vector<std::shared_ptr<dolfinx::fem::Function<T>>> &receiving_fs,
                                const dolfinx::fem::Function<T> &receiving_active_els_f,
-                               const mesh::MeshTags<std::int8_t> &facet_tag,
+                               const dolfinx::mesh::MeshTags<std::int8_t> &facet_tag,
                                std::span<const std::int32_t> incident_cells,
-                               geometry::PointOwnershipData<T> &po,
+                               dolfinx::geometry::PointOwnershipData<T> &po,
                                const dolfinx::common::IndexMap &gamma_index_map,
                                std::span<const std::int32_t> gamma_imap_to_global_imap)
 {
@@ -41,14 +41,14 @@ void interpolate_dg0_at_facets(std::vector<std::reference_wrapper<const dolfinx:
   auto& evaluation_cells = po.dest_cells;
 
   size_t* block_sizes = new size_t[num_funs];
-  std::vector<la::Vector<T>> interpolated_vals_vectors;
+  std::vector<dolfinx::la::Vector<T>> interpolated_vals_vectors;
   std::vector<std::vector<T>> send_values;
   for (int ifun = 0; ifun < num_funs; ++ifun) {
     assert(sending_fs[ifun].get().function_space()->mesh()==smesh);
     assert(receiving_fs[ifun]->function_space()->mesh()==rmesh);
     block_sizes[ifun] = sending_fs[ifun].get().function_space()->element()->value_size();
     assert(block_sizes[ifun] == receiving_fs[ifun]->function_space()->element()->value_size());
-    interpolated_vals_vectors.push_back(la::Vector<T>(
+    interpolated_vals_vectors.push_back(dolfinx::la::Vector<T>(
           std::shared_ptr<const dolfinx::common::IndexMap>(&gamma_index_map,
             [](const dolfinx::common::IndexMap*){}),
           block_sizes[ifun])
@@ -77,7 +77,7 @@ void interpolate_dg0_at_facets(std::vector<std::reference_wrapper<const dolfinx:
     values_b.push_back(std::vector<T>(dest_ranks.size() * block_sizes[ifun]));
     MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<const T, dextents2> _send_values(
         send_values[ifun].data(), src_ranks.size(), block_sizes[ifun]);
-    fem::impl::scatter_values(rmesh->comm(), src_ranks, dest_ranks, _send_values,
+    dolfinx::fem::impl::scatter_values(rmesh->comm(), src_ranks, dest_ranks, _send_values,
                          std::span(values_b[ifun]));
     // Transpose received data
     MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<const T, dextents2> values(
@@ -159,7 +159,7 @@ void propagate_dg0_at_facets_same_mesh(const dolfinx::fem::Function<T> &sending_
   assert(smesh == rmesh);
   int sbsize = sending_f.function_space().get()->element()->value_size();
   assert(sbsize == receiving_f.function_space().get()->element()->value_size());
-  auto vals = la::Vector<T>(std::shared_ptr<const dolfinx::common::IndexMap>(&gamma_index_map, [](const dolfinx::common::IndexMap*){}), sbsize);
+  auto vals = dolfinx::la::Vector<T>(std::shared_ptr<const dolfinx::common::IndexMap>(&gamma_index_map, [](const dolfinx::common::IndexMap*){}), sbsize);
   auto vals_arr = vals.mutable_array();
   int cdim = smesh->topology()->dim();
   auto cell_map = smesh->topology()->index_map(cdim);
@@ -292,7 +292,7 @@ void interpolate_dg0(const dolfinx::fem::Function<T> &sending_f,
     }
     // Compute midpoints of rcells
     int cdim = rmesh->topology()->dim();
-    const std::vector<T> midpoints = mesh::compute_midpoints(*rmesh, cdim, receiving_cells);
+    const std::vector<T> midpoints = dolfinx::mesh::compute_midpoints(*rmesh, cdim, receiving_cells);
     // Point ownership with midpoints and scells
     dolfinx::geometry::PointOwnershipData<T> interpolation_data =
       my_determine_point_ownership(*smesh,
@@ -331,9 +331,9 @@ void templated_declare_interpolate(nb::module_ &m) {
          std::vector<std::shared_ptr<const dolfinx::fem::Function<T>>> ptrs_sending_fs,
          std::vector<std::shared_ptr<dolfinx::fem::Function<T>>> ptrs_receiving_fs,
          const dolfinx::fem::Function<T> &receiving_active_els_f,
-         const mesh::MeshTags<std::int8_t> &facet_tag,
+         const dolfinx::mesh::MeshTags<std::int8_t> &facet_tag,
          nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> cells,
-         geometry::PointOwnershipData<T> &po,
+         dolfinx::geometry::PointOwnershipData<T> &po,
          const dolfinx::common::IndexMap &gamma_index_map,
          nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> gamma_imap_to_global_imap)
       {

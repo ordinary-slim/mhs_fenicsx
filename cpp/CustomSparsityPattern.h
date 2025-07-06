@@ -19,7 +19,7 @@ public:
   }
 MPI_Comm comm() const { return _comm.comm(); }
 //-----------------------------------------------------------------------------
-std::shared_ptr<const common::IndexMap> index_map(int dim) const
+std::shared_ptr<const dolfinx::common::IndexMap> index_map(int dim) const
 {
   return _index_maps.at(dim);
 }
@@ -56,7 +56,7 @@ void finalize()
   if (!_offsets.empty())
     throw std::runtime_error("Sparsity pattern has already been finalised.");
 
-  common::Timer t0("SparsityPattern::finalize");
+  dolfinx::common::Timer t0("SparsityPattern::finalize");
 
   const int rank = dolfinx::MPI::rank(_comm.comm());
   const int comm_size = dolfinx::MPI::size(_comm.comm());
@@ -228,7 +228,7 @@ private:
   dolfinx::MPI::Comm _comm;
 
   // Index maps for each dimension
-  std::array<std::shared_ptr<const common::IndexMap>, 2> _index_maps;
+  std::array<std::shared_ptr<const dolfinx::common::IndexMap>, 2> _index_maps;
 
   // Block size
   std::array<int, 2> _bs;

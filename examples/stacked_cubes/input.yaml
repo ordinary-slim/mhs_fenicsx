@@ -1,0 +1,126 @@
+# GEOMETRY
+substrate_depth : 1.0E-03
+width : 1.0E-03
+fine_el_size : 0.05E-03
+coarse_el_size : 0.4E-03
+layer_thickness : &layer_thickness 0.1E-03
+hatch_spacing : *layer_thickness
+num_layers : 1
+num_buffer_layers : 2
+radius : &radius 0.1E-03
+half_radius : &half_radius 0.05E-03
+
+dt : 1.0 # placeholder, will be set dynamically
+max_timesteps: 50
+
+isSteady: False
+
+source_terms :
+  - type : gaussian3d
+    initial_position : &p0 [-5.0, 0.0, 0.0]
+    initial_speed : &speed [0.5, 0.0, 0]
+    radius : *radius
+    power : &power 100
+    path: &path "Path.gcode"
+
+environment_temperature : &environment_temperature 25
+
+# MATERIAL PROPERTIES
+material_bulk : { # in625
+  phase_change : {
+    latent_heat : &latent_heat 280.0E+03,
+    solidus_temperature : &solidus_temperature 1290.0,
+    liquidus_temperature : &liquidus_temperature 1350.0,
+  },
+  density : 8.44E+03, # kg / mm3
+  conductivity : [[0.0, 9.5], [1320.0, 28.85], [2000.0, 28.85]],
+  specific_heat : [[0.0, 405.0], [1320.0, 723.63], [2000.0, 723.63]],
+}
+material_powder : { # in625
+  phase_change : {
+    latent_heat : *latent_heat,
+    solidus_temperature : *solidus_temperature,
+    liquidus_temperature : *liquidus_temperature,
+  },
+  density : 8.44E+03, # kg / mm3
+  conductivity : [[0.0, 9.5], [1320.0, 28.85], [2000.0, 28.85]],
+  specific_heat : [[0.0, 405.0], [1320.0, 723.63], [2000.0, 723.63]],
+}
+
+# LINEAR SOLVER OPTIONS
+petsc_opts_micro: {
+  "ksp_error_if_not_converged" : "true",
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-13,
+  "ksp_rtol" : 1e-13,
+  "pc_type" : "jacobi",
+}
+petsc_opts_macro: {
+  "ksp_error_if_not_converged" : "true",
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-13,
+  "ksp_rtol" : 1e-13,
+  "pc_type" : "jacobi",
+}
+petsc_opts_mono_robin: {
+  "snes_max_it" : 30,
+  "ksp_atol" : 1e-09,
+  "ksp_rtol" : 1e-09,
+  #"snes_stol" : 1e-3,
+  "snes_linesearch_max_it" : 15,
+  "ksp_error_if_not_converged" : "true",
+  "ksp_type" : "preonly",
+  "pc_type" : "fieldsplit",
+  "pc_fieldsplit_type" : "schur",
+  "pc_fieldsplit_schur_factorization_type" : "full",
+  "fieldsplit_0_pc_type" : "lu",
+  "fieldsplit_0_pc_factor_mat_solver_type" : "superlu_dist",
+  "fieldsplit_1_pc_type" : "lu",
+  "fieldsplit_1_pc_factor_mat_solver_type" : "superlu_dist"
+}
+petsc_opts_macro_chimera: {
+  "snes_max_it" : 30,
+  "ksp_atol" : 1e-09,
+  "ksp_rtol" : 1e-09,
+  "snes_linesearch_max_it" : 15,
+  "ksp_error_if_not_converged" : "true",
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-13,
+  "ksp_rtol" : 1e-13,
+  "pc_type" : "fieldsplit",
+}
+
+# SUBSTEPPING PARAMETERS
+substepping_parameters: {
+  micro_adim_dt: 0.5,
+  macro_adim_dt: 10.0,
+  cooling_adim_dt: 1,
+  max_staggered_iters: 1,
+  adim_lens: {
+    back_pad : 12,
+    front_pad : 8,
+    side_pad : 10,
+    top_pad : 1,
+    bot_pad : 6,
+  },
+  predictor: {
+    enabled :  True,
+    source_term : 2,
+  },
+  writepos: False,
+  mono_robin_gamma_quadrature_degree : 4,
+  chimera_always_on: True,
+  chimera_steadiness_workflow: {
+    enabled: True,
+    adim_dt_increment: 0.5,
+    max_adim_dt: &max_adim_dt 2.0
+  },
+}
+
+# PRINTER
+printer: {
+  type : 'LPBF',
+  reuse_heated_els : False,
+  layer_thickness : *layer_thickness,
+  deposition_temperature : *environment_temperature
+}

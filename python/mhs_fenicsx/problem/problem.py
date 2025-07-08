@@ -18,6 +18,7 @@ from mhs_fenicsx.problem.helpers import *
 from mhs_fenicsx.problem.heatsource import *
 from mhs_fenicsx.problem.printer import createPrinter, DEDPrinter, LPBFPrinter
 from mhs_fenicsx.problem.material import Material
+from ffcx.element_interface import map_facet_points
 import mhs_fenicsx_cpp
 import typing
 import functools
@@ -58,7 +59,11 @@ class Problem:
         self.num_cells = self.cell_map.size_local + self.cell_map.num_ghosts
         self.num_facets = self.facet_map.size_local + self.facet_map.num_ghosts
         self.num_nodes = self.node_map.size_local + self.node_map.num_ghosts
-        self.bb_tree = geometry.bb_tree(self.domain,self.dim,np.arange(self.num_cells,dtype=np.int32),padding=1e-7)
+        bb_tree_padding = parameters.get("bb_tree_padding", 1e-7)
+        self.bb_tree = geometry.bb_tree(self.domain,
+                                        self.dim,
+                                        np.arange(self.num_cells,dtype=np.int32),
+                                        padding=bb_tree_padding)
         self.restriction: typing.Optional[multiphenicsx.fem.DofMapRestriction] = None
         self.initialize_activation(finalize=finalize_activation)
 
@@ -77,7 +82,17 @@ class Problem:
         self.gamma_facets_index_map : dict['Problem', dolfinx.common.IndexMap] = {}
         self.gamma_imap_to_global_imap : dict['Problem', npt.NDArray[np.int32]] = {}
         self.gamma_integration_data : dict['Problem', npt.NDArray[np.int32]] = {}
-
+        self.bqpoints : npt.NDArray[np.float64]
+        self.bqpoints_po : dict['Problem', npt.NDArray[np.float64]] = {}
+        self.boun_renumbered_cells_ext : dict['Problem', npt.NDArray[np.int32]] = {}
+        self.boun_mat_ids : dict['Problem', npt.NDArray[np.int32]] = {}
+        self.boun_dofs_cells_ext : dict['Problem', npt.NDArray[np.float64]] = {}
+        self.boun_geoms_cells_ext : dict['Problem', npt.NDArray[np.float64]] = {}
+        self.boun_indices_gamma_facets : dict['Problem', npt.NDArray[np.int32]] = {}
+        self.boun_marker_gamma : dict['Problem', npt.NDArray[np.int32]] = {}
+        if "gamma_quadrature" in parameters:
+            self.gamma_quadrature_data = parameters["gamma_quadrature"]
+            self.generate_custom_cell_facet_quadrature()
         # Time
         self.is_steady = parameters["isSteady"]
         self.iter     = 0
@@ -409,7 +424,7 @@ class Problem:
             for facets in self.gamma_imap_to_global_imap.values():
                 self.bfacets_mask[facets] = 0.0
             facets = self.bfacets_mask.nonzero()[0] # gamma facets already subtracted
-            facets_integration_data = self.get_facet_integrations_entities(facets)
+            facets_integration_data = self.get_facet_integration_ents(facets)
         if mat2itag is None:
             mat2itag = self.material_to_itag
         facets_boun_els = facets_integration_data[::2]
@@ -484,7 +499,7 @@ class Problem:
         self.ext_colliding_els[p_ext] = self.ext_colliding_els[p_ext][:np.searchsorted(self.ext_colliding_els[p_ext], self.cell_map.size_local)]
         self.set_activation(self.active_els_func, finalize=finalize)
         if finalize:
-            self.find_gamma(p_ext, self.ext_nodal_activation[p_ext])
+            self.find_gamma(p_ext)
 
     def interpolate(self, p_ext : 'Problem', dofs_to_interpolate = None, cells1 = None):
         if dofs_to_interpolate is None:
@@ -508,20 +523,64 @@ class Problem:
         self.ext_colliding_els[p_ext] = self.ext_colliding_els[p_ext][:np.searchsorted(self.ext_colliding_els[p_ext], self.cell_map.size_local)]
         self.set_activation(self.active_els_func, finalize=finalize)
         if finalize:
-            self.find_gamma(p_ext, self.ext_nodal_activation[p_ext])
+            self.find_gamma(p_ext)
 
-    def find_gamma(self, p_ext : 'Problem', ext_active_dofs_array = None):
-        # TODO: Add p_ext as argument
-        if ext_active_dofs_array is None:
-            ext_active_dofs_array = self.get_active_in_external(p_ext)
-        self.ext_nodal_activation[p_ext] = ext_active_dofs_array
-        self.gamma_facets[p_ext] = mesh.MeshTags(mhs_fenicsx_cpp.find_interface(
+    def generate_boundary_quadrature(self):
+        num_gps_facet = self.Qe.num_entity_dofs[-1][0]
+        self.bfacets_integration_data = self.get_facet_integration_ents(self.bfacets_mask.nonzero()[0], False, True)
+        quadrature_points = mhs_fenicsx_cpp.tabulate_facet_quadrature(
             self.domain._cpp_object,
-            self.bfacets_tag._cpp_object,
-            self.v.dofmap.index_map,
-            ext_active_dofs_array))
+            self.bfacets_integration_data,
+            num_gps_facet,
+            self.quadrature_points_cell)
+        return quadrature_points
 
-        self.update_gamma_data(p_ext)
+    def find_gamma(self, p_ext):
+        self.bqpoints = self.generate_boundary_quadrature() # TODO: Try moving this to the constructor
+        # and rotation
+        self.bqpoints_po[p_ext] = mhs_fenicsx_cpp.cellwise_determine_point_ownership(
+            p_ext.domain._cpp_object,
+            self.bqpoints,
+            p_ext.local_active_els,
+            self.input_parameters.get("spatial_threshold", 1e-7))
+        num_gps_facet = self.Qe.num_entity_dofs[-1][0]
+        src_owner_bqpoints = self.bqpoints_po[p_ext].src_owner.reshape((-1, num_gps_facet))
+        partial_indices_gfacets = np.where(np.all(src_owner_bqpoints>=0, axis=1))[0]
+        bfacet_indices = self.bfacets_mask.nonzero()[0]
+        partial_indices_gfacets = bfacet_indices[partial_indices_gfacets]
+        gamma_facet_marker = la.petsc.create_vector(self.facet_map, 1)
+        gamma_facet_marker.setValuesLocal(partial_indices_gfacets.astype(np.int32),
+                                     np.ones_like(partial_indices_gfacets, dtype=np.int32))
+        gamma_facet_marker.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
+        gamma_facet_marker.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
+        with gamma_facet_marker.localForm() as lf:
+            indices_gfacets = lf.array.nonzero()[0]
+        local_threshold = np.searchsorted(indices_gfacets, self.facet_map.size_local)
+        mask_gamma_facets = np.zeros(self.num_facets, dtype=np.int32)
+        local_gamma_facets = indices_gfacets[:local_threshold]
+        ghost_gamma_facets = indices_gfacets[local_threshold:]
+        mask_gamma_facets[local_gamma_facets] = 1
+        mask_gamma_facets[ghost_gamma_facets] = 2
+        my_tag  = mesh.meshtags(self.domain, self.dim-1,
+                                np.arange(self.num_facets, dtype=np.int32),
+                                mask_gamma_facets)
+        self.set_gamma(p_ext, my_tag)
+
+        # We work w/ boun facet po and skip non-gamma facets later on
+        offsets = np.arange(num_gps_facet)
+        self.boun_indices_gamma_facets[p_ext] = np.searchsorted(bfacet_indices, local_gamma_facets)
+        self.boun_marker_gamma[p_ext] = np.zeros_like(bfacet_indices, dtype=np.int32)
+        self.boun_marker_gamma[p_ext][self.boun_indices_gamma_facets[p_ext]] = 1
+
+        # Prepare data for integration
+        self.boun_renumbered_cells_ext[p_ext], \
+        self.boun_mat_ids[p_ext], \
+        self.boun_dofs_cells_ext[p_ext], \
+        self.boun_geoms_cells_ext[p_ext] = mhs_fenicsx_cpp.scatter_cell_integration_data_po(
+            self.bqpoints_po[p_ext],
+            p_ext.v._cpp_object,
+            p_ext.restriction,
+            p_ext.material_id._cpp_object)
 
     def set_gamma(self, p_ext : 'Problem', gamma_facets_tag : mesh.MeshTags):
         dim = gamma_facets_tag.dim
@@ -543,7 +602,7 @@ class Problem:
         self.gamma_imap_to_global_imap[p_ext] = cpp.common.create_sub_index_map(self.facet_map,
                                                     indices_all_gamma_facets,
                                                     False)
-        self.gamma_integration_data[p_ext] = self.get_facet_integrations_entities(indices_all_gamma_facets)
+        self.gamma_integration_data[p_ext] = self.get_facet_integration_ents(indices_all_gamma_facets)
 
     def add_dirichlet_bc(self, func, bdofs=None, bfacets_tag=None, marker=None, reset=False):
         if reset:
@@ -562,8 +621,33 @@ class Problem:
         self.dirichlet_bcs.append(bc)
         return bc
 
-    def get_facet_integrations_entities(self, facet_indices):
-        return get_facet_integration_entities(self.domain,facet_indices,self.active_els_func)
+    def get_facet_integration_ents(self, facet_indices, use_inactive=False, use_ghosted=False):
+        return mhs_fenicsx_cpp.get_facet_integration_entities(
+            self.domain._cpp_object,
+            facet_indices,
+            self.active_els_func._cpp_object,
+            use_inactive,
+            use_ghosted)
+
+    def generate_custom_cell_facet_quadrature(self):
+        cdim = self.domain.topology.dim
+        cell_type =  self.domain.topology.entity_types[-1][0].name
+        facet_type = self.domain.topology.entity_types[-2][0].name
+        points, weights= None, None
+        quadrature_degree = int(self.gamma_quadrature_data["degree"])
+        if facet_type=='point':
+            points  = np.array([[0.0]], dtype=np.float64)
+            weights = np.array([1.0], dtype=np.float64)
+            quadrature_degree = 1
+        self.Qe = basix.ufl.quadrature_element(facet_type,
+                                               points=points,
+                                               weights=weights,
+                                               degree=quadrature_degree,)
+        num_gps_facet = self.Qe.num_entity_dofs[-1][0]
+        num_facets_cell = self.domain.ufl_cell().num_facets()
+        self.quadrature_points_cell  = np.zeros((num_gps_facet * num_facets_cell, cdim), dtype=self.Qe._points.dtype)
+        for ifacet in range(num_facets_cell):
+            self.quadrature_points_cell[ifacet*num_gps_facet : ifacet*num_gps_facet + num_gps_facet, :cdim] = map_facet_points(self.Qe._points, ifacet, cell_type)
 
     def ext_conductivity(self, ext_mat : fem.Function, ext_sol : fem.Function):
         mats = self.materials
@@ -822,10 +906,14 @@ class Problem:
     def clear_dirchlet_bcs(self):
         self.dirichlet_bcs = []
 
-    def write_bmesh(self):
-        bmesh = dolfinx.mesh.create_submesh(self.domain,self.dim-1,self.bfacets_tag.find(1))[0]
-        with io.VTKFile(bmesh.comm, f"out/bmesh_{self.name}.pvd", "w") as ofile:
-            ofile.write_mesh(bmesh)
+    def write_bmesh(self, tag=None):
+        if tag is None:
+            tag = self.bfacets_tag
+        bmesh = mesh.create_submesh(self.domain,
+                                    self.dim-1,
+                                    tag.find(1))[0]
+        with io.VTKFile(bmesh.comm, f"out/bmesh_{self.name}_tstep{self.iter}.pvd", "w") as ofile:
+            ofile.write_mesh(bmesh, t=np.round(self.time, 9))
 
     def set_linear_solver(self, opts:typing.Optional[dict] = None):
         if opts is None:

@@ -42,7 +42,7 @@ def main(input_file, writepos=True):
     p_fixed.set_initial_condition(T_env)
     p_moving.set_initial_condition(T_env)
 
-    driver = MonolithicRRDriver(p_fixed, p_moving, 1.0, 1.0, quadrature_degree=2)
+    driver = MonolithicRRDriver(p_fixed, p_moving, 1.0, 1.0)
 
     for p in [p_fixed, p_moving]:
         p.set_forms()
@@ -75,7 +75,7 @@ def main(input_file, writepos=True):
     return p_fixed, p_moving
 
 def test_monolothic_chimera_2d_welding():
-    pf, pm = main("test_input.yaml", writepos=False)
+    pf, pm = main("test_input.yaml", writepos=True)
     points = np.array([
         [-0.275, +0.000, +0.000],
         [-0.600, +0.200, +0.000],

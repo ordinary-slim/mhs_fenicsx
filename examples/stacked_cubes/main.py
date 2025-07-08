@@ -128,7 +128,6 @@ def run_staggered(params, descriptor=""):
 
 def run_hodge(params, descriptor=""):
     writepos = params.get("writepos", True)
-    radius = params["source_terms"][0]["radius"]
     domain = create_stacked_cubes_mesh(params)
 
     macro_params = params.copy()
@@ -150,6 +149,41 @@ def run_hodge(params, descriptor=""):
             ps.writepos(extension="vtx", extra_funcs=[ps.u_prev])
     return ps
 
+def run_staggered_chimera_rr(params, writepos=True, descriptor=""):
+    writepos = params.get("writepos", True)
+    domain = create_stacked_cubes_mesh(params)
+
+    macro_params = params.copy()
+    macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
+    ps = Problem(domain, macro_params, finalize_activation=False,
+                 name="chimera_staggered_rr" + descriptor)
+
+    pm = build_moving_problem(ps,
+                              macro_params["moving_domain_params"]["els_per_radius"],)
+    for p in [ps, pm]:
+        p.set_initial_condition(params["environment_temperature"])
+        deactivate_below_surface(p)
+
+
+    substeppin_driver = MHSStaggeredChimeraSubstepper(
+        StaggeredRRDriver,
+        [1.0, 1.0],
+        ps, pm)
+
+    staggered_driver = substeppin_driver.staggered_driver
+    staggered_driver.set_dirichlet_coefficients(
+        params["fine_el_size"], get_k(ps))
+
+    itime_step = 0
+    max_timesteps = params.get("max_timesteps", 1e9)
+    while ((itime_step < max_timesteps) and not(ps.is_path_over())):
+        itime_step += 1
+        substeppin_driver.do_timestep()
+        if writepos:
+            for p in [ps, substeppin_driver.pf, pm]:
+                p.writepos(extension="vtx")
+    return ps
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-r', '--run-ref', action='store_true')
@@ -161,10 +195,7 @@ if __name__ == "__main__":
     lp = LineProfiler()
     lp.add_module(Problem)
     args = parser.parse_args()
-    if args.run_chimera_stagg or args.run_chimera_hodge:
-        params_file = "chimera_input.yaml"
-    else:
-        params_file = "input.yaml"
+    params_file = "input.yaml"
     with open(params_file, 'r') as f:
         params = yaml.safe_load(f)
     write_gcode(params)

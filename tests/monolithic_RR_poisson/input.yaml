@@ -22,3 +22,6 @@ max_staggered_iters: 40
 els_side: 4
 dd_type: "robin"
 run_type: "same_mesh"
+gamma_quadrature: {
+  degree: 2,
+}

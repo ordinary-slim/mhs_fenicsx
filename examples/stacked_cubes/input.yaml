@@ -1,52 +1,51 @@
-# GEOMETRY
-substrate_depth : 1.0E-03
-width : 1.0E-03
-fine_el_size : 0.05E-03
-coarse_el_size : 0.4E-03
-layer_thickness : &layer_thickness 0.1E-03
-hatch_spacing : *layer_thickness
-num_layers : 1
+# GEOMETRY  (all lengths now in millimetres)
+substrate_depth   : 1.0          # mm
+width             : 1.0          # mm
+fine_el_size      : 0.05        # mm
+coarse_el_size    : 0.4          # mm
+layer_thickness   : &layer_thickness 0.1   # mm
+hatch_spacing     : *layer_thickness
+num_layers        : 1
 num_buffer_layers : 2
-radius : &radius 0.1E-03
-half_radius : &half_radius 0.05E-03
+radius            : &radius 0.1       # mm
+half_radius       : &half_radius 0.05 # mm
 
-dt : 1.0 # placeholder, will be set dynamically
-max_timesteps: 50
-
-isSteady: False
+dt               : 1.0     # placeholder
+max_timesteps    : 50
+isSteady         : False
 
 source_terms :
-  - type : gaussian3d
-    initial_position : &p0 [-5.0, 0.0, 0.0]
-    initial_speed : &speed [0.5, 0.0, 0]
-    radius : *radius
-    power : &power 100
-    path: &path "Path.gcode"
-  - type : gaussian3d
-    initial_position : *p0
-    initial_speed : *speed
-    radius : *radius
-    power : 0.0
-    path: *path
+  - type            : gaussian3d
+    initial_position: &p0 [-5000.0, 0.0, 0.0]   # mm
+    initial_speed   : &speed [500.0, 0.0, 0.0]  # mm / s
+    radius          : *radius
+    power           : &power 100                # W
+    path            : &path "Path.gcode"
+  - type            : gaussian3d
+    initial_position: *p0
+    initial_speed   : *speed
+    radius          : *radius
+    power           : 0.0
+    path            : *path
 
-environment_temperature : &environment_temperature 25
+environment_temperature : &environment_temperature 25          # °C
+bb_tree_padding         : 1.0E-13  # 1.0E-16 m  →  1.0E-13 mm
 
-# MATERIAL PROPERTIES
+# MATERIAL PROPERTIES (units consistent with mm)
 material_powder : {
-  density : &density 4.3E+03, # kg / m3
-  conductivity :  [[25, 1.0], [1625, 10.0]], # W / m / K
-  specific_heat : &specific_heat 700, # J / kg / K
-  phase_change : {
-    #latent_heat : &latent_heat 350.0E+03,
-    latent_heat : &latent_heat 1.0,
-    solidus_temperature : &solidus_temperature 1600.0,
-    liquidus_temperature : &liquidus_temperature 1650.0,
-    melts_to : "metal",
+  density        : &density 4.3E-06,                      # kg / mm³   (= 4.3E+03 kg / m³ ÷ 1E9)
+  conductivity   : [[25, 0.001], [1625, 0.01]],           # W / mm / K (= original ÷ 1E3)
+  specific_heat  : &specific_heat 700,                    # J / kg / K (unchanged)
+  phase_change   : {
+    latent_heat           : &latent_heat 1.0,             # J / kg
+    solidus_temperature   : &solidus_temperature 1600.0,  # °C
+    liquidus_temperature  : &liquidus_temperature 1650.0, # °C
+    melts_to              : "metal",
   }
 }
 material_metal : {
   density : *density,
-  conductivity : 10.0, # W / m / K
+  conductivity : 0.01,
   specific_heat : *specific_heat,
   phase_change : {
     latent_heat : *latent_heat,
@@ -114,7 +113,7 @@ substepping_parameters: {
     enabled :  True,
     source_term : 0,
   },
-  writepos: False,
+  writepos: True,
   mono_robin_gamma_quadrature_degree : 4,
   chimera_always_on: True,
   chimera_steadiness_workflow: {
@@ -123,7 +122,21 @@ substepping_parameters: {
     max_adim_dt: &max_adim_dt 2.0
   },
 }
-
+# CHIMERA PARAMS
+supg: 1
+moving_domain_params : {
+  shape : True,
+  els_per_radius : 2,
+  max_adim_dt : *max_adim_dt,
+  adim_front_len : 3,
+  adim_side_len : 6,
+  adim_bot_len : 2.5,
+  adim_top_len : 0.0,
+}
+quadrature_metadata: {
+  #quadrature_rule : "vertex",
+  quadrature_degree : 4,
+}
 # PRINTER
 printer: {
   type : 'LPBF',

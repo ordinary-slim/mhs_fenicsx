@@ -630,93 +630,6 @@ std::vector<int> find_owner_rank(
       point_owners[pos] = recv_ranks[i];
   }
 
-  // Create extrapolation marker for those points already sent to other
-  // process
-  std::vector<std::uint8_t> send_extrapolate(recv_offsets.back());
-  for (std::int32_t i = 0; i < recv_offsets.back(); i++)
-  {
-    const std::int32_t pos = unpack_map[i];
-    send_extrapolate[i] = point_owners[pos] == -1;
-  }
-
-  // Swap communication direction, to send extrapolation marker to other
-  // processes
-  std::swap(send_sizes, recv_sizes);
-  std::swap(send_offsets, recv_offsets);
-  std::vector<std::uint8_t> dest_extrapolate(recv_offsets.back());
-  MPI_Neighbor_alltoallv(send_extrapolate.data(), send_sizes.data(),
-                         send_offsets.data(), MPI_UINT8_T,
-                         dest_extrapolate.data(), recv_sizes.data(),
-                         recv_offsets.data(), MPI_UINT8_T, forward_comm);
-
-  std::vector<T> squared_distances(received_points.size() / 3, -1);
-
-  for (std::size_t i = 0; i < dest_extrapolate.size(); i++)
-  {
-    if (dest_extrapolate[i] == 1)
-    {
-      assert(closest_cells[i] == -1);
-      std::array<T, 3> point;
-      std::copy_n(std::next(received_points.begin(), 3 * i), 3, point.begin());
-
-      // Find shortest distance among cells with colldiing bounding box
-      T shortest_distance = std::numeric_limits<T>::max();
-      std::int32_t closest_cell = -1;
-      for (auto cell : candidate_collisions.links(i))
-      {
-        if (not(active_els_array[cell])) continue;
-        auto dofs = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
-            x_dofmap, cell, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
-        std::vector<T> nodes(3 * dofs.size());
-        for (std::size_t j = 0; j < dofs.size(); ++j)
-        {
-          const int pos = 3 * dofs[j];
-          for (std::size_t k = 0; k < 3; ++k)
-            nodes[3 * j + k] = geom_dofs[pos + k];
-        }
-        const std::array<T, 3> d = dolfinx::geometry::compute_distance_gjk<T>(
-            std::span<const T>(point.data(), point.size()), nodes);
-        if (T current_distance = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
-            current_distance < shortest_distance)
-        {
-          shortest_distance = current_distance;
-          closest_cell = cell;
-        }
-      }
-      closest_cells[i] = closest_cell;
-      squared_distances[i] = shortest_distance;
-    }
-  }
-
-  std::swap(recv_sizes, send_sizes);
-  std::swap(recv_offsets, send_offsets);
-
-  // Get distances from closest entity of points that were on the other process
-  std::vector<T> recv_distances(recv_offsets.back());
-  MPI_Neighbor_alltoallv(
-      squared_distances.data(), send_sizes.data(), send_offsets.data(),
-      dolfinx::MPI::mpi_t<T>, recv_distances.data(), recv_sizes.data(),
-      recv_offsets.data(), dolfinx::MPI::mpi_t<T>, reverse_comm);
-
-  // Update point ownership with extrapolation information
-  std::vector<T> closest_distance(point_owners.size(),
-                                  std::numeric_limits<T>::max());
-  for (std::size_t i = 0; i < out_ranks.size(); i++)
-  {
-    for (std::int32_t j = recv_offsets[i]; j < recv_offsets[i + 1]; j++)
-    {
-      const std::int32_t pos = unpack_map[j];
-      auto current_dist = recv_distances[j];
-      // Update if closer than previous guess and was found
-      if (auto d = closest_distance[pos];
-          (current_dist > 0) and (current_dist < d))
-      {
-        point_owners[pos] = out_ranks[i];
-        closest_distance[pos] = current_dist;
-      }
-    }
-  }
-
   MPI_Comm_free(&forward_comm);
   MPI_Comm_free(&reverse_comm);
   return point_owners;
@@ -750,9 +663,11 @@ std::tuple<size_t, std::vector<int>, std::vector<std::int32_t>, std::vector<std:
   scatter_values(mesh->comm(), po.dest_owners, po.src_owner, indices_n_mats_to_send,
                  std::span(_indices_n_mats_to_rcv));
   // Unpack
-  std::vector<std::int32_t> mat_ids_rcv(num_pts_rcv);
-  std::vector<std::int32_t> owner_cells(num_pts_rcv);
+  std::vector<std::int32_t> mat_ids_rcv(num_pts_rcv, -1);
+  std::vector<std::int32_t> owner_cells(num_pts_rcv, -1);
   for (size_t i = 0; i < num_pts_rcv; ++i) {
+    if (po.src_owner[i] < 0)
+      continue;
     owner_cells[i] = _indices_n_mats_to_rcv[2*i];
     mat_ids_rcv[i] = _indices_n_mats_to_rcv[2*i+1];
   }
@@ -793,11 +708,13 @@ std::tuple<size_t, std::vector<int>, std::vector<std::int32_t>, std::vector<std:
   // Define (rank, loc cell idx) -> idx map
   std::map<std::pair<int, std::int32_t>, int> unique_cell_map;
   int curr_value = 0;
-  std::vector<int> cell_indices(num_pts_rcv);
+  std::vector<int> cell_indices(num_pts_rcv, -1);
   std::vector<size_t> unique_cell_indices;
   unique_cell_indices.reserve(num_pts_rcv);
   for (size_t i = 0; i < owner_cells.size(); ++i) {
-    // rank = po.src_owner[i], loc cell idx = owner_cells[idx]
+    // Skip if no owner
+    if (owner_cells[i] < 0)
+      continue;
     std::pair<int, std::int32_t> unique_cell_id(po.src_owner[i], owner_cells[i]);
     if (unique_cell_map.contains(unique_cell_id)) {
       cell_indices[i] = unique_cell_map[unique_cell_id];

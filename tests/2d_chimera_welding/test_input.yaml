@@ -38,3 +38,6 @@ moving_domain_params : {
   adim_bot_len : 2,
   adim_top_len : 2,
 }
+gamma_quadrature: {
+  degree: 2,
+}

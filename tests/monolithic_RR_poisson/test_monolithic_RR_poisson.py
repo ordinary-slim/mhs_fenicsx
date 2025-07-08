@@ -158,8 +158,7 @@ def run(dim, els_side, el_type, writepos=False):
     for p, p_ext in zip([p_left, p_right], [p_right, p_left]):
         p.find_gamma(p_ext)
 
-    quadrature_degree = 2
-    driver = MonolithicRRDriver(p_left, p_right, 1.0, 1.0, quadrature_degree=quadrature_degree)
+    driver = MonolithicRRDriver(p_left, p_right, 1.0, 1.0)
 
     neumann_facets = {}
     for p, marker in zip([p_left, p_right], [left_marker_neumann, right_marker_neumann]):
@@ -167,7 +166,7 @@ def run(dim, els_side, el_type, writepos=False):
         # Set-up Neumann condition
         neumann_tag = 66
         neumann_facets[p] = marker(p)
-        p.form_subdomain_data[fem.IntegralType.exterior_facet].append((neumann_tag, p.get_facet_integrations_entities(neumann_facets[p])))
+        p.form_subdomain_data[fem.IntegralType.exterior_facet].append((neumann_tag, p.get_facet_integration_ents(neumann_facets[p])))
         # Neumann condition
         ds = ufl.Measure('ds')
         n = ufl.FacetNormal(p.domain)

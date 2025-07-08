@@ -25,13 +25,13 @@ struct Triplet
 template <dolfinx::scalar T>
 std::tuple<std::vector<U>, std::vector<U>, std::vector<U>>
      compute_geometry_data(const dolfinx::mesh::Mesh<T> &mesh,
-                           std::span<const T> _geoms_cells_mesh_j)
+                           std::span<const T> _geoms_cells_mesh_j,
+                           size_t num_dofs_g_j)
 {
   const std::size_t tdim = mesh.topology()->dim();
   const std::size_t gdim = mesh.geometry().dim();
-  const std::size_t num_dofs_g = mesh.geometry().cmap().dim();
-  assert((_geoms_cells_mesh_j.size() % (num_dofs_g * 3))==0);
-  const std::size_t num_cells = _geoms_cells_mesh_j.size() / (num_dofs_g * 3);
+  assert((_geoms_cells_mesh_j.size() % (num_dofs_g_j * 3))==0);
+  const std::size_t num_cells = _geoms_cells_mesh_j.size() / (num_dofs_g_j * 3);
 
   using cmdspan2_t = MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
       const T, MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>;
@@ -61,7 +61,7 @@ std::tuple<std::vector<U>, std::vector<U>, std::vector<U>>
 
   for (int idx = 0; idx < num_cells; ++idx) {
     // Get cell geometry (coordinate dofs)
-    cmdspan2_t coord_dofs(_geoms_cells_mesh_j.data() + idx * (num_dofs_g * 3), num_dofs_g, 3);
+    cmdspan2_t coord_dofs(_geoms_cells_mesh_j.data() + idx * (num_dofs_g_j * 3), num_dofs_g_j, 3);
 
     auto _J = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
         J, idx, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent,
@@ -117,14 +117,15 @@ class MonolithicRobinRobinAssembler {
 
   void preassemble(
       Mat& A,
-      std::span<const T> _tabulated_gauss_points_gamma,
+      std::span<const T> _tabulated_gauss_points_boun,
       std::span<const T> _gauss_points_cell,
       std::span<const T> gweights_facet,
       const dolfinx::fem::FunctionSpace<double>& V_i,
       const multiphenicsx::fem::DofMapRestriction& restriction_i,
       const dolfinx::fem::FunctionSpace<double>& V_j,
       const multiphenicsx::fem::DofMapRestriction& restriction_j,
-      std::span<const std::int32_t> gamma_integration_data_i,
+      std::span<const std::int32_t> boun_integration_data_i,
+      std::span<const int> boun_gamma_facet_marker_i,
       std::span<const int> renumbering_cells_po_mesh_j,
       std::span<const std::int64_t> _dofs_cells_mesh_j,
       std::span<const double> _geoms_cells_mesh_j)
@@ -135,6 +136,7 @@ class MonolithicRobinRobinAssembler {
     int bs_j = restriction_j.index_map_bs();
 
     auto mesh_i = V_i.mesh();
+    auto mesh_j = V_j.mesh();
     auto element_i = V_i.element()->basix_element();
     auto element_j = V_j.element()->basix_element();
     const std::size_t tdim = mesh_i->topology()->dim();
@@ -157,9 +159,9 @@ class MonolithicRobinRobinAssembler {
           _dofs_cells_mesh_j.data(), num_diff_cells_j, num_dofs_cell_j);
 
 
-    assert(_tabulated_gauss_points_gamma.size() % 3 == 0);
-    size_t num_gps_processor = _tabulated_gauss_points_gamma.size() / 3;
-    cmdspan2_t tabulated_gauss_points_gamma(_tabulated_gauss_points_gamma.data(), num_gps_processor, 3);
+    assert(_tabulated_gauss_points_boun.size() % 3 == 0);
+    size_t num_gps_processor = _tabulated_gauss_points_boun.size() / 3;
+    cmdspan2_t tabulated_gauss_points_gamma(_tabulated_gauss_points_boun.data(), num_gps_processor, 3);
     cmdspan2_t gauss_points_cell(_gauss_points_cell.data(), num_gps_cell, tdim);
     MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
         const std::int32_t,
@@ -182,7 +184,8 @@ class MonolithicRobinRobinAssembler {
     mdspan4_t phi_j(phi_j_b.data(), e_shape_j);
     // Prepare mesh_j integration data
     std::vector<U> _gauss_points_ref_j(num_gps_processor*tdim, 0.0);
-    auto [J_j_b, K_j_b, detJ_j] = compute_geometry_data(*V_j.mesh(), _geoms_cells_mesh_j);
+    auto [J_j_b, K_j_b, detJ_j] = compute_geometry_data(*V_j.mesh(), _geoms_cells_mesh_j,
+                                                        mesh_j->geometry().cmap().dim());
     mdspan3_t J_j(J_j_b.data(), num_diff_cells_j, gdim, tdim);
     mdspan3_t K_j(K_j_b.data(), num_diff_cells_j, tdim, gdim);
 
@@ -193,19 +196,21 @@ class MonolithicRobinRobinAssembler {
 
     auto sp = CustomSparsityPattern(V_i.mesh()->comm(), {index_map_i, index_map_j}, {bs_i, bs_j});
     auto sub_cell_con_i = basix::cell::sub_entity_connectivity(element_i.cell_type());
-    size_t num_gamma_facets = gamma_integration_data_i.size() / 2;
-    facet_normals.resize(3*num_gamma_facets);
+    size_t num_boun_facets = boun_integration_data_i.size() / 2;
+    facet_normals.resize(3*num_boun_facets);
     std::fill(facet_normals.begin(), facet_normals.end(), 0.0);
-    facet_dets.resize(num_gamma_facets);
+    facet_dets.resize(num_boun_facets);
     std::fill(facet_dets.begin(), facet_dets.end(), 0.0);
     // Buffer for coords facet cell i
     std::vector<U> coord_dofs_i_b(num_dofs_g_i * gdim);
     mdspan2_t coord_dofs_i(coord_dofs_i_b.data(), num_dofs_g_i, gdim);
 
     // LOOP 1: get sparsity pattern and pull back gps on mesh j
-    for (size_t idx = 0; idx < num_gamma_facets; ++idx) {
-      std::int32_t icell_i = gamma_integration_data_i[2*idx];
-      std::int32_t lifacet_i = gamma_integration_data_i[2*idx+1];
+    for (size_t idx = 0; idx < num_boun_facets; ++idx) {
+      if (not(boun_gamma_facet_marker_i[idx]))
+        continue;
+      std::int32_t icell_i = boun_integration_data_i[2*idx];
+      std::int32_t lifacet_i = boun_integration_data_i[2*idx+1];
       // relevant dofs are sub_entity_connectivity[fdim][lifacet_i][0]
       const auto& lfacet_dofs = sub_cell_con_i[tdim-1][lifacet_i][0];
       // DOFS i
@@ -321,7 +326,7 @@ class MonolithicRobinRobinAssembler {
 
       // Loop 2: precompute gradients
       std::fill(dphi_j_b.begin(), dphi_j_b.end(), U(0.0));
-      for (size_t idx = 0; idx < num_gamma_facets; ++idx) {
+      for (size_t idx = 0; idx < num_boun_facets; ++idx) {
         for (size_t k = 0; k < num_gps_facet; ++k) {//igauss
           size_t igp = idx*num_gps_facet + k;
           int icell_j = renumbering_cells_po_mesh_j[igp];
@@ -350,15 +355,16 @@ class MonolithicRobinRobinAssembler {
                               const double)>& mat_add,
       std::span<double (*)(double)> conductivities,
       std::span<double (*)(double)> dconductivities,
-      std::span<const T> _tabulated_gauss_points_gamma,
+      std::span<const T> _tabulated_gauss_points_boun,
       std::span<const T> _gauss_points_cell,
       std::span<const T> gweights_facet,
       const dolfinx::fem::FunctionSpace<double>& V_i,
       const multiphenicsx::fem::DofMapRestriction& restriction_i,
       const dolfinx::fem::FunctionSpace<double>& V_j,
       const multiphenicsx::fem::DofMapRestriction& restriction_j,
-      std::span<const std::int32_t> gamma_integration_data_i,
+      std::span<const std::int32_t> boun_integration_data_i,
       const dolfinx::geometry::PointOwnershipData<U>& po_mesh_j,
+      std::span<const int> boun_gamma_facet_marker_i,
       std::span<const int> renumbering_cells_po_mesh_j,
       std::span<const std::int64_t> _dofs_cells_mesh_j,
       std::span<const T> _u_ext_coeffs,
@@ -370,15 +376,16 @@ class MonolithicRobinRobinAssembler {
         contribs,
         conductivities,
         dconductivities,
-        _tabulated_gauss_points_gamma,
+        _tabulated_gauss_points_boun,
         _gauss_points_cell,
         gweights_facet,
         V_i,
         restriction_i,
         V_j,
         restriction_j,
-        gamma_integration_data_i,
+        boun_integration_data_i,
         po_mesh_j,
+        boun_gamma_facet_marker_i,
         renumbering_cells_po_mesh_j,
         _dofs_cells_mesh_j,
         _u_ext_coeffs,
@@ -393,15 +400,16 @@ class MonolithicRobinRobinAssembler {
       std::span<T> b,
       std::span<double (*)(double)> conductivities,
       std::span<double (*)(double)> dconductivities,
-      std::span<const T> _tabulated_gauss_points_gamma,
+      std::span<const T> _tabulated_gauss_points_boun,
       std::span<const T> _gauss_points_cell,
       std::span<const T> gweights_facet,
       const dolfinx::fem::FunctionSpace<double>& V_i,
       const multiphenicsx::fem::DofMapRestriction& restriction_i,
       const dolfinx::fem::FunctionSpace<double>& V_j,
       const multiphenicsx::fem::DofMapRestriction& restriction_j,
-      std::span<const std::int32_t> gamma_integration_data_i,
+      std::span<const std::int32_t> boun_integration_data_i,
       const dolfinx::geometry::PointOwnershipData<U>& po_mesh_j,
+      std::span<const int> boun_gamma_facet_marker_i,
       std::span<const int> renumbering_cells_po_mesh_j,
       std::span<const std::int64_t> _dofs_cells_mesh_j,
       std::span<const T> _u_ext_coeffs,
@@ -413,15 +421,16 @@ class MonolithicRobinRobinAssembler {
         contribs,
         conductivities,
         dconductivities,
-        _tabulated_gauss_points_gamma,
+        _tabulated_gauss_points_boun,
         _gauss_points_cell,
         gweights_facet,
         V_i,
         restriction_i,
         V_j,
         restriction_j,
-        gamma_integration_data_i,
+        boun_integration_data_i,
         po_mesh_j,
+        boun_gamma_facet_marker_i,
         renumbering_cells_po_mesh_j,
         _dofs_cells_mesh_j,
         _u_ext_coeffs,
@@ -446,15 +455,16 @@ class MonolithicRobinRobinAssembler {
       std::vector<Triplet>& contribs,
       std::span<double (*)(double)> conductivities,
       std::span<double (*)(double)> dconductivities,
-      std::span<const T> _tabulated_gauss_points_gamma,
+      std::span<const T> _tabulated_gauss_points_boun,
       std::span<const T> _gauss_points_cell,
       std::span<const T> gweights_facet,
       const dolfinx::fem::FunctionSpace<double>& V_i,
       const multiphenicsx::fem::DofMapRestriction& restriction_i,
       const dolfinx::fem::FunctionSpace<double>& V_j,
       const multiphenicsx::fem::DofMapRestriction& restriction_j,
-      std::span<const std::int32_t> gamma_integration_data_i,
+      std::span<const std::int32_t> boun_integration_data_i,
       const dolfinx::geometry::PointOwnershipData<U>& po_mesh_j,
+      std::span<const int> boun_gamma_facet_marker_i,
       std::span<const int> renumbering_cells_po_mesh_j,
       std::span<const std::int64_t> _dofs_cells_mesh_j,
       std::span<const T> _u_ext_coeffs,
@@ -477,9 +487,9 @@ class MonolithicRobinRobinAssembler {
     size_t num_gps_facet_i = gweights_facet.size();
     size_t num_gps_cell_i = num_gps_facet_i * num_facets_cell_i;
 
-    assert(_tabulated_gauss_points_gamma.size() % 3 == 0);
-    size_t num_gps_processor = _tabulated_gauss_points_gamma.size() / 3;
-    cmdspan2_t tabulated_gauss_points_gamma(_tabulated_gauss_points_gamma.data(), num_gps_processor, 3);
+    assert(_tabulated_gauss_points_boun.size() % 3 == 0);
+    size_t num_gps_processor = _tabulated_gauss_points_boun.size() / 3;
+    cmdspan2_t tabulated_gauss_points_gamma(_tabulated_gauss_points_boun.data(), num_gps_processor, 3);
     cmdspan2_t gauss_points_cell(_gauss_points_cell.data(), num_gps_cell_i, tdim);
 
     auto con_v_i = restriction_i.dofmap()->map();
@@ -506,17 +516,19 @@ class MonolithicRobinRobinAssembler {
 
     auto sub_cell_con_i = basix::cell::sub_entity_connectivity(element_i.cell_type());
 
-    assert(gamma_integration_data_i.size() % 2 == 0);
-    size_t num_gamma_facets = gamma_integration_data_i.size() / 2;
-    assert(num_gps_facet_i*num_gamma_facets == num_gps_processor);
+    assert(boun_integration_data_i.size() % 2 == 0);
+    size_t num_boun_facets = boun_integration_data_i.size() / 2;
+    assert(num_gps_facet_i*num_boun_facets == num_gps_processor);
     auto e_shape_i = element_i.tabulate_shape(_nderivative_i, num_gps_cell_i);
     cmdspan4_t phi_i(phi_i_b.data(), e_shape_i);
 
     // Estimate total number of contributions
     contribs.reserve(num_gps_processor * num_dofs_facet_i * num_dofs_cell_j);
-    for (size_t idx = 0; idx < num_gamma_facets; ++idx) {
-      std::int32_t icell_i = gamma_integration_data_i[2*idx];
-      std::int32_t lifacet_i = gamma_integration_data_i[2*idx+1];
+    for (size_t idx = 0; idx < num_boun_facets; ++idx) {
+      if (not(boun_gamma_facet_marker_i[idx]))
+        continue;
+      std::int32_t icell_i = boun_integration_data_i[2*idx];
+      std::int32_t lifacet_i = boun_integration_data_i[2*idx+1];
       // relevant dofs are sub_entity_connectivity[fdim][lifacet_i][0]
       const auto& lfacet_dofs = sub_cell_con_i[tdim-1][lifacet_i][0];
       // DOFS i

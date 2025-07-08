@@ -54,3 +54,6 @@ dd_type: "robin"
 initial_relaxation_factors: [1.0, 1.0]
 aitken_relaxation: False
 convergence_threshold: 1.0E-06
+gamma_quadrature: {
+  degree: 2,
+}

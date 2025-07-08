@@ -10,7 +10,9 @@
 template <std::floating_point T>
 std::vector<int32_t> get_facet_integration_entities(const dolfinx::mesh::Mesh<T> &domain,
     std::span<const std::int32_t> facets,
-    const dolfinx::fem::Function<T> &active_els_func)
+    const dolfinx::fem::Function<T> &active_els_func,
+    bool use_inactive = false,
+    bool use_ghosted = false)
 {
 
 
@@ -21,30 +23,27 @@ std::vector<int32_t> get_facet_integration_entities(const dolfinx::mesh::Mesh<T>
   size_t num_local_cells = domain.topology()->index_map(cdim)->size_local();
 
   std::vector<int32_t> integration_entities;
-  for (const int &ifacet : facets) {
+  for (const std::int32_t &ifacet : facets) {
     // Find local active cell that owns the facet
     auto incident_cells = con_facet_cell->links(ifacet);
-    int owner_el = -1;
+    std::int32_t owner_cell = -1;
     for (auto &ielem : incident_cells) {
-      if ((active_els_vals[ielem]) and (ielem < num_local_cells)) {
-        owner_el = ielem;
-        break;
-      }
+      // Skip inactive or ghosted elements
+      if ((not(use_inactive) && active_els_vals[ielem] < 1.0) || (not(use_ghosted) && ielem >= num_local_cells))
+        continue;
+      owner_cell = ielem;
+      break;
     }
-    if (owner_el<=-1)
+    if (owner_cell<=-1)
       continue;
 
     //Get local index of facet
-    auto incident_facets = con_cell_facet->links(owner_el);
-    int local_index = -1;
-    for (int i = 0; i < incident_facets.size(); ++i) {
-      if (ifacet==incident_facets[i]) {
-        local_index = i;
-        break;
-      }
-    }
-    assert(local_index>-1);
-    integration_entities.push_back(owner_el);
+    auto incident_facets = con_cell_facet->links(owner_cell);
+    auto it = std::find(incident_facets.begin(), incident_facets.end(), ifacet);
+    assert(it != incident_facets.end());
+    const std::int32_t local_index = std::distance(incident_facets.begin(), it);
+
+    integration_entities.push_back(owner_cell);
     integration_entities.push_back(local_index);
   }
 

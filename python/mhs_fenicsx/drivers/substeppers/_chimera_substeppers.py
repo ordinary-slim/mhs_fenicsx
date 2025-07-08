@@ -36,8 +36,7 @@ class ChimeraSubstepper(ABC):
         # Quadrature degree at interface
         self.quadrature_degree = self.params["mono_robin_gamma_quadrature_degree"]
         self.chimera_driver = MonolithicRRDriver(self.pf, self.pm,
-                                                 1.0, 1.0,
-                                                 quadrature_degree=self.quadrature_degree)
+                                                 1.0, 1.0,)
         self.chimera_always_on = self.params["chimera_always_on"]
         self.chimera_on = self.chimera_always_on
         self.current_orientation = initial_orientation.astype(np.float64)

@@ -2,10 +2,8 @@ from mhs_fenicsx.problem import Problem
 from dolfinx import fem, la
 import basix.ufl
 from mhs_fenicsx_cpp import cellwise_determine_point_ownership, scatter_cell_integration_data_po, \
-                            MonolithicRobinRobinAssembler64, interpolate_dg0_at_facets, \
-                            tabulate_gamma_quadrature
+                            MonolithicRobinRobinAssembler64, interpolate_dg0_at_facets
 from mhs_fenicsx.problem.helpers import get_identity_maps
-from ffcx.element_interface import map_facet_points
 import numpy as np
 from petsc4py import PETSc
 import multiphenicsx, multiphenicsx.fem.petsc
@@ -16,12 +14,10 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
 class MonolithicDomainDecompositionDriver:
-    def __init__(self, sub_problem_1: Problem, sub_problem_2: Problem,
-                 quadrature_degree):
+    def __init__(self, sub_problem_1: Problem, sub_problem_2: Problem):
         (p1, p2) = (sub_problem_1, sub_problem_2)
         self.p1 = p1
         self.p2 = p2
-        self.quadrature_degree = quadrature_degree
         if "petsc_opts_mono_robin" in p1.input_parameters:
             self.solver_opts = dict(p1.input_parameters["petsc_opts_mono_robin"])
         else:
@@ -30,18 +26,6 @@ class MonolithicDomainDecompositionDriver:
     def setup_coupling(self):
         ''' Find interface '''
         (p1,p2) = (self.p1,self.p2)
-        self.gamma_qpoints = {
-                    p1: None,
-                    p2: None,
-                    }
-        self.gamma_qpoints_po = {
-                    p1: { p2: None },
-                    p2: { p1: None },
-                    }
-        self.gamma_renumbered_cells_ext = { p1: {}, p2: {}}
-        self.gamma_mat_ids = { p1: {}, p2: {}}
-        self.gamma_dofs_cells_ext = { p1: {}, p2: {}}
-        self.gamma_geoms_cells_ext = { p1: {}, p2: {}}
         self.gdofs_communicators = {}
 
     def post_iterate(self):
@@ -49,35 +33,14 @@ class MonolithicDomainDecompositionDriver:
 
 class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
     def __init__(self, sub_problem_1:Problem, sub_problem_2:Problem,
-                 robin_coeff1: float, robin_coeff2: float,
-                 quadrature_degree):
+                 robin_coeff1: float, robin_coeff2: float):
         (p1,p2) = (sub_problem_1,sub_problem_2)
-        super().__init__(p1, p2, quadrature_degree)
+        super().__init__(p1, p2)
         self.robin_coeff1, self.robin_coeff2 = robin_coeff1, robin_coeff2
         self.set_n_compile_forms()
-        self.Qe = dict()
-        self.quadrature_points_cell = dict()
         self.monolithicRrAssembler = dict()
-        for p, p_ext in zip((p1, p2), (p2, p1)):
+        for p in [p1, p2]:
             self.monolithicRrAssembler[p] = MonolithicRobinRobinAssembler64()
-            cdim = p.domain.topology.dim
-            cell_type =  p.domain.topology.entity_types[-1][0].name
-            facet_type = p.domain.topology.entity_types[-2][0].name
-            points, weights= None, None
-            if facet_type=='point':
-                points  = np.array([[0.0]], dtype=np.float64)
-                weights = np.array([1.0], dtype=np.float64)
-                quadrature_degree = 1
-            self.Qe[p] = basix.ufl.quadrature_element(facet_type,
-                                                      points=points,
-                                                      weights=weights,
-                                                      degree=quadrature_degree,
-                                                      )
-            num_gps_facet = self.Qe[p].num_entity_dofs[-1][0]
-            num_facets_cell = p.domain.ufl_cell().num_facets()
-            self.quadrature_points_cell[p]  = np.zeros((num_gps_facet * num_facets_cell, cdim), dtype=self.Qe[p]._points.dtype)
-            for ifacet in range(num_facets_cell):
-                self.quadrature_points_cell[p][ifacet*num_gps_facet : ifacet*num_gps_facet + num_gps_facet, :cdim] = map_facet_points(self.Qe[p]._points, ifacet, cell_type)
 
     def __del__(self):
         self._destroy()
@@ -168,41 +131,19 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
             R_sub_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
 
     def preassemble_robin_matrix(self, p:Problem, p_ext:Problem):
-        # GENERATE QUADRATURE
-        # Manually tabulate
-        num_gps_facet = self.Qe[p].num_entity_dofs[-1][0]
-        self.gamma_qpoints[p] = tabulate_gamma_quadrature(
-                p.domain._cpp_object,
-                p.gamma_integration_data[p_ext],
-                num_gps_facet,
-                self.quadrature_points_cell[p]
-                )
-        self.gamma_qpoints_po[p][p_ext] = \
-                cellwise_determine_point_ownership(p_ext.domain._cpp_object,
-                                                   self.gamma_qpoints[p],
-                                                   p_ext.local_active_els,
-                                                   np.float64(1e-7))
-        self.gamma_renumbered_cells_ext[p][p_ext], \
-        self.gamma_mat_ids[p][p_ext], \
-        self.gamma_dofs_cells_ext[p][p_ext], \
-        self.gamma_geoms_cells_ext[p][p_ext] = \
-                        scatter_cell_integration_data_po(self.gamma_qpoints_po[p][p_ext],
-                                                         p_ext.v._cpp_object,
-                                                         p_ext.restriction,
-                                                         p_ext.material_id._cpp_object
-                                                         )
-        self.gdofs_communicators[p] = GdofsCommunicator(p, p_ext, self.gamma_dofs_cells_ext[p][p_ext])
-        A_coupling = self.monolithicRrAssembler[p].preassemble(self.gamma_qpoints[p],
-                                                               self.quadrature_points_cell[p],
-                                                               self.Qe[p]._weights,
+        self.gdofs_communicators[p] = GdofsCommunicator(p, p_ext, p.boun_dofs_cells_ext[p_ext])
+        A_coupling = self.monolithicRrAssembler[p].preassemble(p.bqpoints,
+                                                               p.quadrature_points_cell,
+                                                               p.Qe._weights,
                                                                p.v._cpp_object,
                                                                p.restriction,
                                                                p_ext.v._cpp_object,
                                                                p_ext.restriction,
-                                                               p.gamma_integration_data[p_ext],
-                                                               self.gamma_renumbered_cells_ext[p][p_ext],
-                                                               self.gamma_dofs_cells_ext[p][p_ext],
-                                                               self.gamma_geoms_cells_ext[p][p_ext],
+                                                               p.bfacets_integration_data,
+                                                               p.boun_marker_gamma[p_ext],
+                                                               p.boun_renumbered_cells_ext[p_ext],
+                                                               p.boun_dofs_cells_ext[p_ext],
+                                                               p.boun_geoms_cells_ext[p_ext],
                                                                )
         return A_coupling
 
@@ -217,19 +158,20 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.monolithicRrAssembler[p].assemble_jacobian(A,
                                                         np.array([mat.k.compiled_func for mat in p_ext.materials], np.uintp),
                                                         np.array([mat.k.compiled_dfunc for mat in p_ext.materials], np.uintp),
-                                                        self.gamma_qpoints[p],
-                                                        self.quadrature_points_cell[p],
-                                                        self.Qe[p]._weights,
+                                                        p.bqpoints,
+                                                        p.quadrature_points_cell,
+                                                        p.Qe._weights,
                                                         p.v._cpp_object,
                                                         p.restriction,
                                                         p_ext.v._cpp_object,
                                                         p_ext.restriction,
-                                                        p.gamma_integration_data[p_ext],
-                                                        self.gamma_qpoints_po[p][p_ext],
-                                                        self.gamma_renumbered_cells_ext[p][p_ext],
-                                                        self.gamma_dofs_cells_ext[p][p_ext],
+                                                        p.bfacets_integration_data,
+                                                        p.bqpoints_po[p_ext],
+                                                        p.boun_marker_gamma[p_ext],
+                                                        p.boun_renumbered_cells_ext[p_ext],
+                                                        p.boun_dofs_cells_ext[p_ext],
                                                         u_ext_coeffs,
-                                                        self.gamma_mat_ids[p][p_ext],
+                                                        p.boun_mat_ids[p_ext],
                                                         robin_coeff
                                                         )
         A.assemble()
@@ -243,19 +185,20 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
             self.monolithicRrAssembler[p].assemble_residual(R_loc.array_w,
                                                             np.array([mat.k.compiled_func for mat in p_ext.materials], np.uintp),
                                                             np.array([mat.k.compiled_dfunc for mat in p_ext.materials], np.uintp),
-                                                            self.gamma_qpoints[p],
-                                                            self.quadrature_points_cell[p],
-                                                            self.Qe[p]._weights,
+                                                            p.bqpoints,
+                                                            p.quadrature_points_cell,
+                                                            p.Qe._weights,
                                                             p.v._cpp_object,
                                                             p.restriction,
                                                             p_ext.v._cpp_object,
                                                             p_ext.restriction,
-                                                            p.gamma_integration_data[p_ext],
-                                                            self.gamma_qpoints_po[p][p_ext],
-                                                            self.gamma_renumbered_cells_ext[p][p_ext],
-                                                            self.gamma_dofs_cells_ext[p][p_ext],
+                                                            p.bfacets_integration_data,
+                                                            p.bqpoints_po[p_ext],
+                                                            p.boun_marker_gamma[p_ext],
+                                                            p.boun_renumbered_cells_ext[p_ext],
+                                                            p.boun_dofs_cells_ext[p_ext],
                                                             u_ext_coeffs,
-                                                            self.gamma_mat_ids[p][p_ext],
+                                                            p.boun_mat_ids[p_ext],
                                                             robin_coeff
                                                             )
 

@@ -4,9 +4,9 @@
 
 using U = double;
 
-inline std::vector<U> tabulate_gamma_quadrature(
+inline std::vector<U> tabulate_facet_quadrature(
     const dolfinx::mesh::Mesh<U> &mesh,
-    std::span<const std::int32_t> gamma_integration_data,
+    std::span<const std::int32_t> facet_integration_data,
     size_t num_gps_facet,
     std::span<const U> _quadrature_points_cell
     ) {
@@ -19,8 +19,8 @@ inline std::vector<U> tabulate_gamma_quadrature(
 
   int cdim = mesh.topology()->dim();
   int num_facets_cell = basix::cell::num_sub_entities(dolfinx::mesh::cell_type_to_basix_type(mesh.topology()->cell_type()), cdim-1);
-  assert(gamma_integration_data.size() % 2 == 0);
-  size_t num_local_gamma_cells = gamma_integration_data.size() / 2;
+  assert(facet_integration_data.size() % 2 == 0);
+  size_t num_local_facet_cells = facet_integration_data.size() / 2;
 
   int gdim = mesh.geometry().dim();
   const dolfinx::fem::CoordinateElement<U>& coordinate_element = mesh.geometry().cmap();
@@ -28,8 +28,8 @@ inline std::vector<U> tabulate_gamma_quadrature(
   std::span<const U> x_geo = mesh.geometry().x();
   int num_dofs_cell = mesh.geometry().dofmap().extent(1);
 
-  std::vector<U> _gamma_qpoints(num_local_gamma_cells*num_gps_facet*3);
-  mdspan2 gamma_qpoints(_gamma_qpoints.data(), num_local_gamma_cells*num_gps_facet, 3);
+  std::vector<U> _facet_qpoints(num_local_facet_cells*num_gps_facet*3);
+  mdspan2 facet_qpoints(_facet_qpoints.data(), num_local_facet_cells*num_gps_facet, 3);
   cmdspan2 quadrature_points_cell(_quadrature_points_cell.data(), num_gps_facet*num_facets_cell, cdim);
 
   // TODO: Move to outside of this function
@@ -45,9 +45,9 @@ inline std::vector<U> tabulate_gamma_quadrature(
   std::vector<U> cell_coords_b(num_dofs_cell * gdim);
   mdspan2 cell_coords(cell_coords_b.data(), x_dofmap.extent(1), gdim);
 
-  for (int i = 0; i < num_local_gamma_cells; ++i) {
-    std::int32_t icell = gamma_integration_data[2*i];
-    std::int32_t lifacet = gamma_integration_data[2*i+1];
+  for (int i = 0; i < num_local_facet_cells; ++i) {
+    std::int32_t icell = facet_integration_data[2*i];
+    std::int32_t lifacet = facet_integration_data[2*i+1];
     auto dofs_cell = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
         x_dofmap, icell, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
     for (std::size_t j = 0; j < num_dofs_cell; ++j) {
@@ -57,7 +57,7 @@ inline std::vector<U> tabulate_gamma_quadrature(
       }
     }
     auto qpoints = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
-        gamma_qpoints,
+        facet_qpoints,
         std::pair(i*num_gps_facet, i*num_gps_facet + num_gps_facet),
         MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
     auto phi_sub = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
@@ -67,5 +67,5 @@ inline std::vector<U> tabulate_gamma_quadrature(
     // Push forward
     coordinate_element.push_forward(qpoints, cell_coords, phi_sub);
   }
-  return _gamma_qpoints;
+  return _facet_qpoints;
 }

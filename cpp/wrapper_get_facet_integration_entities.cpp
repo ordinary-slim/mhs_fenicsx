@@ -9,16 +9,20 @@ void templated_declare_get_facet_integration_entities(nb::module_ &m) {
   m.def("get_facet_integration_entities",
       [](const dolfinx::mesh::Mesh<T> &domain,
         nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> facets,
-        const dolfinx::fem::Function<T> &active_els_func)
+        const dolfinx::fem::Function<T> &active_els_func,
+        bool use_inactive = false,
+        bool use_ghosted = false)
       {
         std::vector<std::int32_t> facet_integration_data =
           get_facet_integration_entities(
               domain,
               std::span(facets.data(), facets.size()),
-              active_els_func);
+              active_els_func,
+              use_inactive,
+              use_ghosted);
         return nb::ndarray<const std::int32_t, nb::numpy>(facet_integration_data.data(),
                                                   {facet_integration_data.size()}).cast();
-      }, nb::arg("domain"), nb::arg("facets"), nb::arg("active_els_func"));
+      }, nb::arg("domain"), nb::arg("facets"), nb::arg("active_els_func"), nb::arg("use_inactive") = false, nb::arg("use_ghosted") = false);
 }
 
 void declare_get_facet_integration_entities(nb::module_ &m) {

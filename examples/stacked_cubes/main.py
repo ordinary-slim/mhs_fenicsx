@@ -59,6 +59,13 @@ def write_gcode(params):
 def get_k(p):
     return p.materials[0].k.Ys[:-1].mean()
 
+def deactivate_below_surface(p):
+    # Deactivate below surface
+    midpoints_cells = mesh.compute_midpoints(p.domain, p.dim, np.arange(p.num_cells))
+    substrate_els = (midpoints_cells[:, 2] <= 0.0).nonzero()[0]
+    p.set_activation(substrate_els, finalize=True)
+    p.update_material_at_cells(substrate_els, p.materials[1])
+
 def run_reference(params, descriptor=""):
     writepos = params.get("writepos", True)
     domain = create_stacked_cubes_mesh(params)
@@ -66,12 +73,7 @@ def run_reference(params, descriptor=""):
     ps = Problem(domain, params, name="ref" + descriptor)
 
     ps.set_initial_condition(  params["environment_temperature"] )
-
-    # Deactivate below surface
-    midpoints_cells = mesh.compute_midpoints(ps.domain, ps.dim, np.arange(ps.num_cells))
-    substrate_els = (midpoints_cells[:, 2] <= 0.0).nonzero()[0]
-    ps.set_activation(substrate_els, finalize=True)
-    ps.update_material_at_cells(substrate_els, ps.materials[1])
+    deactivate_below_surface(ps)
 
     ps.set_forms()
     ps.compile_forms()
@@ -103,16 +105,41 @@ def run_staggered(params, descriptor=""):
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     ps = Problem(domain, macro_params, finalize_activation=False, name="staggered_rr" + descriptor)
-    ps.set_initial_condition(  params["environment_temperature"] )
 
+    ps.set_initial_condition(  params["environment_temperature"] )
+    deactivate_below_surface(ps)
 
     substeppin_driver = MHSStaggeredSubstepper(StaggeredRRDriver,
                                                [1.0, 1.0],
                                                ps,)
-    ps = substeppin_driver.ps
+    (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
     staggered_driver = substeppin_driver.staggered_driver
     staggered_driver.set_dirichlet_coefficients(
             params["fine_el_size"], get_k(ps))
+
+    max_timesteps = params.get("max_timesteps", 1e9)
+    itime_step = 0
+    while ((itime_step < max_timesteps) and not(ps.is_path_over())):
+        itime_step += 1
+        substeppin_driver.do_timestep()
+        if writepos:
+            ps.writepos(extension="vtx", extra_funcs=[ps.u_av])
+    return ps
+
+def run_hodge(params, descriptor=""):
+    writepos = params.get("writepos", True)
+    radius = params["source_terms"][0]["radius"]
+    domain = create_stacked_cubes_mesh(params)
+
+    macro_params = params.copy()
+    macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
+    ps = Problem(domain, macro_params, finalize_activation=False, name="hodge" + descriptor)
+
+    ps.set_initial_condition(  params["environment_temperature"] )
+    deactivate_below_surface(ps)
+
+    substeppin_driver = MHSSemiMonolithicSubstepper(ps,)
+    (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
 
     max_timesteps = params.get("max_timesteps", 1e9)
     itime_step = 0

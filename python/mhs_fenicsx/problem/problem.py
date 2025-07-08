@@ -434,8 +434,16 @@ class Problem:
     def set_form_subdomain_data(self):
         self.divide_domain_by_materials()
         cell_subdomain_data = [(self.material_to_itag[mat], self.local_cells[mat]) for mat in self.materials]
-        self.form_subdomain_data[fem.IntegralType.cell].extend(cell_subdomain_data)
-        self.form_subdomain_data[fem.IntegralType.exterior_facet].extend(self.get_facets_subdomain_data())
+        # Helper function to avoid duplicates in subdomain data
+        def replace_subdomain_data(new_data, old_data):
+            new_tags = {tag for tag, _ in new_data}
+            old_data[:] = [entry for entry in old_data if entry[0] not in new_tags] + new_data
+        # Cells
+        replace_subdomain_data(cell_subdomain_data, self.form_subdomain_data[fem.IntegralType.cell])
+        # Facets
+        facet_subdomain_data = self.get_facets_subdomain_data()
+        replace_subdomain_data(facet_subdomain_data,
+                               self.form_subdomain_data[fem.IntegralType.exterior_facet])
 
     def update_boundary(self):
         bfacets_indices  = locate_active_boundary(self.domain, self.active_els_func)

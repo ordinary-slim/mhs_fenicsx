@@ -214,7 +214,7 @@ def test_hodge():
         [-0.4125, -0.1500, 0.0],
         [-0.1500, -0.0125, 0.0],
         ])
-    vals = np.array([1741.14278225,  220.80143742,  275.1454711 ,   25.14675252])
+    vals = np.array([1741.17490633,  220.80107027,  275.14547577,   25.14675407])
     mats = np.array([ 2, 1, 1, 1, ])
     assert_pointwise_vals(p, points, vals, f=p.u)
     assert_pointwise_vals(p, points, mats, f=p.material_id)

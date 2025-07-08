@@ -22,31 +22,38 @@ source_terms :
     radius : *radius
     power : &power 100
     path: &path "Path.gcode"
+  - type : gaussian3d
+    initial_position : *p0
+    initial_speed : *speed
+    radius : *radius
+    power : 0.0
+    path: *path
 
 environment_temperature : &environment_temperature 25
 
 # MATERIAL PROPERTIES
-material_bulk : { # in625
+material_powder : {
+  density : &density 4.3E+03, # kg / m3
+  conductivity :  [[25, 1.0], [1625, 10.0]], # W / m / K
+  specific_heat : &specific_heat 700, # J / kg / K
   phase_change : {
-    latent_heat : &latent_heat 280.0E+03,
-    solidus_temperature : &solidus_temperature 1290.0,
-    liquidus_temperature : &liquidus_temperature 1350.0,
-  },
-  density : 8.44E+03, # kg / mm3
-  conductivity : [[0.0, 9.5], [1320.0, 28.85], [2000.0, 28.85]],
-  specific_heat : [[0.0, 405.0], [1320.0, 723.63], [2000.0, 723.63]],
+    #latent_heat : &latent_heat 350.0E+03,
+    latent_heat : &latent_heat 1.0,
+    solidus_temperature : &solidus_temperature 1600.0,
+    liquidus_temperature : &liquidus_temperature 1650.0,
+    melts_to : "metal",
+  }
 }
-material_powder : { # in625
+material_metal : {
+  density : *density,
+  conductivity : 10.0, # W / m / K
+  specific_heat : *specific_heat,
   phase_change : {
     latent_heat : *latent_heat,
     solidus_temperature : *solidus_temperature,
     liquidus_temperature : *liquidus_temperature,
-  },
-  density : 8.44E+03, # kg / mm3
-  conductivity : [[0.0, 9.5], [1320.0, 28.85], [2000.0, 28.85]],
-  specific_heat : [[0.0, 405.0], [1320.0, 723.63], [2000.0, 723.63]],
+  }
 }
-
 # LINEAR SOLVER OPTIONS
 petsc_opts_micro: {
   "ksp_error_if_not_converged" : "true",
@@ -105,14 +112,14 @@ substepping_parameters: {
   },
   predictor: {
     enabled :  True,
-    source_term : 2,
+    source_term : 0,
   },
   writepos: False,
   mono_robin_gamma_quadrature_degree : 4,
   chimera_always_on: True,
   chimera_steadiness_workflow: {
     enabled: True,
-    adim_dt_increment: 0.5,
+    adim_dt_increment: 0.25,
     max_adim_dt: &max_adim_dt 2.0
   },
 }

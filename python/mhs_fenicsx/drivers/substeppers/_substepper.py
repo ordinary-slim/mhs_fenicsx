@@ -525,7 +525,6 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         #print(f"time = {time}, micro_iter = {self.micro_iter}, macro_iter = {self.macro_iter}")
         self.writers[pf].write_function(funs,t=time)
 
-
 class MHSStaggeredSubstepper(MHSSubstepper):
     def __init__(self,
                  staggered_driver_class : typing.Type[StaggeredDomainDecompositionDriver],

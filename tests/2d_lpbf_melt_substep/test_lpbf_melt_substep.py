@@ -219,8 +219,8 @@ def test_2dlpbf_ref():
         [+0.4625, +0.0375, 0.0],
         [-0.5000,  0.0000, 0.0]
         ])
-    vals = np.array([1686.39024011, 1706.14093675, 1153.03727521, 400.95171243,
-                     333.5883279])
+    vals = np.array([1686.47343084, 1706.81739879, 1126.69490132,  398.62514368,
+                     333.59490359])
     mats = np.array([2., 2., 2., 2., 1.])
     assert_pointwise_vals(p, points, vals, f=p.u)
     assert_pointwise_vals(p, points, mats, f=p.material_id)
@@ -255,8 +255,9 @@ def test_hodge_substepper():
         [+0.4625, +0.0375, 0.0],
         [-0.5000,0.0000, 0.0]
         ])
-    vals = np.array([1686.39865997, 1706.215781, 1126.75101605, 428.4346181932377,
-                     333.58832694])
+    vals = np.array([1686.47343053, 1706.8173969 , 1126.74657231,  428.43461819,
+                     333.59490353])
+
     mats = np.array([1., 2., 2., 1., 1.])
     assert_pointwise_vals(p, points, vals, f=p.u)
     assert_pointwise_vals(p, points, mats, f=p.material_id)
@@ -305,8 +306,10 @@ if __name__=="__main__":
     write_gcode(params)
     parser = argparse.ArgumentParser()
     parser.add_argument('-r', '--run-ref', action='store_true')
+    parser.add_argument('-tr', '--run-test-ref', action='store_true')
     parser.add_argument('-ss','--run-sub-sta',action='store_true')
     parser.add_argument('-sms','--run-hodge',action='store_true')
+    parser.add_argument('-tsms','--run-test-hodge',action='store_true')
     parser.add_argument('-css','--run-chimera-sub-sta',action='store_true')
     parser.add_argument('-tcss', '--test-chimera-sub-sta', action='store_true')
     parser.add_argument('-csms','--run-chimera-hodge',action='store_true')
@@ -314,10 +317,16 @@ if __name__=="__main__":
     args = parser.parse_args()
     if args.run_ref:
         run_reference(params)
+    if args.run_test_ref:
+        test_2dlpbf_ref()
     if args.run_sub_sta:
         run_staggered(params)
     if args.run_hodge:
         run_hodge(params)
+    if args.run_hodge:
+        run_hodge(params)
+    if args.run_test_hodge:
+        test_hodge_substepper()
     if args.run_chimera_sub_sta:
         run_chimera_staggered(params)
     if args.run_chimera_hodge:

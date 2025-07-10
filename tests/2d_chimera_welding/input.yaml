@@ -24,7 +24,7 @@ environment_temperature : 25
 adim_dts : [0.125, 0.5, 1.0, 2.0]
 adim_tresholds : [0.0, 0.5, 2.0, 7.0]
 
-adim_t_final: 17.0
+adim_t_final: 2.0
 supg: 1
 max_staggered_iters: 1000
 petsc_opts_fixed: {
@@ -49,7 +49,7 @@ moving_domain_params : {
 
 els_per_radius: 8
 fine_dt: 0.125
-run_type: staggered
+run_type: monolithic
 dd_type: "robin"
 initial_relaxation_factors: [1.0, 1.0]
 aitken_relaxation: False

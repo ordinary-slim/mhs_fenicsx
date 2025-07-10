@@ -142,7 +142,7 @@ def main():
         for p in [pf, pm]:
             p.name += "_monolithic"
             p.initialize_post()
-        driver = MonolithicRRDriver(p_fixed, p_moving, 1.0, 1.0, quadrature_degree=2)
+        driver = MonolithicRRDriver(p_fixed, p_moving, 1.0, 1.0)
 
         for p in [p_fixed, p_moving]:
             p.set_forms()

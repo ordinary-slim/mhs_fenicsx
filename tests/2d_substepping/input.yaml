@@ -3,12 +3,17 @@ isSteady: False
 radius : &radius 0.05
 half_radius : &half_radius 0.025
 source_terms :
-  - type : lumped
-    initial_position : &p0 [-5.0, 0.0, 0.0]
+  - initial_position : [-5.0, 0.0, 0.0]
     initial_speed : &speed [1000.0, 0.0, 0]
-    radius : *radius
+    radius : 0.05
     power : &power 500
     path: &path "Path.gcode"
+  - type : lumped
+    initial_position : [0.0, 0.0, 0.0]
+    initial_speed : *speed
+    radius : *radius
+    power : *power
+    path: *path
     mdwidth  : *radius
     mdheight : *half_radius
     mddepth: *half_radius
@@ -68,8 +73,8 @@ max_ls_iters: 5
 post_freq : 8
 
 substepping_parameters: {
-  micro_adim_dt: 8.0,
-  macro_adim_dt: 8.0,
+  micro_adim_dt: 0.5,
+  macro_adim_dt: 4.0,
   max_staggered_iters: 1,
   adim_lens: {
     back_pad : 3,
@@ -80,10 +85,9 @@ substepping_parameters: {
   },
   predictor: {
     enabled :  True,
-    source_term : 1,
+    #source_term : 1,
   },
   writepos: False,
-  mono_robin_gamma_quadrature_degree : 4,
   chimera_always_on: False,
   chimera_steadiness_workflow: {
     enabled: True,
@@ -102,4 +106,7 @@ moving_domain_params : {
   adim_side_len : 3,
   adim_bot_len : 2,
   adim_top_len : 2,
+}
+gamma_quadrature: {
+  degree: 2,
 }

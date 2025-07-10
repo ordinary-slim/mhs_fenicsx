@@ -20,3 +20,7 @@ case_name: "poisson_square"
 max_iter: 1
 max_staggered_iters: 20
 points_side: 32
+#
+gamma_quadrature: {
+  degree: 2,
+}

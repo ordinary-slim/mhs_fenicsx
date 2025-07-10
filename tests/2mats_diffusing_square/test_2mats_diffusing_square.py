@@ -100,9 +100,10 @@ def monolithic_robin(params, writepos=True):
     active_els[p_right] = fem.locate_dofs_geometrical(p_right.dg0, lambda x : x[0] >= 0.5 )
     for p in [p_left,p_right]:
         p.set_activation(active_els[p])
-    set_same_mesh_interface(p_left, p_right)
+    for p, p_ext in ([p_left,p_right], [p_right, p_left]):
+        p.find_gamma(p_ext)
     set_bc(p_right, p_left)
-    driver = MonolithicRRDriver(p_left, p_right, 1.0, 1.0, quadrature_degree=2)
+    driver = MonolithicRRDriver(p_left, p_right, 1.0, 1.0)
     for p in [p_left, p_right]:
         p.set_forms()
         p.compile_create_forms()

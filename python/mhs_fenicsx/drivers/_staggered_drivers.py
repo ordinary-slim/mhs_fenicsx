@@ -378,7 +378,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         # Update functions
         if self.is_chimera:
             interpolate_dg0_at_facets([p_ext.grad_u._cpp_object,p_ext.material_id._cpp_object],
-                                      [self.ext_flux[p]._cpp_object,self.ext_material_gamma[p]._cpp_object],
+                                      [self.ext_flux[p]._cpp_object, self.ext_material_gamma[p]._cpp_object],
                                       p.active_els_func._cpp_object,
                                       p.gamma_facets[p_ext]._cpp_object,
                                       self.active_gamma_cells[p],

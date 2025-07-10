@@ -105,7 +105,6 @@ substepping_parameters: {
     source_term : 1,
   },
   writepos: True,
-  mono_robin_gamma_quadrature_degree : 2,
   chimera_always_on: False,
   chimera_steadiness_workflow: {
     enabled: False,
@@ -119,4 +118,7 @@ moving_domain_params : {
   adim_side_len : 2,
   adim_bot_len : 2,
   adim_top_len : 2,
+}
+gamma_quadrature: {
+  degree: 2,
 }

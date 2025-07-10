@@ -20,3 +20,6 @@ material_metal : {
 }
 environment_temperature: 20
 # END_ESSENTIAL
+gamma_quadrature: {
+  degree: 2,
+}

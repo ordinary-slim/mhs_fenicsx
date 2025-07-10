@@ -33,10 +33,7 @@ class ChimeraSubstepper(ABC):
         self.fraction_macro_step : float
 
     def chimera_post_init(self, initial_orientation : npt.NDArray):
-        # Quadrature degree at interface
-        self.quadrature_degree = self.params["mono_robin_gamma_quadrature_degree"]
-        self.chimera_driver = MonolithicRRDriver(self.pf, self.pm,
-                                                 1.0, 1.0,)
+        self.chimera_driver = MonolithicRRDriver(self.pf, self.pm, 1.0, 1.0,)
         self.chimera_always_on = self.params["chimera_always_on"]
         self.chimera_on = self.chimera_always_on
         self.current_orientation = initial_orientation.astype(np.float64)
@@ -163,9 +160,10 @@ class ChimeraSubstepper(ABC):
             pf.subtract_problem(pm, finalize=False)# Can I finalize here?
             self.chimera_interpolate_material_id()
 
-        for p, p_ext in [(pm, pf), (pf, pm)]:
+        for p in [pf, pm]:
             p.finalize_activation()
-            p.find_gamma(p_ext)#TODO: Re-use previous data here
+        for p, p_ext in ([pf, pm], [pm, pf]):
+            p.find_gamma(p_ext)
 
     def chimera_micro_post_iterate(self):
         (pf, pm) = self.pf, self.pm

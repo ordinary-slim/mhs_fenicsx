@@ -556,7 +556,7 @@ class Problem:
         with gamma_facet_marker.localForm() as lf:
             indices_gfacets = lf.array.nonzero()[0]
         local_threshold = np.searchsorted(indices_gfacets, self.facet_map.size_local)
-        mask_gamma_facets = np.zeros(self.num_facets, dtype=np.int32)
+        mask_gamma_facets = np.zeros(self.num_facets, dtype=np.int8)
         local_gamma_facets = indices_gfacets[:local_threshold]
         ghost_gamma_facets = indices_gfacets[local_threshold:]
         mask_gamma_facets[local_gamma_facets] = 1

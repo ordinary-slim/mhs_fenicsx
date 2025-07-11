@@ -5,7 +5,7 @@ half_radius : &half_radius 0.025
 source_terms :
   - initial_position : [-5.0, 0.0, 0.0]
     initial_speed : &speed [1000.0, 0.0, 0]
-    radius : 0.05
+    radius : *radius
     power : &power 500
     path: &path "Path.gcode"
   - type : lumped
@@ -61,7 +61,7 @@ domain_width: 1
 domain_height: 1
 els_per_radius: &els_per_radius 4
 
-max_timesteps: -1
+max_timesteps: 1
 dt : 1.0
 driver_type: "robin"
 initial_condition: False
@@ -74,7 +74,7 @@ post_freq : 8
 
 substepping_parameters: {
   micro_adim_dt: 0.5,
-  macro_adim_dt: 4.0,
+  macro_adim_dt: 5.0,
   max_staggered_iters: 1,
   adim_lens: {
     back_pad : 3,
@@ -87,7 +87,7 @@ substepping_parameters: {
     enabled :  True,
     #source_term : 1,
   },
-  writepos: False,
+  writepos: True,
   chimera_always_on: False,
   chimera_steadiness_workflow: {
     enabled: True,

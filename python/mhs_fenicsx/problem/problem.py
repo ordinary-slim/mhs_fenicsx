@@ -417,24 +417,38 @@ class Problem:
         for v in self.form_subdomain_data.values():
             v.clear()
 
-    def get_facets_subdomain_data(self, facets_integration_data = None, mat2itag = None):
+    def get_facets_subdomain_data(self, facets_integration_data=None, mat2itag=None):
         facet_subdomain_data = []
+
+        # Work on copy of boundary facets mask
+        bfacets_mask = self.bfacets_mask.copy()
+
         if facets_integration_data is None:
             # Subtract gamma facets to boundary facets mask
             for facets in self.gamma_imap_to_global_imap.values():
-                self.bfacets_mask[facets] = 0.0
-            facets = self.bfacets_mask.nonzero()[0] # gamma facets already subtracted
+                bfacets_mask[facets] = 0.0
+
+            # Remaining facets are external boundary
+            facets = np.flatnonzero(bfacets_mask)
             facets_integration_data = self.get_facet_integration_ents(facets)
+
         if mat2itag is None:
             mat2itag = self.material_to_itag
+
+        # For each boundary facet, get material tag from owner element
         facets_boun_els = facets_integration_data[::2]
         facets_mats = self.material_id.x.array[facets_boun_els]
+
         for mat in self.materials:
             tag = self.material_to_tag[mat]
-            ifacets = (facets_mats == tag).nonzero()[0]
-            indices_integration_data = np.vstack((2*ifacets, 2*ifacets+1)).reshape(-1, order='F')
-            facet_subdomain_data.append((mat2itag[mat],
-                                         facets_integration_data[indices_integration_data]))
+            ifacets = np.flatnonzero(facets_mats == tag)
+            indices = np.empty((2 * len(ifacets),), dtype=facets_integration_data.dtype)
+            indices[0::2] = 2*ifacets
+            indices[1::2] = 2*ifacets + 1
+            facet_subdomain_data.append((
+                mat2itag[mat],
+                facets_integration_data[indices],
+            ))
         return facet_subdomain_data
 
     def divide_domain_by_materials(self, els=None, dic=None):
@@ -535,7 +549,7 @@ class Problem:
             self.quadrature_points_cell)
         return quadrature_points
 
-    def find_gamma(self, p_ext):
+    def find_gamma(self, p_ext, compute_monolithic_coupling_data=True):
         self.bqpoints = self.generate_boundary_quadrature() # TODO: Try moving this to the constructor
         # and rotation
         self.bqpoints_po[p_ext] = mhs_fenicsx_cpp.cellwise_determine_point_ownership(
@@ -546,8 +560,8 @@ class Problem:
         num_gps_facet = self.Qe.num_entity_dofs[-1][0]
         src_owner_bqpoints = self.bqpoints_po[p_ext].src_owner.reshape((-1, num_gps_facet))
         partial_indices_gfacets = np.where(np.all(src_owner_bqpoints>=0, axis=1))[0]
-        bfacet_indices = self.bfacets_mask.nonzero()[0]
-        partial_indices_gfacets = bfacet_indices[partial_indices_gfacets]
+        self.bfacet_indices = self.bfacets_mask.nonzero()[0]
+        partial_indices_gfacets = self.bfacet_indices[partial_indices_gfacets]
         gamma_facet_marker = la.petsc.create_vector(self.facet_map, 1)
         gamma_facet_marker.setValuesLocal(partial_indices_gfacets.astype(np.int32),
                                      np.ones_like(partial_indices_gfacets, dtype=np.int32))
@@ -557,19 +571,22 @@ class Problem:
             indices_gfacets = lf.array.nonzero()[0]
         local_threshold = np.searchsorted(indices_gfacets, self.facet_map.size_local)
         mask_gamma_facets = np.zeros(self.num_facets, dtype=np.int8)
-        local_gamma_facets = indices_gfacets[:local_threshold]
+        self.local_gamma_facets = indices_gfacets[:local_threshold]
         ghost_gamma_facets = indices_gfacets[local_threshold:]
-        mask_gamma_facets[local_gamma_facets] = 1
+        mask_gamma_facets[self.local_gamma_facets] = 1
         mask_gamma_facets[ghost_gamma_facets] = 2
         my_tag  = mesh.meshtags(self.domain, self.dim-1,
                                 np.arange(self.num_facets, dtype=np.int32),
                                 mask_gamma_facets)
         self.set_gamma(p_ext, my_tag)
 
+        if compute_monolithic_coupling_data:
+            self.compute_monolithic_coupling_data(p_ext)
+
+    def compute_monolithic_coupling_data(self, p_ext : 'Problem'):
         # We work w/ boun facet po and skip non-gamma facets later on
-        offsets = np.arange(num_gps_facet)
-        self.boun_indices_gamma_facets[p_ext] = np.searchsorted(bfacet_indices, local_gamma_facets)
-        self.boun_marker_gamma[p_ext] = np.zeros_like(bfacet_indices, dtype=np.int32)
+        self.boun_indices_gamma_facets[p_ext] = np.searchsorted(self.bfacet_indices, self.local_gamma_facets)
+        self.boun_marker_gamma[p_ext] = np.zeros_like(self.bfacet_indices, dtype=np.int32)
         self.boun_marker_gamma[p_ext][self.boun_indices_gamma_facets[p_ext]] = 1
 
         # Prepare data for integration

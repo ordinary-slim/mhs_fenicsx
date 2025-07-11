@@ -113,6 +113,7 @@ if __name__=="__main__":
     parser.add_argument('-ss','--run-sub-sta',action='store_true')
     parser.add_argument('-sms','--run-sub-mon',action='store_true')
     parser.add_argument('-t','--testing',action='store_true')
+    parser.add_argument('-tsms','--test-semi-mono-substep',action='store_true')
     write_gcode(params)
     lp = LineProfiler()
     lp.add_module(Problem)
@@ -146,6 +147,9 @@ if __name__=="__main__":
         profiling_file = f"profiling_chimera_hodge_{rank}.txt"
     if args.testing:
         test_staggered_robin_chimera_substepper()
+        test_sms_chimera_substepper()
+        exit()
+    if args.test_semi_mono_substep:
         test_sms_chimera_substepper()
         exit()
     with open(profiling_file, 'w') as pf:

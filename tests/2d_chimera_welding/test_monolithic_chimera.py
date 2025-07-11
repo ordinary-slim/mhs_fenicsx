@@ -75,7 +75,7 @@ def main(input_file, writepos=True):
     return p_fixed, p_moving
 
 def test_monolothic_chimera_2d_welding():
-    pf, pm = main("test_input.yaml", writepos=True)
+    pf, pm = main("test_input.yaml", writepos=False)
     points = np.array([
         [-0.275, +0.000, +0.000],
         [-0.600, +0.200, +0.000],

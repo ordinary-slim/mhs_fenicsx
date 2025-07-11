@@ -134,7 +134,7 @@ class ChimeraSubstepper(ABC):
             next_track = self.pf.source.path.get_track(self.pf.time)
             return (((self.pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) >= 0.15)
 
-    def chimera_micro_pre_iterate(self, forced_time_derivative=False):
+    def chimera_micro_pre_iterate(self, forced_time_derivative=False, compute_monolithic_coupling_data=True):
         # TODO: Move this to Chimera driver?
         (pf, pm) = self.pf, self.pm
         prev_pm_active_nodes_mask = pm.active_nodes_func.x.array.copy()
@@ -163,7 +163,7 @@ class ChimeraSubstepper(ABC):
         for p in [pf, pm]:
             p.finalize_activation()
         for p, p_ext in ([pf, pm], [pm, pf]):
-            p.find_gamma(p_ext)
+            p.find_gamma(p_ext, compute_monolithic_coupling_data=compute_monolithic_coupling_data)
 
     def chimera_micro_post_iterate(self):
         (pf, pm) = self.pf, self.pm
@@ -236,6 +236,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
                 f*self.ext_flux_array_tnp1[:]
 
         sd.instantiate_forms(pf)
+        # Check gamma integration data is present
         sd.assert_tag(pf)
 
         pf.pre_assemble()
@@ -302,6 +303,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         assert(check_assumptions(ps, pf, pm))
 
         f = self.fraction_macro_step
+        # Set Dirichlet condition
         self.fast_dirichlet_tcon.g.x.array[self.gamma_dofs_fast] = \
                 (1-f)*ps.u_prev.x.array[self.gamma_dofs_fast] + \
                 f*ps.u.x.array[self.gamma_dofs_fast]
@@ -374,7 +376,11 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
     def monolithic_step(self):
         (ps, pf, pm) = (self.ps, self.pf, self.pm)
         ps.pre_iterate(forced_time_derivative=True)
-        self.chimera_micro_pre_iterate(forced_time_derivative=((pf.time - self.t0_macro_step) < 1e-7))
+        # PRE-ITERATE
+        # NOTE: monolithic coupling data can't be computed yet because DOF numbering
+        #      is not yet set up for pf
+        self.chimera_micro_pre_iterate(forced_time_derivative=((pf.time - self.t0_macro_step) < 1e-7),
+                                       compute_monolithic_coupling_data=False)
 
         assert(check_assumptions(ps, pf, pm))
 
@@ -382,7 +388,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
 
         self.j_instance, self.r_instance = self.instantiate_monolithic_forms()
 
-        # Make a new restriction
+        # NEW RESTRICTION including both fast and slow DOFs
         dofs_big_mesh = np.hstack((pf.active_dofs, self.dofs_slow))
         dofs_big_mesh.sort()
         self.restriction = multiphenicsx.fem.DofMapRestriction(pf.v.dofmap, dofs_big_mesh)
@@ -390,6 +396,12 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         pf.r_instance = self.r_instance
         pf.restriction = self.restriction
         self.initial_restriction = self.restriction
+
+        # NOTE: Now that all restrictions are set, final DOF numbering is set
+        # and monolithic coupling data is computed
+        for p, p_ext in [(pf, pm), (pm, pf)]:
+            p.compute_monolithic_coupling_data(p_ext)
+
         pf.pre_assemble()
 
         self.instantiate_forms(pm)

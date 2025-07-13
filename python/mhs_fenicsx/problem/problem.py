@@ -541,7 +541,7 @@ class Problem:
 
     def generate_boundary_quadrature(self):
         num_gps_facet = self.Qe.num_entity_dofs[-1][0]
-        self.bfacets_integration_data = self.get_facet_integration_ents(self.bfacets_mask.nonzero()[0], False, True)
+        self.bfacets_integration_data = self.get_facet_integration_ents(self.bfacets_mask.nonzero()[0], use_inactive=False, use_ghosted=True)
         quadrature_points = mhs_fenicsx_cpp.tabulate_facet_quadrature(
             self.domain._cpp_object,
             self.bfacets_integration_data,
@@ -575,6 +575,13 @@ class Problem:
         ghost_gamma_facets = indices_gfacets[local_threshold:]
         mask_gamma_facets[self.local_gamma_facets] = 1
         mask_gamma_facets[ghost_gamma_facets] = 2
+
+        # bfacet-sized marker for gamma facets
+        self.boun_indices_gamma_facets[p_ext] = np.searchsorted(self.bfacet_indices, self.local_gamma_facets)
+        self.boun_marker_gamma[p_ext] = np.zeros_like(self.bfacet_indices, dtype=np.int32)
+        self.boun_marker_gamma[p_ext][self.boun_indices_gamma_facets[p_ext]] = 1
+
+        # Finalize gamma facets
         my_tag  = mesh.meshtags(self.domain, self.dim-1,
                                 np.arange(self.num_facets, dtype=np.int32),
                                 mask_gamma_facets)
@@ -584,11 +591,6 @@ class Problem:
             self.compute_monolithic_coupling_data(p_ext)
 
     def compute_monolithic_coupling_data(self, p_ext : 'Problem'):
-        # We work w/ boun facet po and skip non-gamma facets later on
-        self.boun_indices_gamma_facets[p_ext] = np.searchsorted(self.bfacet_indices, self.local_gamma_facets)
-        self.boun_marker_gamma[p_ext] = np.zeros_like(self.bfacet_indices, dtype=np.int32)
-        self.boun_marker_gamma[p_ext][self.boun_indices_gamma_facets[p_ext]] = 1
-
         # Prepare data for integration
         self.boun_renumbered_cells_ext[p_ext], \
         self.boun_mat_ids[p_ext], \
@@ -614,12 +616,13 @@ class Problem:
                                                       self.dim-1,
                                                       name=f"gamma_{p_ext.name}",
                                                       f=f)
-        indices_all_gamma_facets = self.gamma_facets[p_ext].values.nonzero()[0]
+        # NOTE: This is already computed in find_gamma, could reuse
+        indices_gfacets = np.flatnonzero(self.gamma_facets[p_ext].values)
         self.gamma_facets_index_map[p_ext], \
         self.gamma_imap_to_global_imap[p_ext] = cpp.common.create_sub_index_map(self.facet_map,
-                                                    indices_all_gamma_facets,
+                                                    indices_gfacets,
                                                     False)
-        self.gamma_integration_data[p_ext] = self.get_facet_integration_ents(indices_all_gamma_facets)
+        self.gamma_integration_data[p_ext] = self.get_facet_integration_ents(indices_gfacets)
 
     def add_dirichlet_bc(self, func, bdofs=None, bfacets_tag=None, marker=None, reset=False):
         if reset:

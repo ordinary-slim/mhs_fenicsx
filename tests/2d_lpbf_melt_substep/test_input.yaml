@@ -104,7 +104,7 @@ substepping_parameters: {
     enabled :  True,
     source_term : 1,
   },
-  writepos: True,
+  writepos: False,
   chimera_always_on: False,
   chimera_steadiness_workflow: {
     enabled: False,

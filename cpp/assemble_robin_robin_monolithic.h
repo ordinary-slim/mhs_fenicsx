@@ -327,6 +327,8 @@ class MonolithicRobinRobinAssembler {
       // Loop 2: precompute gradients
       std::fill(dphi_j_b.begin(), dphi_j_b.end(), U(0.0));
       for (size_t idx = 0; idx < num_boun_facets; ++idx) {
+        if (not(boun_gamma_facet_marker_i[idx]))
+          continue;
         for (size_t k = 0; k < num_gps_facet; ++k) {//igauss
           size_t igp = idx*num_gps_facet + k;
           int icell_j = renumbering_cells_po_mesh_j[igp];

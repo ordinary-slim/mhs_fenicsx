@@ -556,7 +556,8 @@ class Problem:
             p_ext.domain._cpp_object,
             self.bqpoints,
             p_ext.local_active_els,
-            self.input_parameters.get("spatial_threshold", 1e-7))
+            self.input_parameters.get("spatial_threshold", 1e-7),
+            extrapolate=False)
         num_gps_facet = self.Qe.num_entity_dofs[-1][0]
         src_owner_bqpoints = self.bqpoints_po[p_ext].src_owner.reshape((-1, num_gps_facet))
         partial_indices_gfacets = np.where(np.all(src_owner_bqpoints>=0, axis=1))[0]

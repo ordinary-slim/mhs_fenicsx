@@ -11,7 +11,7 @@ radius            : &radius 0.1       # mm
 half_radius       : &half_radius 0.05 # mm
 
 dt               : 1.0     # placeholder
-max_timesteps    : 50
+max_timesteps    : 3
 isSteady         : False
 
 source_terms :
@@ -114,7 +114,6 @@ substepping_parameters: {
     source_term : 0,
   },
   writepos: True,
-  mono_robin_gamma_quadrature_degree : 4,
   chimera_always_on: True,
   chimera_steadiness_workflow: {
     enabled: True,
@@ -143,4 +142,7 @@ printer: {
   reuse_heated_els : False,
   layer_thickness : *layer_thickness,
   deposition_temperature : *environment_temperature
+}
+gamma_quadrature: {
+  degree: 4,
 }

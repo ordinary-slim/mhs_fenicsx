@@ -88,7 +88,9 @@ def run_staggered(params, driver_type, writepos=True):
 
     max_timesteps = get_max_timestep(params)
 
-    substeppin_driver = MHSStaggeredSubstepper(driver_constructor, initial_relaxation_factors, big_p)
+    substeppin_driver = MHSStaggeredSubstepper(driver_constructor,
+                                               big_p,
+                                               staggered_relaxation_factors=initial_relaxation_factors,)
     staggered_driver = substeppin_driver.staggered_driver
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
 

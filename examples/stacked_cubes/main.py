@@ -14,6 +14,10 @@ from line_profiler import LineProfiler
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
+def chimera_get_adim_back_len(fine_adim_dt: float = 0.5, adim_dt: float = 2):
+    ''' Back length of moving domain'''
+    return 4.0
+
 def write_gcode(params):
     num_layers = params["num_layers"]
     layer_thickness = params["layer_thickness"]
@@ -110,8 +114,8 @@ def run_staggered(params, descriptor=""):
     deactivate_below_surface(ps)
 
     substeppin_driver = MHSStaggeredSubstepper(StaggeredRRDriver,
-                                               [1.0, 1.0],
-                                               ps,)
+                                               ps,
+                                               staggered_relaxation_factors=[1.0, 1.0],)
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
     staggered_driver = substeppin_driver.staggered_driver
     staggered_driver.set_dirichlet_coefficients(
@@ -159,7 +163,9 @@ def run_staggered_chimera_rr(params, writepos=True, descriptor=""):
                  name="chimera_staggered_rr" + descriptor)
 
     pm = build_moving_problem(ps,
-                              macro_params["moving_domain_params"]["els_per_radius"],)
+                              macro_params["moving_domain_params"]["els_per_radius"],
+                              #custom_get_adim_back_len=get_adim_back_len,
+                              )
     for p in [ps, pm]:
         p.set_initial_condition(params["environment_temperature"])
         deactivate_below_surface(p)
@@ -167,8 +173,8 @@ def run_staggered_chimera_rr(params, writepos=True, descriptor=""):
 
     substeppin_driver = MHSStaggeredChimeraSubstepper(
         StaggeredRRDriver,
-        [1.0, 1.0],
-        ps, pm)
+        ps, pm,
+        staggered_relaxation_factors=[1.0, 1.0],)
 
     staggered_driver = substeppin_driver.staggered_driver
     staggered_driver.set_dirichlet_coefficients(

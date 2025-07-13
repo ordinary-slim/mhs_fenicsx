@@ -28,7 +28,6 @@ def get_adim_back_len(fine_adim_dt : float = 0.5, adim_dt : float = 2):
 
 
 def define_substepper(domain, params, descriptor):
-    initial_relaxation_factors = [1.0, 1.0]
     params["petsc_opts"] = params["petsc_opts_macro"]
     ps = Problem(domain, params, name="chimera_staggered_rr" + descriptor,
                  finalize_activation=True)
@@ -41,8 +40,8 @@ def define_substepper(domain, params, descriptor):
 
     substeppin_driver = MHSStaggeredChimeraSubstepper(
             StaggeredRRDriver,
-            initial_relaxation_factors,
-            ps, pm)
+            ps, pm,
+            staggered_relaxation_factors=[1.0, 1.0],)
     staggered_driver = substeppin_driver.staggered_driver
     staggered_driver.set_dirichlet_coefficients(
             get_h(ps, params["els_per_radius"]), get_k(ps))

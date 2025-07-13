@@ -49,16 +49,19 @@ void templated_declare_diffmesh_utils(nb::module_ &m) {
       [](const dolfinx::mesh::Mesh<T>& mesh,
          nb::ndarray<const T, nb::c_contig> points,
          nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> cells,
-         T padding)
+         T padding,
+         bool extrapolate = true)
       {
         const std::size_t p_s0 = points.ndim() == 1 ? 1 : points.shape(0);
         std::span<const T> _p(points.data(), 3 * p_s0);
         return my_determine_point_ownership<T>(mesh,
                                                _p,
                                                std::span(cells.data(),cells.size()),
-                                               padding);
+                                               padding,
+                                               extrapolate);
       },
-      nb::arg("mesh"),nb::arg("points"),nb::arg("cells"),nb::arg("padding"));
+    nb::arg("mesh"), nb::arg("points"), nb::arg("cells"), nb::arg("padding"),
+    nb::arg("extrapolate") = true);
 }
 
 void declare_diffmesh_utils(nb::module_ &m) {

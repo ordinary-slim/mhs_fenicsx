@@ -18,7 +18,6 @@ rank = comm.Get_rank()
 
 def run_staggered_RR(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
-    initial_relaxation_factors=[1.0,1.0]
     big_mesh = get_mesh(params, radius, 2)
 
     macro_params = params.copy()
@@ -34,8 +33,8 @@ def run_staggered_RR(params, writepos=True):
 
     substeppin_driver = MHSStaggeredChimeraSubstepper(
             StaggeredRRDriver,
-            initial_relaxation_factors,
-            ps, pm)
+            ps, pm,
+            staggered_relaxation_factors=[1.0,1.0],)
 
     staggered_driver = substeppin_driver.staggered_driver
     el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)

@@ -528,8 +528,8 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 class MHSStaggeredSubstepper(MHSSubstepper):
     def __init__(self,
                  staggered_driver_class : typing.Type[StaggeredDomainDecompositionDriver],
-                 staggered_relaxation_factors : list[float],
                  slow_problem : Problem,
+                 staggered_relaxation_factors : list[float] = [1.0, 1.0],
                  max_nr_iters=25, max_ls_iters=5,
                  compile_forms=True):
         super().__init__(slow_problem, max_nr_iters, max_ls_iters, compile_forms)

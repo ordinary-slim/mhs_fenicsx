@@ -83,8 +83,8 @@ def run_staggered(params, writepos=True):
     max_timesteps = params["max_timesteps"]
 
     substeppin_driver = MHSStaggeredSubstepper(StaggeredRRDriver,
-                                               [1.0, 1.0],
-                                               big_p,)
+                                               big_p,
+                                               staggered_relaxation_factors=[1.0, 1.0],)
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
     staggered_driver = substeppin_driver.staggered_driver
     el_density = np.round((1.0 / radius) * params["els_per_radius"]).astype(np.int32)
@@ -126,7 +126,6 @@ def run_chimera_staggered(params, writepos=True):
     els_per_radius = params["els_per_radius"]
     radius = params["source_terms"][0]["radius"]
     el_size = radius / els_per_radius
-    initial_relaxation_factors = [1.0,1.0]
     big_mesh = get_mesh(params, els_per_radius, radius, 2)
 
     macro_params = params.copy()
@@ -142,7 +141,9 @@ def run_chimera_staggered(params, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredChimeraSubstepper(StaggeredRRDriver, initial_relaxation_factors, ps, pm,)
+    substeppin_driver = MHSStaggeredChimeraSubstepper(StaggeredRRDriver,
+                                                      ps, pm,
+                                                      staggered_relaxation_factors=[1.0, 1.0])
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
     staggered_driver = substeppin_driver.staggered_driver
 

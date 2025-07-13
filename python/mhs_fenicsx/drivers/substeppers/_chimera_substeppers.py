@@ -184,8 +184,8 @@ class ChimeraSubstepper(ABC):
 class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
     def __init__(self,
                  staggered_driver_class : typing.Type[StaggeredDomainDecompositionDriver],
-                 staggered_relaxation_factors : list[float],
                  slow_problem:Problem, moving_problem : Problem,
+                 staggered_relaxation_factors : list[float] = [1.0, 1.0],
                  max_nr_iters=25, max_ls_iters=5,
                  compile_forms=True,
                  initial_orientation=np.array([1.0, 0.0, 0.0])
@@ -194,8 +194,8 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
         for mat in self.pm.material_to_itag:
             self.pm.material_to_itag[mat] += 2*len(slow_problem.materials)
         super().__init__(staggered_driver_class,
-                         staggered_relaxation_factors,
                          slow_problem,
+                         staggered_relaxation_factors,
                          max_nr_iters,
                          max_ls_iters,
                          compile_forms)

@@ -259,9 +259,9 @@ def test_monolithic_RR_poisson_3d_hexa():
 if __name__=="__main__":
     profiling = True
     writepos = True
-    dim = 3
-    els_side = 4
-    el_type = "hexa"
+    dim = 2
+    els_side = 16
+    el_type = "quadtri"
     run_func = run
     if profiling:
         lp = LineProfiler()

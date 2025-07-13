@@ -13,9 +13,9 @@ CHECKPOINTS
 
 - [x] Monolithic Chimera
 - [x] Square track case
-- [ ] 3D
+- [x] 3D
 - [x] 2D AM
-- [ ] 3D AM
+- [x] 3D AM
 - [x] Lumped heat source PREDICTOR (high priority)
 - [ ] 2 staggered iterations at most
 - [x] Phase change

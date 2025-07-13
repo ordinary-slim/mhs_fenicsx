@@ -83,8 +83,8 @@ def run_staggered(params, writepos=True, descriptor=""):
     max_timesteps = params["max_timesteps"]
 
     substeppin_driver = MHSStaggeredSubstepper(StaggeredRRDriver,
-                                               [1.0, 1.0],
-                                               ps,)
+                                               ps,
+                                               staggered_relaxation_factors=[1.0, 1.0],)
     ps = substeppin_driver.ps
     staggered_driver = substeppin_driver.staggered_driver
     staggered_driver.set_dirichlet_coefficients(
@@ -119,7 +119,7 @@ def run_hodge(params, writepos=True, descriptor=""):
     return ps
 
 def run_staggered_chimera_rr(params, writepos=True, descriptor=""):
-    initial_relaxation_factors=[1.0,1.0]
+    initial_relaxation_factors=
     big_mesh = get_mesh(params)
 
     macro_params = params.copy()
@@ -136,8 +136,8 @@ def run_staggered_chimera_rr(params, writepos=True, descriptor=""):
 
     substeppin_driver = MHSStaggeredChimeraSubstepper(
             StaggeredRRDriver,
-            initial_relaxation_factors,
-            ps, pm)
+            ps, pm,
+            staggered_relaxation_factors=[1.0,1.0],)
 
     staggered_driver = substeppin_driver.staggered_driver
     staggered_driver.set_dirichlet_coefficients(get_h(ps,

@@ -232,10 +232,10 @@ void interpolate_cg1_affine(const dolfinx::fem::Function<T> &sending_f,
   assert(num_dofs_processor == dofs_to_interpolate.size());
 
   dolfinx::geometry::PointOwnershipData<T> interpolation_data =
-    my_determine_point_ownership(*smesh,
-        _coords_dofs_to_interpolate,
-        sending_cells,
-        padding);
+    determine_point_ownership(*smesh,
+                              _coords_dofs_to_interpolate,
+                              sending_cells,
+                              padding);
 
   const std::vector<int>& dest_ranks = interpolation_data.src_owner;
   const std::vector<int>& src_ranks = interpolation_data.dest_owners;
@@ -295,10 +295,10 @@ void interpolate_dg0(const dolfinx::fem::Function<T> &sending_f,
     const std::vector<T> midpoints = dolfinx::mesh::compute_midpoints(*rmesh, cdim, receiving_cells);
     // Point ownership with midpoints and scells
     dolfinx::geometry::PointOwnershipData<T> interpolation_data =
-      my_determine_point_ownership(*smesh,
-          std::span<const T>(midpoints.data(), midpoints.size()),
-          sending_cells,
-          padding);
+      determine_point_ownership(*smesh,
+                                std::span<const T>(midpoints.data(), midpoints.size()),
+                                sending_cells,
+                                padding);
     // Gather sf info at cells
     auto s_x = sending_f.x()->array();
     std::vector<T> rvals(interpolation_data.src_owner.size());

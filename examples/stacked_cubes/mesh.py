@@ -107,6 +107,7 @@ def create_stacked_cubes_mesh(params):
             gmsh.model.geo.mesh.setTransfiniteCurve(curve, n_z)
         for surface in [21,22,23,24,25,26]:
             gmsh.model.geo.mesh.setTransfiniteSurface(surface)
+        gmsh.model.geo.mesh.setTransfiniteVolume(1)
 
         # ---------------- Mesh generation ----------------
         gmsh.model.geo.synchronize()

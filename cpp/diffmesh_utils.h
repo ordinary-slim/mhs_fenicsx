@@ -167,11 +167,11 @@ void scatter_values(MPI_Comm comm, std::span<const std::int32_t> src_ranks,
 };
 
 template <std::floating_point T>
-dolfinx::geometry::PointOwnershipData<T> my_determine_point_ownership(const dolfinx::mesh::Mesh<T>& mesh,
-                                                                      std::span<const T> points,
-                                                                      std::span<const std::int32_t> cells,
-                                                                      T padding,
-                                                                      bool extrapolate = true)
+dolfinx::geometry::PointOwnershipData<T> determine_point_ownership(const dolfinx::mesh::Mesh<T>& mesh,
+                                                                   std::span<const T> points,
+                                                                   const dolfinx::geometry::BoundingBoxTree<T>& bb,
+                                                                   std::span<const T> active_entities = {},
+                                                                   bool extrapolate = true)
 {
   MPI_Comm comm = mesh.comm();
 
@@ -179,12 +179,15 @@ dolfinx::geometry::PointOwnershipData<T> my_determine_point_ownership(const dolf
   // cells that could collide with the points
   const int tdim = mesh.topology()->dim();
   auto cell_map = mesh.topology()->index_map(tdim);
-  const std::int32_t num_cells = cell_map->size_local();
-  // NOTE: Should we send the cells in as input?
-  //std::vector<std::int32_t> cells(num_cells, 0);
-  //std::iota(cells.begin(), cells.end(), 0);
-  dolfinx::geometry::BoundingBoxTree bb(mesh, tdim, cells, padding);
   dolfinx::geometry::BoundingBoxTree global_bbtree = bb.create_global_tree(comm);
+
+  // If no active entites are provided, assume all entities are active
+  std::vector<T> _active_entities;
+  if (active_entities.empty()) {
+    _active_entities.assign(cell_map->size_local() + cell_map->num_ghosts(),
+                            1.0);
+    active_entities = std::span<const T>(_active_entities);
+  }
 
   // Compute collisions:
   // For each point in `points` get the processes it should be sent to
@@ -273,14 +276,21 @@ dolfinx::geometry::PointOwnershipData<T> my_determine_point_ownership(const dolf
   const int rank = dolfinx::MPI::rank(comm);
   std::vector<std::int32_t> cell_indicator(received_points.size() / 3);
   std::vector<std::int32_t> closest_cells(received_points.size() / 3);
+  std::vector<std::int32_t> candidate_cells;
   for (std::size_t p = 0; p < received_points.size(); p += 3)
   {
     std::array<T, 3> point;
     std::copy_n(std::next(received_points.begin(), p), 3, point.begin());
     // Find first colliding cell among the cells with colliding bounding boxes
+    std::span<const std::int32_t> all_candidate_cells = candidate_collisions.links(p / 3);
+    candidate_cells.clear();
+    candidate_cells.reserve(all_candidate_cells.size());
+    std::copy_if(all_candidate_cells.begin(),
+        all_candidate_cells.end(),
+        std::back_inserter(candidate_cells),
+        [&active_entities](std::int32_t cell){ return bool(active_entities[cell]);});
     const int colliding_cell = dolfinx::geometry::compute_first_colliding_cell(
-        mesh, candidate_collisions.links(p / 3), point,
-        10 * std::numeric_limits<T>::epsilon());
+      mesh, candidate_cells, point, 10 * std::numeric_limits<T>::epsilon());
     // If a collding cell is found, store the rank of the current process
     // which will be sent back to the owner of the point
     cell_indicator[p / 3] = (colliding_cell >= 0) ? rank : -1;
@@ -471,172 +481,29 @@ dolfinx::geometry::PointOwnershipData<T> my_determine_point_ownership(const dolf
 }
 
 template <std::floating_point T>
+dolfinx::geometry::PointOwnershipData<T> determine_point_ownership(const dolfinx::mesh::Mesh<T>& mesh,
+                                                                   std::span<const T> points,
+                                                                   std::span<const std::int32_t> cells,
+                                                                   T padding,
+                                                                   bool extrapolate = true)
+{
+  dolfinx::geometry::BoundingBoxTree bb(mesh, mesh.topology()->dim(), cells, padding);
+  return determine_point_ownership(mesh, points, bb, {}, extrapolate);
+}
+
+template <std::floating_point T>
 std::vector<int> find_owner_rank(
     std::span<const T> points,
     const dolfinx::geometry::BoundingBoxTree<T>& cell_bb_tree,
     const dolfinx::fem::Function<T>& active_els_func)
 {
-
-  auto mesh = active_els_func.function_space()->mesh();
-  MPI_Comm comm = mesh->comm();
-
-  dolfinx::geometry::BoundingBoxTree global_bbtree = cell_bb_tree.create_global_tree(comm);
-
-  // Compute collisions:
-  // For each point in `points` get the processes it should be sent to
-  dolfinx::graph::AdjacencyList collisions = compute_collisions(global_bbtree, points);
-
-  // Get unique list of outgoing ranks
-  std::vector<std::int32_t> out_ranks = collisions.array();
-  std::sort(out_ranks.begin(), out_ranks.end());
-  out_ranks.erase(std::unique(out_ranks.begin(), out_ranks.end()),
-                  out_ranks.end());
-  // Compute incoming edges (source processes)
-  std::vector in_ranks = dolfinx::MPI::compute_graph_edges_nbx(comm, out_ranks);
-  std::sort(in_ranks.begin(), in_ranks.end());
-
-  // Create neighborhood communicator in forward direction
-  MPI_Comm forward_comm;
-  MPI_Dist_graph_create_adjacent(
-      comm, in_ranks.size(), in_ranks.data(), MPI_UNWEIGHTED, out_ranks.size(),
-      out_ranks.data(), MPI_UNWEIGHTED, MPI_INFO_NULL, false, &forward_comm);
-
-  // Compute map from global mpi rank to neighbor rank, "collisions"
-  // uses global rank
-  std::map<std::int32_t, std::int32_t> rank_to_neighbor;
-  for (std::size_t i = 0; i < out_ranks.size(); i++)
-    rank_to_neighbor[out_ranks[i]] = i;
-
-  // Count the number of points to send per neighbor process
-  std::vector<std::int32_t> send_sizes(out_ranks.size());
-  for (std::size_t i = 0; i < points.size() / 3; ++i)
-    for (auto p : collisions.links(i))
-      send_sizes[rank_to_neighbor[p]] += 3;
-
-  // Compute receive sizes
-  std::vector<std::int32_t> recv_sizes(in_ranks.size());
-  send_sizes.reserve(1);
-  recv_sizes.reserve(1);
-  MPI_Request sizes_request;
-  MPI_Ineighbor_alltoall(send_sizes.data(), 1, MPI_INT, recv_sizes.data(), 1,
-                         MPI_INT, forward_comm, &sizes_request);
-
-  // Compute sending offsets
-  std::vector<std::int32_t> send_offsets(send_sizes.size() + 1, 0);
-  std::partial_sum(send_sizes.begin(), send_sizes.end(),
-                   std::next(send_offsets.begin(), 1));
-
-  // Pack data to send and store unpack map
-  std::vector<T> send_data(send_offsets.back());
-  std::vector<std::int32_t> counter(send_sizes.size(), 0);
-  // unpack map: [index in adj list][pos in x]
-  std::vector<std::int32_t> unpack_map(send_offsets.back() / 3);
-  for (std::size_t i = 0; i < points.size(); i += 3)
-  {
-    for (auto p : collisions.links(i / 3))
-    {
-      int neighbor = rank_to_neighbor[p];
-      int pos = send_offsets[neighbor] + counter[neighbor];
-      auto it = std::next(send_data.begin(), pos);
-      std::copy_n(std::next(points.begin(), i), 3, it);
-      unpack_map[pos / 3] = i / 3;
-      counter[neighbor] += 3;
-    }
-  }
-
-  MPI_Wait(&sizes_request, MPI_STATUS_IGNORE);
-  std::vector<std::int32_t> recv_offsets(in_ranks.size() + 1, 0);
-  std::partial_sum(recv_sizes.begin(), recv_sizes.end(),
-                   std::next(recv_offsets.begin(), 1));
-
-  std::vector<T> received_points((std::size_t)recv_offsets.back());
-  MPI_Neighbor_alltoallv(
-      send_data.data(), send_sizes.data(), send_offsets.data(),
-      dolfinx::MPI::mpi_t<T>, received_points.data(), recv_sizes.data(),
-      recv_offsets.data(), dolfinx::MPI::mpi_t<T>, forward_comm);
-
-  // Get mesh geometry for closest entity
-  const dolfinx::mesh::Geometry<T>& geometry = mesh->geometry();
-  std::span<const T> geom_dofs = geometry.x();
-  auto x_dofmap = geometry.dofmap();
-
-  // Compute candidate cells for collisions (and extrapolation)
-  const dolfinx::graph::AdjacencyList<std::int32_t> candidate_collisions
-      = compute_collisions(cell_bb_tree, std::span<const T>(received_points.data(),
-                                                  received_points.size()));
-
-  // Each process checks which points collide with a cell on the process
-  const int rank = dolfinx::MPI::rank(comm);
-  std::vector<std::int32_t> cell_indicator(received_points.size() / 3);
-  std::vector<std::int32_t> closest_cells(received_points.size() / 3);
-  std::vector<std::int32_t> candidate_cells;
-  auto active_els_array = active_els_func.x()->array();
-  for (std::size_t p = 0; p < received_points.size(); p += 3)
-  {
-    std::array<T, 3> point;
-    std::copy_n(std::next(received_points.begin(), p), 3, point.begin());
-    // Find first colliding cell among the cells with colliding bounding boxes
-    std::span<const std::int32_t> all_candidate_cells = candidate_collisions.links(p / 3);
-    candidate_cells.clear();
-    candidate_cells.reserve(all_candidate_cells.size());
-    std::copy_if(all_candidate_cells.begin(),
-        all_candidate_cells.end(),
-        std::back_inserter(candidate_cells),
-        [&active_els_array](std::int32_t cell){ return bool(active_els_array[cell]);});
-    const int colliding_cell = dolfinx::geometry::compute_first_colliding_cell(
-        *mesh, candidate_cells, point,
-        10 * std::numeric_limits<T>::epsilon());
-    // If a collding cell is found, store the rank of the current process
-    // which will be sent back to the owner of the point
-    cell_indicator[p / 3] = (colliding_cell >= 0) ? rank : -1;
-    // Store the cell index for lookup once the owning processes has determined
-    // the ownership of the point
-    closest_cells[p / 3] = colliding_cell;
-  }
-
-  // Create neighborhood communicator in the reverse direction: send
-  // back col to requesting processes
-  MPI_Comm reverse_comm;
-  MPI_Dist_graph_create_adjacent(
-      comm, out_ranks.size(), out_ranks.data(), MPI_UNWEIGHTED, in_ranks.size(),
-      in_ranks.data(), MPI_UNWEIGHTED, MPI_INFO_NULL, false, &reverse_comm);
-
-  // Reuse sizes and offsets from first communication set
-  // but divide by three
-  {
-    auto rescale = [](auto& x)
-    {
-      std::transform(x.cbegin(), x.cend(), x.begin(),
-                     [](auto e) { return (e / 3); });
-    };
-    rescale(recv_sizes);
-    rescale(recv_offsets);
-    rescale(send_sizes);
-    rescale(send_offsets);
-
-    // The communication is reversed, so swap recv to send offsets
-    std::swap(recv_sizes, send_sizes);
-    std::swap(recv_offsets, send_offsets);
-  }
-
-  std::vector<std::int32_t> recv_ranks(recv_offsets.back());
-  MPI_Neighbor_alltoallv(cell_indicator.data(), send_sizes.data(),
-                         send_offsets.data(), MPI_INT32_T, recv_ranks.data(),
-                         recv_sizes.data(), recv_offsets.data(), MPI_INT32_T,
-                         reverse_comm);
-
-  std::vector<int> point_owners(points.size() / 3, -1);
-  for (std::size_t i = 0; i < unpack_map.size(); i++)
-  {
-    const std::int32_t pos = unpack_map[i];
-    // Only insert new owner if no owner has previously been found
-    if (recv_ranks[i] >= 0 && point_owners[pos] == -1)
-      point_owners[pos] = recv_ranks[i];
-  }
-
-  MPI_Comm_free(&forward_comm);
-  MPI_Comm_free(&reverse_comm);
-  return point_owners;
+  auto po = determine_point_ownership(
+    *active_els_func.function_space()->mesh(),
+    points,
+    cell_bb_tree,
+    active_els_func.x()->array(),
+    false);
+  return po.src_owner;
 }
 
 using dextents2 = MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>;

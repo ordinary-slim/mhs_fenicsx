@@ -153,7 +153,7 @@ def run_hodge(params, descriptor=""):
             ps.writepos(extension="vtx", extra_funcs=[ps.u_prev])
     return ps
 
-def run_staggered_chimera_rr(params, writepos=True, descriptor=""):
+def run_staggered_chimera_rr(params, descriptor=""):
     writepos = params.get("writepos", True)
     domain = create_stacked_cubes_mesh(params)
 
@@ -190,6 +190,36 @@ def run_staggered_chimera_rr(params, writepos=True, descriptor=""):
                 p.writepos(extension="vtx")
     return ps
 
+def run_chimera_hodge(params, descriptor=""):
+    writepos = params.get("writepos", True)
+    domain = create_stacked_cubes_mesh(params)
+
+    macro_params = params.copy()
+    macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
+    ps = Problem(domain, macro_params, finalize_activation=False,
+                 name="chimera_hodge" + descriptor)
+
+    pm = build_moving_problem(ps,
+                              macro_params["moving_domain_params"]["els_per_radius"],
+                              #custom_get_adim_back_len=get_adim_back_len,
+                              )
+    for p in [ps, pm]:
+        p.set_initial_condition(params["environment_temperature"])
+        deactivate_below_surface(p)
+
+
+    substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm)
+
+    itime_step = 0
+    max_timesteps = params.get("max_timesteps", 1e9)
+    while ((itime_step < max_timesteps) and not(ps.is_path_over())):
+        itime_step += 1
+        substeppin_driver.do_timestep()
+        if writepos:
+            for p in [ps, substeppin_driver.pf, pm]:
+                p.writepos(extension="vtx")
+    return ps
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-r', '--run-ref', action='store_true')
@@ -206,6 +236,8 @@ if __name__ == "__main__":
         params = yaml.safe_load(f)
     write_gcode(params)
     profiling_file = ""
+    if args.descriptor and args.descriptor[0] != "_":
+        args.descriptor = "_" + args.descriptor
     if args.run_ref:
         lp_wrapper = lp(run_reference)
         lp_wrapper(params, descriptor = args.descriptor)

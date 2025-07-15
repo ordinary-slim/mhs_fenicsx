@@ -7,7 +7,7 @@ namespace nb = nanobind;
 using int_vector = std::vector<int>;
 
 void declare_interpolate(nb::module_ &m);
-void declare_my_determine_point_ownership(nb::module_ &m);
+void declare_determine_point_ownership(nb::module_ &m);
 void declare_activation_utils(nb::module_ &m);
 void declare_mesh_collision(nb::module_ &m);
 void declare_submesh_utils(nb::module_ &m);

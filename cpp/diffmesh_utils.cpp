@@ -62,6 +62,26 @@ void templated_declare_diffmesh_utils(nb::module_ &m) {
       },
     nb::arg("mesh"), nb::arg("points"), nb::arg("cells"), nb::arg("padding"),
     nb::arg("extrapolate") = true);
+  m.def(
+      "determine_facet_points_ownership",
+      [](const dolfinx::mesh::Mesh<T>& mesh,
+         nb::ndarray<const T, nb::c_contig> points,
+         size_t points_per_facet,
+         nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig> cells,
+         T padding,
+         bool extrapolate = true)
+      {
+        const std::size_t p_s0 = points.ndim() == 1 ? 1 : points.shape(0);
+        std::span<const T> _p(points.data(), 3 * p_s0);
+        return determine_facet_points_ownership<T>(mesh,
+                                                   _p,
+                                                   points_per_facet,
+                                                   std::span(cells.data(),cells.size()),
+                                                   padding,
+                                                   extrapolate);
+      },
+    nb::arg("mesh"), nb::arg("points"), nb::arg("points_per_facet"), nb::arg("cells"), nb::arg("padding"),
+    nb::arg("extrapolate") = true);
 }
 
 void declare_diffmesh_utils(nb::module_ &m) {

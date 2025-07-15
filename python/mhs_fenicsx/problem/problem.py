@@ -558,9 +558,30 @@ class Problem:
             p_ext.local_active_els,
             self.input_parameters.get("spatial_threshold", 1e-7),
             extrapolate=False)
+        ##
+        num_gps_facet = self.Qe.num_entity_dofs[-1][0]
+        self.bfacets_integration_data = self.get_facet_integration_ents(self.bfacets_mask.nonzero()[0], use_inactive=False, use_ghosted=True)
+        test_po = mhs_fenicsx_cpp.determine_facet_points_ownership(
+            p_ext.domain._cpp_object,
+            self.bqpoints,
+            num_gps_facet,
+            p_ext.local_active_els,
+            self.input_parameters.get("spatial_threshold", 1e-7),
+            extrapolate=False)
+        temptative_points_found = np.flatnonzero(test_po.src_owner >= 0)
+        actual_points_found = np.flatnonzero(self.bqpoints_po[p_ext].src_owner >= 0)
+        print(f"trial points found = {temptative_points_found}, # {temptative_points_found.size}\nactual points found = {actual_points_found}, # {actual_points_found.size}", flush=True)
+        exit()
+        ##
         num_gps_facet = self.Qe.num_entity_dofs[-1][0]
         src_owner_bqpoints = self.bqpoints_po[p_ext].src_owner.reshape((-1, num_gps_facet))
         partial_indices_gfacets = np.where(np.all(src_owner_bqpoints>=0, axis=1))[0]
+        ## DEBUG
+        src_owner_bqpoints1 = test_po.src_owner.reshape((-1, num_gps_facet))
+        partial_indices_gfacets1 = np.where(np.all(src_owner_bqpoints1>=0, axis=1))[0]
+        print(f"gamma facets found\n{partial_indices_gfacets1}\ncorrect gamma facets \n{partial_indices_gfacets}", flush=True)
+        ## EDEBUG
+        #exit()
         self.bfacet_indices = self.bfacets_mask.nonzero()[0]
         partial_indices_gfacets = self.bfacet_indices[partial_indices_gfacets]
         gamma_facet_marker = la.petsc.create_vector(self.facet_map, 1)

@@ -5,7 +5,45 @@
 #include <multiphenicsx/DofMapRestriction.h>
 
 /// MOSTLY COPIED FROM DOLFINX CODE
-/// dolfinx::scalar concept too restrictive
+/// NOTE: Only changed instantiation of compute_distance_gjk to use
+/// float / double instead of multiprecision boost type.
+template <std::floating_point T>
+std::int32_t compute_first_colliding_cell(const dolfinx::mesh::Mesh<T>& mesh,
+                                          std::span<const std::int32_t> cells,
+                                          std::array<T, 3> point, T tol)
+{
+  if (cells.empty())
+    return -1;
+  else
+  {
+    const dolfinx::mesh::Geometry<T>& geometry = mesh.geometry();
+    std::span<const T> geom_dofs = geometry.x();
+    auto x_dofmap = geometry.dofmap();
+    const std::size_t num_nodes = x_dofmap.extent(1);
+    std::vector<T> coordinate_dofs(num_nodes * 3);
+    for (auto cell : cells)
+    {
+      auto dofs = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(x_dofmap, cell, MDSPAN_IMPL_STANDARD_NAMESPACE::full_extent);
+      for (std::size_t i = 0; i < num_nodes; ++i)
+      {
+        std::copy_n(std::next(geom_dofs.begin(), 3 * dofs[i]), 3,
+                    std::next(coordinate_dofs.begin(), 3 * i));
+      }
+
+      // Difference here in the <T, T>
+      std::array<T, 3> shortest_vector
+          = dolfinx::geometry::compute_distance_gjk<T, T>(point, coordinate_dofs);
+      T d2 = std::reduce(shortest_vector.begin(), shortest_vector.end(), T(0),
+                         [](auto d, auto e) { return d + e * e; });
+      if (d2 < tol)
+        return cell;
+    }
+
+    return -1;
+  }
+}
+
+/// NOTE: Only changed template base type to exchange general scalars
 template <typename T, std::size_t D>
 using mdspan_t = MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
     T, MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, D>>;
@@ -169,11 +207,12 @@ void scatter_values(MPI_Comm comm, std::span<const std::int32_t> src_ranks,
 
 template <std::floating_point T>
 std::tuple<std::vector<int>, std::vector<int>,
-           std::vector<T>, std::vector<std::int32_t>>
+           std::vector<T>, std::vector<std::int32_t>, std::vector<int>>
 determine_point_ownership(const dolfinx::mesh::Mesh<T>& mesh,
                           std::span<const T> points,
                           const dolfinx::geometry::BoundingBoxTree<T>& bb,
                           std::span<const T> active_entities = {},
+                          std::span<std::int32_t> sent_indices = {},
                           bool extrapolate = true)
 {
   MPI_Comm comm = mesh.comm();
@@ -241,6 +280,9 @@ determine_point_ownership(const dolfinx::mesh::Mesh<T>& mesh,
   std::vector<std::int32_t> counter(send_sizes.size(), 0);
   // unpack map: [index in adj list][pos in x]
   std::vector<std::int32_t> unpack_map(send_offsets.back() / 3);
+  if (sent_indices.empty()) sent_indices = std::span(unpack_map);
+  std::vector<std::int32_t> packed_sent_indices(send_offsets.back() / 3);
+
   for (std::size_t i = 0; i < points.size(); i += 3)
   {
     for (auto p : collisions.links(i / 3))
@@ -250,6 +292,7 @@ determine_point_ownership(const dolfinx::mesh::Mesh<T>& mesh,
       auto it = std::next(send_data.begin(), pos);
       std::copy_n(std::next(points.begin(), i), 3, it);
       unpack_map[pos / 3] = i / 3;
+      packed_sent_indices[pos / 3] = sent_indices[i / 3];
       counter[neighbor] += 3;
     }
   }
@@ -264,6 +307,28 @@ determine_point_ownership(const dolfinx::mesh::Mesh<T>& mesh,
       send_data.data(), send_sizes.data(), send_offsets.data(),
       dolfinx::MPI::mpi_t<T>, received_points.data(), recv_sizes.data(),
       recv_offsets.data(), dolfinx::MPI::mpi_t<T>, forward_comm);
+
+  // Also send indices
+  std::vector<std::int32_t> send_sizes_indices(send_sizes.size()),
+                            recv_sizes_indices(recv_sizes.size()),
+                            send_offsets_indices(send_offsets.size()),
+                            recv_offsets_indices(recv_offsets.size());
+  auto divby3 = [](const std::vector<std::int32_t> &in_vec,
+                   std::vector<std::int32_t> &out_vec) {
+      std::transform(in_vec.begin(), in_vec.end(),
+                     out_vec.begin(),
+                     [](std::int32_t v) {return v / 3;});
+  };
+  divby3(send_sizes, send_sizes_indices);
+  divby3(recv_sizes, recv_sizes_indices);
+  divby3(send_offsets, send_offsets_indices);
+  divby3(recv_offsets, recv_offsets_indices);
+
+  std::vector<std::int32_t> received_indices((std::size_t)recv_offsets_indices.back());
+  MPI_Neighbor_alltoallv(
+      packed_sent_indices.data(), send_sizes_indices.data(), send_offsets_indices.data(),
+      MPI_INT, received_indices.data(), recv_sizes_indices.data(),
+      recv_offsets_indices.data(), MPI_INT, forward_comm);
 
   // Get mesh geometry for closest entity
   const dolfinx::mesh::Geometry<T>& geometry = mesh.geometry();
@@ -292,7 +357,7 @@ determine_point_ownership(const dolfinx::mesh::Mesh<T>& mesh,
         all_candidate_cells.end(),
         std::back_inserter(candidate_cells),
         [&active_entities](std::int32_t cell){ return bool(active_entities[cell]);});
-    const int colliding_cell = dolfinx::geometry::compute_first_colliding_cell(
+    const int colliding_cell = compute_first_colliding_cell(
       mesh, candidate_cells, point, 10 * std::numeric_limits<T>::epsilon());
     // If a collding cell is found, store the rank of the current process
     // which will be sent back to the owner of the point
@@ -386,7 +451,7 @@ determine_point_ownership(const dolfinx::mesh::Mesh<T>& mesh,
             for (std::size_t k = 0; k < 3; ++k)
               nodes[3 * j + k] = geom_dofs[pos + k];
           }
-          const std::array<T, 3> d = dolfinx::geometry::compute_distance_gjk<T>(
+          const std::array<T, 3> d = dolfinx::geometry::compute_distance_gjk<T, T>(
               std::span<const T>(point.data(), point.size()), nodes);
           if (T current_distance = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
               current_distance < shortest_distance)
@@ -455,8 +520,9 @@ determine_point_ownership(const dolfinx::mesh::Mesh<T>& mesh,
                          forward_comm);
 
   // Unpack dest ranks if point owner is this rank
-  std::vector<int> owned_recv_ranks;
+  std::vector<int> owned_recv_ranks, owned_recv_indices;
   owned_recv_ranks.reserve(recv_offsets.back());
+  owned_recv_indices.reserve(recv_offsets.back());
   std::vector<T> owned_recv_points;
   std::vector<std::int32_t> owned_recv_cells;
   for (std::size_t i = 0; i < in_ranks.size(); i++)
@@ -466,6 +532,7 @@ determine_point_ownership(const dolfinx::mesh::Mesh<T>& mesh,
       if (rank == dest_ranks[j])
       {
         owned_recv_ranks.push_back(in_ranks[i]);
+        owned_recv_indices.push_back(received_indices[j]);
         owned_recv_points.insert(
             owned_recv_points.end(), std::next(received_points.cbegin(), 3 * j),
             std::next(received_points.cbegin(), 3 * (j + 1)));
@@ -477,7 +544,7 @@ determine_point_ownership(const dolfinx::mesh::Mesh<T>& mesh,
   MPI_Comm_free(&forward_comm);
   MPI_Comm_free(&reverse_comm);
 
-  return {point_owners, owned_recv_ranks, owned_recv_points, owned_recv_cells};
+  return {point_owners, owned_recv_ranks, owned_recv_points, owned_recv_cells, owned_recv_indices};
 }
 
 template <std::floating_point T>
@@ -488,8 +555,8 @@ dolfinx::geometry::PointOwnershipData<T> determine_point_ownership(const dolfinx
                                                                    bool extrapolate = true)
 {
   dolfinx::geometry::BoundingBoxTree bb(mesh, mesh.topology()->dim(), cells, padding);
-  auto [point_owners, owned_recv_ranks, owned_recv_points, owned_recv_cells] =
-    determine_point_ownership(mesh, points, bb, {}, extrapolate);
+  auto [point_owners, owned_recv_ranks, owned_recv_points, owned_recv_cells, _] =
+    determine_point_ownership(mesh, points, bb, {}, {}, extrapolate);
   return dolfinx::geometry::PointOwnershipData<T>{.src_owner = std::move(point_owners),
     .dest_owners = std::move(owned_recv_ranks),
     .dest_points = std::move(owned_recv_points),
@@ -502,12 +569,13 @@ std::vector<int> find_owner_rank(
     const dolfinx::geometry::BoundingBoxTree<T>& cell_bb_tree,
     const dolfinx::fem::Function<T>& active_els_func)
 {
-  auto [point_owners, owned_recv_ranks, owned_recv_points, owned_recv_cells] =
+  auto [point_owners, owned_recv_ranks, owned_recv_points, owned_recv_cells, _] =
     determine_point_ownership(
       *active_els_func.function_space()->mesh(),
       points,
       cell_bb_tree,
       active_els_func.x()->array(),
+      {},
       false);
   return point_owners;
 }
@@ -531,6 +599,7 @@ dolfinx::geometry::PointOwnershipData<T> determine_facet_points_ownership(const 
   std::vector<std::vector<int>> gp_owned_recv_ranks;
   std::vector<std::vector<T>> gp_owned_recv_points;
   std::vector<std::vector<std::int32_t>> gp_owned_recv_cells;
+  std::vector<std::vector<int>> gp_owned_recv_indices;
   std::vector<int> point_owners(num_points, -1);
   size_t recv_size = 0;
   // Facet is gamma facet if all points are found
@@ -542,41 +611,53 @@ dolfinx::geometry::PointOwnershipData<T> determine_facet_points_ownership(const 
     _points.resize(num_candidate_gamma_facets * 3);
     indices_candidate_gamma_facets.resize(num_candidate_gamma_facets);
 
-    int rank = dolfinx::MPI::rank(mesh.comm());
-    std::cout << "Rank " << rank << ", pass " << i << std::endl
-      << "pts sent :" << std::endl;
     size_t counter = 0;
+    std::vector<std::int32_t> sent_indices(num_candidate_gamma_facets);
     for (std::size_t j = 0; j < num_facets; ++j) {
       if (is_gamma_facet[j]) {
         std::copy_n(points.begin() + 3 * (j * points_per_facet + i), 3, _points.begin() + 3 * counter);
         indices_candidate_gamma_facets[counter] = j;
+        sent_indices[counter] = j * points_per_facet + i;
         ++counter;
       }
     }
-    //
 
-    auto [point_owners_i, owned_recv_ranks_i, owned_recv_points_i, owned_recv_cells_i] =
-        determine_point_ownership(mesh, std::span<const T>(_points), bb, {}, extrapolate);
+    auto [point_owners_i, owned_recv_ranks_i, owned_recv_points_i, owned_recv_cells_i, owned_recv_indices_i] =
+        determine_point_ownership(mesh,
+                                  std::span<const T>(_points),
+                                  bb,
+                                  {},
+                                  std::span<std::int32_t>(sent_indices),
+                                  extrapolate);
 
+    // For each point set, update gamma mask and point owners
     for (std::size_t j = 0; j < num_candidate_gamma_facets; ++j) {
       size_t ifacet = indices_candidate_gamma_facets[j];
       point_owners[ifacet * points_per_facet + i] = point_owners_i[j];
       is_gamma_facet[ifacet] = is_gamma_facet[ifacet] && (point_owners_i[j] >= 0);
     }
 
+    recv_size += owned_recv_ranks_i.size();
+
     gp_owned_recv_ranks.push_back(std::move(owned_recv_ranks_i));
     gp_owned_recv_points.push_back(std::move(owned_recv_points_i));
     gp_owned_recv_cells.push_back(std::move(owned_recv_cells_i));
-    recv_size += owned_recv_ranks_i.size();
+    gp_owned_recv_indices.push_back(std::move(owned_recv_indices_i));
   }
 
-  std::vector<int> owned_recv_ranks;
-  std::vector<T> owned_recv_points;
-  std::vector<std::int32_t> owned_recv_cells;
+  std::vector<int> owned_recv_ranks, sorted_recv_ranks;
+  std::vector<T> owned_recv_points, sorted_recv_points;
+  std::vector<std::int32_t> owned_recv_cells, sorted_recv_cells;
+  std::vector<int> owned_recv_indices;
 
   owned_recv_ranks.reserve(recv_size);
+  sorted_recv_ranks.reserve(recv_size);
   owned_recv_points.reserve(recv_size * 3);
+  sorted_recv_points.reserve(recv_size * 3);
   owned_recv_cells.reserve(recv_size);
+  sorted_recv_cells.reserve(recv_size);
+
+  owned_recv_indices.reserve(recv_size);
 
   for (std::size_t i = 0; i < points_per_facet; ++i) {
     owned_recv_ranks.insert(owned_recv_ranks.end(),
@@ -588,12 +669,33 @@ dolfinx::geometry::PointOwnershipData<T> determine_facet_points_ownership(const 
     owned_recv_cells.insert(owned_recv_cells.end(),
                             std::make_move_iterator(gp_owned_recv_cells[i].begin()),
                             std::make_move_iterator(gp_owned_recv_cells[i].end()));
+    owned_recv_indices.insert(owned_recv_indices.end(),
+                              std::make_move_iterator(gp_owned_recv_indices[i].begin()),
+                              std::make_move_iterator(gp_owned_recv_indices[i].end()));
+  }
+
+  // Sort received according to rank and indices
+  std::vector<int> indices(recv_size);
+  std::iota(indices.begin(), indices.end(), 0);
+  std::sort(indices.begin(), indices.end(),
+        [&owned_recv_ranks, &owned_recv_indices](int i, int j) {
+            return (owned_recv_ranks[i] < owned_recv_ranks[j]) ||
+                   (owned_recv_ranks[i] == owned_recv_ranks[j] &&
+                    owned_recv_indices[i] < owned_recv_indices[j]);
+        });
+
+  for (size_t k = 0; k < recv_size; ++k) {
+    sorted_recv_ranks.push_back(owned_recv_ranks[indices[k]]);
+    sorted_recv_points.push_back(owned_recv_points[3 * indices[k]]);
+    sorted_recv_points.push_back(owned_recv_points[3 * indices[k] + 1]);
+    sorted_recv_points.push_back(owned_recv_points[3 * indices[k] + 2]);
+    sorted_recv_cells.push_back(owned_recv_cells[indices[k]]);
   }
 
   return dolfinx::geometry::PointOwnershipData<T>{.src_owner = std::move(point_owners),
-    .dest_owners = std::move(owned_recv_ranks),
-    .dest_points = std::move(owned_recv_points),
-    .dest_cells = std::move(owned_recv_cells)};
+    .dest_owners = std::move(sorted_recv_ranks),
+    .dest_points = std::move(sorted_recv_points),
+    .dest_cells = std::move(sorted_recv_cells)};
 }
 
 template <std::floating_point T>

@@ -1,0 +1,57 @@
+adim_vradius : 1.0
+adim_hradius_right : 1.0
+adim_hradius_left : 3.0
+
+# BEG_ESSENTIAL
+isSteady: False
+source_terms :
+  - initial_position : [-4.0, 0.0, 0.0]
+    initial_speed : [1000.0, 0.0, 0]
+    radius : 0.1
+    power : 500
+# PROPS
+material_metal : {
+  density : 4.3E-06, # kg / mm3
+  conductivity : 10.0E-03, # W / mm / K
+  specific_heat : 700, # J / kg / K
+  #phase_change : {
+  #  latent_heat : 350.0E+03,
+  #  solidus_temperature : &solidus_temperature 1500.0,
+  #  liquidus_temperature : 1550.0
+  #}
+}
+#smoothing_cte_phase_change : 5
+#quadrature_metadata: {}
+#convection_coeff : 1.0E-00
+environment_temperature : 25
+# END_ESSENTIAL
+supg: 1
+petsc_opts_fixed: {
+  "ksp_type" : "cg",
+  "ksp_rtol" : 1e-10,
+  "pc_type" : "jacobi",
+}
+petsc_opts_moving: {
+  "ksp_type" : "bcgs",
+  "ksp_rtol" : 1e-10,
+  "pc_type" : "jacobi",
+}
+
+moving_domain_params : {
+  shape : True,
+  max_adim_dt : 4,
+  adim_front_len : 2,
+  adim_side_len : 2.5,
+  adim_bot_len : 2,
+  adim_top_len : 2,
+}
+
+adim_dt : 0.5
+max_iter : 10
+els_per_radius_bg: 6
+els_per_radius_ellipse : 6
+initial_relaxation_factors: [1.0, 1.0]
+convergence_threshold: 1.0E-06
+gamma_quadrature: {
+  degree: 2,
+}

@@ -885,20 +885,21 @@ class Problem:
             except KeyError:
                 pass
     
-    def initialize_post(self):
+    def initialize_post(self, extra_funcs_vtx=[]):
         self.result_folder = f"post_{self.name}"
         shutil.rmtree(self.result_folder, ignore_errors=True)
         for writer in self.writers.values():
             writer.close()
         self.writers["vtk"] = io.VTKFile(self.domain.comm, f"{self.result_folder}/{self.name}.pvd", "wb")
+        vtx_output = [self.u, self.source.fem_function, self.active_nodes_func, self.active_els_func, self.material_id] + extra_funcs_vtx
         self.writers["vtx"] = io.VTXWriter(self.domain.comm,
                                            f"{self.result_folder}/{self.name}.bp",
-                                           output=[self.u, self.source.fem_function, self.active_nodes_func, self.active_els_func, self.material_id])
+                                           output=extra_funcs_vtx)
         self.is_post_initialized = True
 
     def writepos(self, extension="vtk", extra_funcs=[]):
         if not(self.is_post_initialized):
-            self.initialize_post()
+            self.initialize_post(extra_funcs_vtx=extra_funcs)
         if extension=="vtk":
             self.writepos_vtk(extra_funcs=extra_funcs)
         elif extension=="vtx":

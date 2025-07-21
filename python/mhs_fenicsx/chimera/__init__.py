@@ -47,8 +47,9 @@ def get_adim_back_len_paper(fine_adim_dt : float = 0.5, adim_dt : float = 2):
 def get_adim_back_len_simple(fine_adim_dt : float = 0.5, adim_dt : float = 2):
     return adim_dt + 4 * fine_adim_dt
 
-def build_moving_problem(p_fixed : Problem, els_per_radius=2, shift=None, custom_get_adim_back_len=None, symmetries=[]):
+def build_moving_problem(p_fixed : Problem, els_per_radius=2, shift=None, custom_get_adim_back_len=None, symmetries=[], domain=None):
     params = p_fixed.input_parameters.copy()
+
     mdparams = params["moving_domain_params"]
     if params["moving_domain_params"]["shape"]:
         if custom_get_adim_back_len:
@@ -57,14 +58,18 @@ def build_moving_problem(p_fixed : Problem, els_per_radius=2, shift=None, custom
             get_adim_back_len = get_adim_back_len_paper
     else:
         get_adim_back_len = get_adim_back_len_simple
-    adim_back_len = get_adim_back_len(0.5, mdparams["max_adim_dt"])
-    adim_front_len = mdparams["adim_front_len"]
-    adim_side_len = mdparams["adim_side_len"]
-    adim_bot_len = mdparams["adim_bot_len"]
-    adim_top_len = mdparams["adim_top_len"]
-    moving_domain = mesh_around_hs(p_fixed.source, p_fixed.domain.topology.dim, els_per_radius, shift,
-                                   adim_back_len, adim_front_len, adim_side_len, adim_bot_len, adim_top_len,
-                                   symmetries=symmetries)
+
+    if domain is not None:
+        moving_domain = domain
+    else:
+        adim_back_len = get_adim_back_len(0.5, mdparams["max_adim_dt"])
+        adim_front_len = mdparams["adim_front_len"]
+        adim_side_len = mdparams["adim_side_len"]
+        adim_bot_len = mdparams["adim_bot_len"]
+        adim_top_len = mdparams["adim_top_len"]
+        moving_domain = mesh_around_hs(p_fixed.source, p_fixed.domain.topology.dim, els_per_radius, shift,
+                                       adim_back_len, adim_front_len, adim_side_len, adim_bot_len, adim_top_len,
+                                       symmetries=symmetries)
     params["attached_to_hs"] = 1
     # Placeholders
     params["domain_speed"] = np.array([1.0, 0.0, 0.0])

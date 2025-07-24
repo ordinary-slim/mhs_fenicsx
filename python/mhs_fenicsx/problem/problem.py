@@ -894,7 +894,7 @@ class Problem:
         vtx_output = [self.u, self.source.fem_function, self.active_nodes_func, self.active_els_func, self.material_id] + extra_funcs_vtx
         self.writers["vtx"] = io.VTXWriter(self.domain.comm,
                                            f"{self.result_folder}/{self.name}.bp",
-                                           output=extra_funcs_vtx)
+                                           output=vtx_output,)
         self.is_post_initialized = True
 
     def writepos(self, extension="vtk", extra_funcs=[]):

@@ -1,14 +1,15 @@
 # GEOMETRY  (all lengths now in millimetres)
-substrate_depth   : 1.0          # mm
-width             : 1.0          # mm
-fine_el_size      : 0.05        # mm
-coarse_el_size    : 0.4          # mm
-layer_thickness   : &layer_thickness 0.1   # mm
-hatch_spacing     : *layer_thickness
-num_layers        : 1
-num_buffer_layers : 2
 radius            : &radius 0.1       # mm
 half_radius       : &half_radius 0.05 # mm
+substrate_depth   : 1.0          # mm
+width             : 1.0          # mm
+adim_pad_width: 1 # pad width by one radius
+fine_el_size      : 0.05        # mm
+coarse_el_size    : 0.4          # mm
+layer_thickness   : &layer_thickness 0.05 # mm
+hatch_spacing     : *layer_thickness
+num_layers        : 2
+num_buffer_layers : 2
 
 dt               : 1.0     # placeholder
 max_timesteps    : 3
@@ -19,7 +20,7 @@ source_terms :
     initial_position: &p0 [-5000.0, 0.0, 0.0]   # mm
     initial_speed   : &speed [500.0, 0.0, 0.0]  # mm / s
     radius          : *radius
-    power           : &power 100                # W
+    power           : &power 60 # W
     path            : &path "Path.gcode"
   - type            : gaussian3d
     initial_position: *p0
@@ -33,19 +34,19 @@ bb_tree_padding         : 1.0E-13  # 1.0E-16 m  →  1.0E-13 mm
 
 # MATERIAL PROPERTIES (units consistent with mm)
 material_powder : {
-  density        : &density 4.3E-06,                      # kg / mm³   (= 4.3E+03 kg / m³ ÷ 1E9)
-  conductivity   : [[25, 0.001], [1625, 0.01]],           # W / mm / K (= original ÷ 1E3)
-  specific_heat  : &specific_heat 700,                    # J / kg / K (unchanged)
+  density        : &density_powder [[20, 2.8E-06], [1625, 3.8E-06]], # kg / mm3 
+  conductivity   : [[20, 1.7E-03], [1000, 11.5E-03], [1650, 24.0E-03], [2000, 27.5E-03]], # W / mm / K
+  specific_heat  : &specific_heat 560, # J / kg / K
   phase_change   : {
-    latent_heat           : &latent_heat 1.0,             # J / kg
+    latent_heat : &latent_heat 350.0E+03,
     solidus_temperature   : &solidus_temperature 1600.0,  # °C
     liquidus_temperature  : &liquidus_temperature 1650.0, # °C
     melts_to              : "metal",
   }
 }
 material_metal : {
-  density : *density,
-  conductivity : 0.01,
+  density : &density_metal [[20, 4.42E-06], [1625, 3.8E-06]], # kg / mm3
+  conductivity : [[20, 7.7E-03], [1000, 17.5E-03], [1650, 24.0E-03], [2000, 27.5E-03]],
   specific_heat : *specific_heat,
   phase_change : {
     latent_heat : *latent_heat,
@@ -53,6 +54,8 @@ material_metal : {
     liquidus_temperature : *liquidus_temperature,
   }
 }
+convection_coeff : 1.0E-05 # W / mm2 / K
+radiation_coeff: 0.0
 # LINEAR SOLVER OPTIONS
 petsc_opts_micro: {
   "ksp_error_if_not_converged" : "true",
@@ -63,17 +66,25 @@ petsc_opts_micro: {
 }
 petsc_opts_macro: {
   "ksp_error_if_not_converged" : "true",
-  "ksp_type" : "gmres",
+ True "ksp_type" : "gmres",
   "ksp_atol" : 1e-13,
   "ksp_rtol" : 1e-13,
   "pc_type" : "jacobi",
 }
 petsc_opts_mono_robin: {
+  #"snes_linesearch_monitor" : "",
+  "snes_linesearch_type" : "bt",
+  "snes_linesearch_order" : 1,
+  #"snes_linesearch_alpha": 1e-4,
+  "snes_linesearch_minlambda" : 1e-2,
+  "snes_linesearch_maxstep" : 1e8,
+  "snes_linesearch_max_it" : 5,
+
   "snes_max_it" : 30,
   "ksp_atol" : 1e-09,
   "ksp_rtol" : 1e-09,
   #"snes_stol" : 1e-3,
-  "snes_linesearch_max_it" : 15,
+  #"snes_linesearch_type": "none",
   "ksp_error_if_not_converged" : "true",
   "ksp_type" : "preonly",
   "pc_type" : "fieldsplit",
@@ -86,13 +97,11 @@ petsc_opts_mono_robin: {
 }
 petsc_opts_macro_chimera: {
   "snes_max_it" : 30,
-  "ksp_atol" : 1e-09,
-  "ksp_rtol" : 1e-09,
+  "ksp_atol" : 1e-13,
+  "ksp_rtol" : 1e-13,
   "snes_linesearch_max_it" : 15,
   "ksp_error_if_not_converged" : "true",
   "ksp_type" : "gmres",
-  "ksp_atol" : 1e-13,
-  "ksp_rtol" : 1e-13,
   "pc_type" : "fieldsplit",
 }
 
@@ -113,7 +122,7 @@ substepping_parameters: {
     enabled :  True,
     source_term : 0,
   },
-  writepos: True,
+  writepos: False,
   chimera_always_on: True,
   chimera_steadiness_workflow: {
     enabled: True,

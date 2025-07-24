@@ -22,7 +22,7 @@ def create_stacked_cubes_mesh(params):
         num_layers = params["num_layers"]
         num_buffer_layers = params["num_buffer_layers"]
         substrate_depth = params["substrate_depth"]
-        L = params["width"]
+        L = params["width"] + 2 * params["adim_pad_width"] * params["radius"]
         part_height = layer_thickness * num_layers
         buffer_depth = layer_thickness * num_buffer_layers
 
@@ -36,7 +36,7 @@ def create_stacked_cubes_mesh(params):
             6: (+L/2, -L/2, part_height, fine_el_size),
             7: (+L/2, +L/2, part_height, fine_el_size),
             8: (-L/2, +L/2, part_height, fine_el_size),
-             9: (-L/2, -L/2, -substrate_depth, coarse_el_size),
+            9: (-L/2, -L/2, -substrate_depth, coarse_el_size),
             10: (+L/2, -L/2, -substrate_depth, coarse_el_size),
             11: (+L/2, +L/2, -substrate_depth, coarse_el_size),
             12: (-L/2, +L/2, -substrate_depth, coarse_el_size),

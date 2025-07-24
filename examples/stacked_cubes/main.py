@@ -27,7 +27,6 @@ def write_gcode(params):
     num_hatches = np.rint(width / hatch_spacing).astype(int)
     speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     gcode_lines = []
-    gcode_lines.append(f"G0 F{speed:g}")
     p0, p1 = np.zeros(3), np.zeros(3)
     E = 0.0
     for ilayer in range(num_layers):
@@ -48,7 +47,8 @@ def write_gcode(params):
             p0[const_idx], p1[const_idx] = fixed_coord, fixed_coord
             p0[mov_idx], p1[mov_idx] = mov_coord0, mov_coord1
             if ihatch==0:
-                gcode_lines.append(f"G4 X{p0[0]:g} Y{p0[1]:g} Z{z} P0.5")
+                gcode_lines.append(f"G0 X{p0[0]:g} Y{p0[1]:g} Z{z} F{speed:g}")
+                gcode_lines.append(f"G4 P0.5")
                 gcode_lines.append(f"G4 P0.5 R1")
             else:
                 positionning_line = f"G0 X{p0[0]:g} Y{p0[1]:g}"
@@ -164,7 +164,7 @@ def run_staggered_chimera_rr(params, descriptor=""):
 
     pm = build_moving_problem(ps,
                               macro_params["moving_domain_params"]["els_per_radius"],
-                              #custom_get_adim_back_len=get_adim_back_len,
+                              #custom_get_adim_back_len=chimera_get_adim_back_len,
                               )
     for p in [ps, pm]:
         p.set_initial_condition(params["environment_temperature"])

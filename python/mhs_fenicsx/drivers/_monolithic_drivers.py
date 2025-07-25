@@ -249,19 +249,19 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.assemble_robin_jacobian_p_p_ext(p2, p1)
         self.assemble_robin_jacobian_p_p()
         J_mat.assemble()
-        print(f"jacobian, snes iter: {snes.its}", flush=True)
-        for i, pi in enumerate([p1, p2]):
-            prefix_i = "m" if "moving" in pi.name else "f"
-            for j, pj in enumerate([p1, p2]):
-                prefix_j = "m" if "moving" in pj.name else "f"
-                fname = f"J_{prefix_i}_{prefix_j}_nr{self.nr_iter}"
-                J_sub_mat = J_mat.getNestSubMatrix(i, j)
-                import scipy.sparse as sp
-                mat = J_sub_mat.getValuesCSR()
-                indptr, indices, data = mat
-                shape = J_sub_mat.getSize()
-                spmat = sp.csr_matrix((data, indices, indptr), shape=shape)
-                sp.save_npz(fname, spmat)
+        #print(f"jacobian, snes iter: {snes.its}", flush=True)
+        #for i, pi in enumerate([p1, p2]):
+        #    prefix_i = "m" if "moving" in pi.name else "f"
+        #    for j, pj in enumerate([p1, p2]):
+        #        prefix_j = "m" if "moving" in pj.name else "f"
+        #        fname = f"J_{prefix_i}_{prefix_j}_nr{self.nr_iter}"
+        #        J_sub_mat = J_mat.getNestSubMatrix(i, j)
+        #        import scipy.sparse as sp
+        #        mat = J_sub_mat.getValuesCSR()
+        #        indptr, indices, data = mat
+        #        shape = J_sub_mat.getSize()
+        #        spmat = sp.csr_matrix((data, indices, indptr), shape=shape)
+        #        sp.save_npz(fname, spmat)
 
 
     def R_snes(self, snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
@@ -269,30 +269,38 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.update_solution(x)
         for p, R_sub_vec in zip([p1, p2], R_vec.getNestSubVecs()):
             p.assemble_residual(R_sub_vec)
-        # TODO: Check if expensive
         self.assemble_robin_residual(R_vec)
-        print(f"residual, snes iter: {snes.its}", flush=True)
-        if snes.its != self.nr_iter:
-            self.nr_iter = snes.its
-            self.ls_iter = 0
-        else:
-            self.ls_iter += 1
-        print(f"nr_iter: {self.nr_iter}, ls_iter: {self.ls_iter}", flush=True)
-        for p, R_vec in zip([p1, p2], R_vec.getNestSubVecs()):
-            prefix = "m" if "moving" in p.name else "f"
-            fname = f"R_{prefix}_nr{self.nr_iter}_ls{self.ls_iter}.npy"
-            np.save(fname, R_vec.getArray(readonly=True))
+        #print(f"residual, snes iter: {snes.its}", flush=True)
+        #if snes.its != self.nr_iter:
+        #    self.nr_iter = snes.its
+        #    self.ls_iter = 0
+        #else:
+        #    self.ls_iter += 1
+        #print(f"nr_iter: {self.nr_iter}, ls_iter: {self.ls_iter}", flush=True)
+        #for p, R_vec in zip([p1, p2], R_vec.getNestSubVecs()):
+        #    prefix = "m" if "moving" in p.name else "f"
+        #    fname = f"R_{prefix}_nr{self.nr_iter}_ls{self.ls_iter}.npy"
+        #    np.save(fname, R_vec.getArray(readonly=True))
 
     def obj_snes(  # type: ignore[no-any-unimported]
             self, snes: PETSc.SNES, x: PETSc.Vec
     ) -> np.float64:
         """Compute the norm of the residual."""
-        self.R_snes(snes, x, self.obj_vec)
-        return self.obj_vec.norm()  # type: ignore[no-any-return]
+        skip_assembly = False
+        if self._last_x is not None:
+            dx = x.copy()
+            dx.axpy(-1.0, self._last_x)
+            if dx.norm() < 1e-12:
+                skip_assembly = True
+        if not(skip_assembly):
+            self.R_snes(snes, x, self.obj_vec)
+        self._last_x = x.copy()
+        return self.obj_vec.norm()
 
     def non_linear_solve(self):
         (p1,p2) = (self.p1,self.p2)
         self.pre_assemble()
+        self._last_x = None
 
         # Solve
         snes = PETSc.SNES().create(p1.domain.comm)
@@ -321,7 +329,6 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.nr_iter = -1
         self.ls_iter = 0
         converged_reason = solve()
-        exit()
         assert (converged_reason > 0), f"did not converge : {converged_reason}"
 
         snes.destroy()

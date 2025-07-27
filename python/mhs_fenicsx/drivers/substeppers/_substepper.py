@@ -209,7 +209,9 @@ class MHSSubstepper(ABC):
         ps.pre_iterate()
         self.instantiate_forms(ps)
         ps.pre_assemble()
-        ps.non_linear_solve(snes_opts={'-snes_type': 'ksponly'})# LINEAR SOLVE
+        linear_solve_opts = ps.snes_opts.copy()
+        linear_solve_opts['-snes_type'] = 'ksponly'
+        ps.non_linear_solve(snes_opts=linear_solve_opts)
         #ps.non_linear_solve()
         ps.post_iterate()
 
@@ -477,7 +479,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         snes = PETSc.SNES().create(ps.domain.comm)
         snes.setTolerances(max_it=self.max_nr_iters)
         ksp_opts = PETSc.Options()
-        for k,v in ps.linear_solver_opts.items():
+        for k,v in ps.snes_opts.items():
             ksp_opts[k] = v
         snes.getKSP().setFromOptions()
         snes.setObjective(self.obj)

@@ -5,7 +5,7 @@ import yaml
 from mhs_fenicsx.problem import Problem
 import ufl
 from line_profiler import LineProfiler
-from mhs_fenicsx.drivers import MonolithicRRDriver
+from mhs_fenicsx.drivers import MonolithicRRDriver, CompositeRRDriver
 from mhs_fenicsx.problem.helpers import assert_pointwise_vals
 
 comm = MPI.COMM_WORLD

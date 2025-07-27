@@ -153,7 +153,7 @@ class Problem:
             "material_to_itag",
             ])
         to_be_deep_copied = set([
-            "linear_solver_opts",
+            "snes_opts",
             "sources",
             "dirichlet_bcs",
             ])
@@ -879,7 +879,7 @@ class Problem:
                     sol_sub_vector_local[:] = x_wrapper
 
     def _destroy(self):
-        for attr in ["x", "A", "L"]:
+        for attr in ["x", "A", "L", "snes"]:
             try:
                 self.__dict__[attr].destroy()
             except KeyError:
@@ -944,16 +944,7 @@ class Problem:
     def set_linear_solver(self, opts:typing.Optional[dict] = None):
         if opts is None:
             opts = {"pc_type" : "lu", "pc_factor_mat_solver_type" : "mumps",}
-        self.linear_solver_opts = dict(opts)
-
-    def set_snes_sol_vector(self) -> PETSc.Vec:  # type: ignore[no-any-unimported]
-        """ Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess """
-        
-        #x = multiphenicsx.fem.petsc.create_vector(self.r_instance, self.restriction)
-        sol = self.u
-        with multiphenicsx.fem.petsc.VecSubVectorWrapper(self.x, self.v.dofmap, self.restriction) as x_wrapper:
-            with sol.x.petsc_vec.localForm() as solution_local:
-                x_wrapper[:] = solution_local
+        self.snes_opts = dict(opts)
 
     def obj(  # type: ignore[no-any-unimported]
         self, snes: PETSc.SNES, x: PETSc.Vec
@@ -976,25 +967,31 @@ class Problem:
         """Assemble the jacobian."""
         self.assemble_jacobian(J_mat)
 
-    def non_linear_solve(self, max_iter=50, snes_opts = {}):
-        if not(self.has_preassembled):
-            self.pre_assemble()
-        # Solve
-        snes = PETSc.SNES().create(self.domain.comm)
-        snes.setTolerances(max_it=max_iter)
+    def set_snes(self, snes = None, snes_opts = {}):
+        self.snes = snes or PETSc.SNES().create(self.domain.comm)
+        snes = self.snes
+        snes_opts = snes_opts or self.snes_opts
         opts = PETSc.Options()
-        for k,v in self.linear_solver_opts.items():
-            opts[k] = v
-        snes.getKSP().setFromOptions()
-        opts.clear()
         for k,v in snes_opts.items():
             opts[k] = v
+        snes.getKSP().setFromOptions()
         snes.setFromOptions()
+        # Delete options objects after using it
+        [opts.__delitem__(k) for k in opts.getAll().keys()] # Clear options data-base
+        opts.destroy()
         snes.setObjective(self.obj)
         snes.setFunction(self.R, self.L)
         snes.setJacobian(self.J, J=self.A, P=None)
         snes.setMonitor(lambda _, it, residual: print(it, residual, flush=True) if rank == 0 else None)
-        self.set_snes_sol_vector()
+        # Initialize solution vector
+        multiphenicsx.fem.petsc.assign(self.u, self.x, self.restriction)
+        return snes
+
+    def non_linear_solve(self, snes_opts = {}):
+        if not(self.has_preassembled):
+            self.pre_assemble()
+        # Solve
+        snes = self.set_snes(snes=None, snes_opts=snes_opts)
         snes.solve(None, self.x)
         try:
             assert (snes.getConvergedReason() > 0), f"did not converge : {snes.getConvergedReason()}"
@@ -1003,8 +1000,6 @@ class Problem:
                 raise
         self._update_solution(self.x)  # TODO can this be safely removed?
         snes.destroy()
-        [opts.__delitem__(k) for k in opts.getAll().keys()] # Clear options data-base
-        opts.destroy()
         self.post_modify_solution()
 
 class L2Differ:

@@ -11,7 +11,7 @@ import shutil
 from meshing import get_mesh
 from mhs_fenicsx.chimera import build_moving_problem
 from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper, ChimeraSubstepper, MHSStaggeredChimeraSubstepper, MHSSemiMonolithicChimeraSubstepper
-from mhs_fenicsx.drivers import MonolithicRRDriver, MonolithicDomainDecompositionDriver, StaggeredRRDriver
+from mhs_fenicsx.drivers import MonolithicRRDriver, DomainDecompositionDriver, StaggeredRRDriver
 from main import get_h, get_k, write_gcode
 from mhs_fenicsx.gcode import gcode_to_path
 import mhs_fenicsx.problem

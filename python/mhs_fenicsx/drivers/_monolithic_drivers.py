@@ -1,4 +1,4 @@
-from mhs_fenicsx.problem import Problem
+from mhs_fenicsx.problem import Problem, GammaL2Dotter
 from dolfinx import fem, la
 import basix.ufl
 from mhs_fenicsx_cpp import cellwise_determine_point_ownership, scatter_cell_integration_data_po, \
@@ -9,11 +9,13 @@ from petsc4py import PETSc
 import multiphenicsx, multiphenicsx.fem.petsc
 import ufl
 from mpi4py import MPI
+from functools import partial
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-class MonolithicDomainDecompositionDriver:
+class DomainDecompositionDriver:
+    ''' Base class for domain decomposition drivers. '''
     def __init__(self, sub_problem_1: Problem, sub_problem_2: Problem):
         (p1, p2) = (sub_problem_1, sub_problem_2)
         self.p1 = p1
@@ -31,7 +33,8 @@ class MonolithicDomainDecompositionDriver:
     def post_iterate(self):
         pass
 
-class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
+class RRDriver(DomainDecompositionDriver):
+    ''' Base class for Robin-Robin coupling. '''
     def __init__(self, sub_problem_1:Problem, sub_problem_2:Problem,
                  robin_coeff1: float, robin_coeff2: float):
         (p1,p2) = (sub_problem_1,sub_problem_2)
@@ -44,6 +47,13 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
 
     def __del__(self):
         self._destroy()
+
+    def _destroy(self):
+        for attr in ["A12", "A21"]:
+            try:
+                self.__dict__[attr].destroy()
+            except KeyError:
+                pass
 
     def set_n_compile_forms(self):
         '''TODO: Make this domain independent'''
@@ -99,36 +109,33 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                                  coefficient_map=lcoeffmap,
                                                  constant_map=lconstmap)
 
-    def assemble_robin_jacobian_p_p(self):
-        (p1,p2) = (self.p1,self.p2)
-        for p, p_ext in zip([p1, p2], [p2, p1]):
-            p.A.assemble(PETSc.Mat.AssemblyType.FLUSH)
-            multiphenicsx.fem.petsc.assemble_matrix(
-                    p.A,
-                    self.j_instance[p],
-                    bcs=p.dirichlet_bcs,
-                    restriction=(p.restriction, p.restriction))
+    def assemble_robin_jacobian_p_p(self, p):
+        p.A.assemble(PETSc.Mat.AssemblyType.FLUSH)
+        multiphenicsx.fem.petsc.assemble_matrix(
+                p.A,
+                self.j_instance[p],
+                bcs=p.dirichlet_bcs,
+                restriction=(p.restriction, p.restriction))
 
-    def assemble_robin_residual(self, R_vec):
-        (p1,p2) = (self.p1,self.p2)
-        for p, p_ext, R_sub_vec in zip([p1, p2], [p2, p1], R_vec.getNestSubVecs()):
-            # RHS term Robin for residual formulation
-            res = p.restriction
-            robin_residual = la.petsc.create_vector(res.index_map, p.v.value_size)
+    def assemble_robin_residual(self, p, R_vec):
+        p_ext = self.p2 if p == self.p1 else self.p1
+        # RHS term Robin for residual formulation
+        res = p.restriction
+        robin_residual = la.petsc.create_vector(res.index_map, p.v.value_size)
 
-            # EXT CONTRIBUTION
-            self.assemble_robin_residual_p_p_ext(robin_residual, p, p_ext)
+        # EXT CONTRIBUTION
+        self.assemble_robin_residual_p_p_ext(robin_residual, p, p_ext)
 
-            # IN CONTRIBUTION
-            multiphenicsx.fem.petsc.assemble_vector(
-                    robin_residual,
-                    self.r_instance[p],
-                    restriction=p.restriction)
-            robin_residual.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
-            # TODO: Check sign here?
-            R_sub_vec += robin_residual
-            robin_residual.destroy()
-            R_sub_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
+        # IN CONTRIBUTION
+        multiphenicsx.fem.petsc.assemble_vector(
+                robin_residual,
+                self.r_instance[p],
+                restriction=p.restriction)
+        robin_residual.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
+        # TODO: Check sign here?
+        R_vec += robin_residual
+        robin_residual.destroy()
+        R_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
 
     def preassemble_robin_matrix(self, p:Problem, p_ext:Problem):
         self.gdofs_communicators[p] = GdofsCommunicator(p, p_ext, p.boun_dofs_cells_ext[p_ext])
@@ -175,6 +182,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                                         robin_coeff
                                                         )
         A.assemble()
+        return A
 
     def assemble_robin_residual_p_p_ext(self, R_sub_vec: PETSc.Vec, p:Problem, p_ext:Problem):
         u_ext_coeffs = self.gdofs_communicators[p].point_to_point_comm()
@@ -203,40 +211,38 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
                                                             )
 
     def pre_assemble(self):
+        ''' Instantiate forms and pre-assemble coupling matrices. '''
         (p1,p2) = (self.p1,self.p2)
         self._destroy()
-        self.restriction = [p1.restriction, p2.restriction]
-        self.dofmaps = [p1.v.dofmap, p2.v.dofmap]
         self.setup_coupling()
         self.instantiate_forms()
-        r_instance = [p1.r_instance, p2.r_instance]
 
         self.A12 = self.preassemble_robin_matrix(p1, p2)
         self.A21 = self.preassemble_robin_matrix(p2, p1)
 
-        self.L = PETSc.Vec().createNest([p1.L, p2.L])
-        self.A = PETSc.Mat().createNest([[p1.A, self.A12], [self.A21, p2.A]])
+        self.restriction = [p1.restriction, p2.restriction]
+        r_instance = [p1.r_instance, p2.r_instance]
         self.x = multiphenicsx.fem.petsc.create_vector(r_instance, kind=PETSc.Vec.Type.NEST, restriction=self.restriction)
         self.obj_vec = multiphenicsx.fem.petsc.create_vector(r_instance, kind=PETSc.Vec.Type.NEST, restriction=self.restriction)
 
-    def set_snes_sol_vector(self) -> PETSc.Vec:  # type: ignore[no-any-unimported]
-        """
-        Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess
-        """
+class MonolithicRRDriver(RRDriver):
+    ''' Monolithic driver using SNES solver. '''
+    def pre_assemble(self):
         (p1,p2) = (self.p1,self.p2)
-        sol_vector = self.x
-        with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(
-                sol_vector, self.dofmaps, self.restriction) as nest_sol:
-            for sol_sub, u_sub in zip(nest_sol, [p1.u, p2.u]):
-                with u_sub.x.petsc_vec.localForm() as u_sol_sub_vector_local:
-                    sol_sub[:] = u_sol_sub_vector_local[:]
+        super().pre_assemble()
+
+        self.L = PETSc.Vec().createNest([p1.L, p2.L])
+        self.A = PETSc.Mat().createNest([[p1.A, self.A12], [self.A21, p2.A]])
+
+    def set_snes_sol_vector(self, x = None) -> PETSc.Vec:  # type: ignore[no-any-unimported]
+        """ Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess """
+        (p1,p2) = (self.p1,self.p2)
+        x = x or self.x
+        multiphenicsx.fem.petsc.assign([p1.u, p2.u], self.x, self.restriction)
 
     def update_solution(self, sol_vector):
         (p1,p2) = (self.p1,self.p2)
-        with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(sol_vector, self.dofmaps, self.restriction) as nest_sol:
-            for sol_sub, u_sub in zip(nest_sol, [p1.u, p2.u]):
-                with u_sub.x.petsc_vec.localForm() as u_sub_vector_local:
-                    u_sub_vector_local[:] = sol_sub[:]
+        multiphenicsx.fem.petsc.assign(sol_vector, [p1.u, p2.u], self.restriction)
         p1.u.x.scatter_forward()
         p2.u.x.scatter_forward()
 
@@ -245,9 +251,10 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         (p1,p2) = (self.p1,self.p2)
         for p in [p1, p2]:
             p.assemble_jacobian(finalize=False)
-        self.assemble_robin_jacobian_p_p_ext(p1, p2)
-        self.assemble_robin_jacobian_p_p_ext(p2, p1)
-        self.assemble_robin_jacobian_p_p()
+        self.assemble_robin_jacobian_p_p_ext(p1, p2) # A12
+        self.assemble_robin_jacobian_p_p_ext(p2, p1) # A21
+        for p in [p1, p2]:
+            self.assemble_robin_jacobian_p_p(p)
         J_mat.assemble()
         #print(f"jacobian, snes iter: {snes.its}", flush=True)
         #for i, pi in enumerate([p1, p2]):
@@ -269,7 +276,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
         self.update_solution(x)
         for p, R_sub_vec in zip([p1, p2], R_vec.getNestSubVecs()):
             p.assemble_residual(R_sub_vec)
-        self.assemble_robin_residual(R_vec)
+            self.assemble_robin_residual(p, R_sub_vec)
         #print(f"residual, snes iter: {snes.its}", flush=True)
         #if snes.its != self.nr_iter:
         #    self.nr_iter = snes.its
@@ -287,6 +294,8 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
     ) -> np.float64:
         """Compute the norm of the residual."""
         skip_assembly = False
+        # TODO: Use snes.getSolutionUpdate() instead of manually
+        # computing dx
         if self._last_x is not None:
             dx = x.copy()
             dx.axpy(-1.0, self._last_x)
@@ -304,7 +313,6 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
 
         # Solve
         snes = PETSc.SNES().create(p1.domain.comm)
-        snes.setTolerances(max_it=50)
 
         opts = PETSc.Options()
         for k,v in self.solver_opts.items():
@@ -326,6 +334,7 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
             self.update_solution(self.x)
             return snes.getConvergedReason()
 
+        # TODO: Remove this
         self.nr_iter = -1
         self.ls_iter = 0
         converged_reason = solve()
@@ -339,11 +348,102 @@ class MonolithicRRDriver(MonolithicDomainDecompositionDriver):
             p.post_modify_solution()
 
     def _destroy(self):
-        for attr in ["x", "A12", "A21", "obj_vec"]:
+        for attr in ["x", "obj_vec"]:
             try:
                 self.__dict__[attr].destroy()
             except KeyError:
                 pass
+        super()._destroy()
+
+class CompositeRRDriver(RRDriver):
+    ''' Staggered driver using SNES composed solver. '''
+    def __init__(self, sub_problem_1:Problem, sub_problem_2:Problem,
+                 robin_coeff1: float, robin_coeff2: float, convergence_tol: float = 1e-6, max_it: int = 30):
+        (p1,p2) = (sub_problem_1, sub_problem_2)
+        super().__init__(p1, p2, robin_coeff1, robin_coeff2)
+        self.gamma_residual = {p : fem.Function(p.v, name="residual") for p in [p1, p2]}
+        self.previous_sol = {p : fem.Function(p.v, name="previous_solution") for p in [p1, p2]}
+        self.gamma_dot = {p : GammaL2Dotter(p) for p in [p1, p2]}
+        self.convergence_tol = convergence_tol
+        self.max_it = max_it
+
+    def check_convergence(self, p):
+        p_ext = self.p2 if p == self.p1 else self.p1
+        self.gamma_residual[p].x.array[:] = p.u.x.array[:] - self.previous_sol[p].x.array[:]
+        self.gamma_dot[p].set_gamma(p_ext)
+        norm_diff = self.gamma_dot[p](self.gamma_residual[p])
+        norm_sol = self.gamma_dot[p](p.u)
+        relative_norm_diff = norm_diff / norm_sol if norm_sol != 0 else norm_diff # hacky
+        has_converged = relative_norm_diff < self.convergence_tol
+        if rank == 0:
+            print(f"Convergence check for {p.name}: relative norm diff = {relative_norm_diff}, has_converged = {has_converged}", flush=True)
+        return has_converged
+
+    def R(self, p,
+        snes: PETSc.SNES, x: PETSc.Vec, F_vec: PETSc.Vec
+    ) -> None:
+        """Assemble the residual."""
+        p._update_solution(x)
+        p.assemble_residual(F_vec)
+        self.assemble_robin_residual(p, F_vec)
+
+    def J(self, p,
+        snes: PETSc.SNES, x: PETSc.Vec, J_mat: PETSc.Mat,
+        P_mat: PETSc.Mat
+    ) -> None:
+        """Assemble the jacobian."""
+        p.assemble_jacobian(J_mat)
+        self.assemble_robin_jacobian_p_p(p)
+        J_mat.assemble()
+
+    def obj(self, p,
+        snes: PETSc.SNES, x: PETSc.Vec
+    ) -> np.float64:
+        """Compute the norm of the residual."""
+        self.R(p, snes, x, p._obj_vec)
+        return p._obj_vec.norm()  # type: ignore[no-any-return]
+
+    def non_linear_solve(self):
+        (p1,p2) = (self.p1,self.p2)
+        self.pre_assemble()
+
+        def set_snes(p, p_ext):
+            snes = PETSc.SNES().create(p.domain.comm)
+            opts = PETSc.Options()
+            for k,v in p.snes_opts.items():
+                opts[k] = v
+            snes.setFromOptions()
+            # Delete options objects after using it
+            [opts.__delitem__(k) for k in opts.getAll().keys()] # Clear options data-base
+            opts.destroy()
+            snes.setObjective(partial(self.obj, p))
+            snes.setFunction(partial(self.R, p), p.L)
+            snes.setJacobian(partial(self.J, p), J=p.A, P=None)
+            snes.setMonitor(lambda _, it, residual: print(it, residual, flush=True) if rank == 0 else None)
+            # Initialize solution vector
+            multiphenicsx.fem.petsc.assign(p.u, p.x, p.restriction)
+            return snes
+
+        SNESs = {p : set_snes(p, p_ext) for p, p_ext in zip([p1, p2], [p2, p1])}
+        has_converged = False
+        it = 0
+        while not(has_converged) and (it < self.max_it):
+            it += 1
+            if rank==0:
+                print(f"Composite RR iteration {it}", flush=True)
+            for p, p_ext in zip([p1, p2], [p2, p1]):
+                # PRE-ITERATE
+                self.previous_sol[p].x.array[:] = p.u.x.array[:]
+                # SOLVE
+                snes = SNESs[p]
+                snes.solve(None, p.x)
+                assert (snes.getConvergedReason() > 0), f"did not converge : {snes.getConvergedReason()}"
+            has_converged = (self.check_convergence(p1) and
+                            self.check_convergence(p2))
+        [SNESs[p].destroy() for p in [p1, p2]]
+
+        for p in [p1, p2]:
+            p.post_modify_solution()
 
 class GdofsCommunicator:
     def __init__(self, p, p_ext, gdofs_p_needs):

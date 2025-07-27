@@ -6,7 +6,7 @@ from mpi4py import MPI
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.gcode import TrackType
 from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, MHSStaggeredChimeraSubstepper, MHSSemiMonolithicSubstepper, MHSSemiMonolithicChimeraSubstepper
-from mhs_fenicsx.drivers import MonolithicRRDriver, MonolithicDomainDecompositionDriver, StaggeredRRDriver
+from mhs_fenicsx.drivers import MonolithicRRDriver, DomainDecompositionDriver, StaggeredRRDriver
 from mhs_fenicsx.chimera import build_moving_problem
 from mhs_fenicsx.problem.helpers import assert_pointwise_vals, print_vals
 

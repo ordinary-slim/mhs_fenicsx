@@ -119,6 +119,11 @@ substepping_parameters: {
   writepos: False,
   mono_robin_gamma_quadrature_degree : 4,
   chimera_always_on: True,
+  chimera_driver: {
+    type: "monolithic",
+    gamma_coeff1 : 1.0,
+    gamma_coeff2 : 1.0,
+  },
   chimera_steadiness_workflow: {
     enabled: True,
     adim_dt_increment: 0.5,

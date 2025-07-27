@@ -1,7 +1,7 @@
 from mhs_fenicsx.problem import Problem, L2Differ
 from mhs_fenicsx.problem.helpers import interpolate_cg1, interpolate_dg0
 from mhs_fenicsx.drivers.substeppers import MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper
-from mhs_fenicsx.drivers._monolithic_drivers import MonolithicRRDriver
+from mhs_fenicsx.drivers._monolithic_drivers import MonolithicRRDriver, CompositeRRDriver
 from mhs_fenicsx.drivers._staggered_drivers import StaggeredDomainDecompositionDriver
 import mhs_fenicsx_cpp
 import ufl
@@ -33,7 +33,12 @@ class ChimeraSubstepper(ABC):
         self.fraction_macro_step : float
 
     def chimera_post_init(self, initial_orientation : npt.NDArray):
-        self.chimera_driver = MonolithicRRDriver(self.pf, self.pm, 1.0, 1.0,)
+        driver_type = self.params["chimera_driver"].get("type", "monolithic")
+        gamma_coeff1 = self.params["chimera_driver"].get("gamma_coeff1", 1.0)
+        gamma_coeff2 = self.params["chimera_driver"].get("gamma_coeff2", 1.0)
+        DriverClass = CompositeRRDriver if driver_type == "composite" else MonolithicRRDriver
+
+        self.chimera_driver = DriverClass(self.pf, self.pm, gamma_coeff1, gamma_coeff2)
         self.chimera_always_on = self.params["chimera_always_on"]
         self.chimera_on = self.chimera_always_on
         self.current_orientation = initial_orientation.astype(np.float64)
@@ -319,25 +324,9 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
             pf.non_linear_solve()
             pm.interpolate(pf)
 
-    def set_snes_sol_vector(self, x) -> PETSc.Vec:  # type: ignore[no-any-unimported]
-        """
-        Set PETSc.Vec to be passed to PETSc.SNES.solve to initial guess
-        """
-        (ps, pf, pm) = (self.ps, self.pf, self.pm)
-        with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(
-                x, self.chimera_driver.dofmaps, self.chimera_driver.restriction) as nest_sol:
-            for sol_sub, u_sub in zip(nest_sol, [pf.u, pm.u]):
-                with u_sub.x.petsc_vec.localForm() as u_sol_sub_vector_local:
-                    sol_sub[:] = u_sol_sub_vector_local[:]
-
     def update_solution(self, sol_vector, interpolate=False):
         (ps, pf, pm) = (self.ps, self.pf, self.pm)
-        with multiphenicsx.fem.petsc.NestVecSubVectorWrapper(sol_vector, self.chimera_driver.dofmaps, self.chimera_driver.restriction) as nest_sol:
-            for sol_sub, u_sub in zip(nest_sol, [pf.u, pm.u]):
-                with u_sub.x.petsc_vec.localForm() as u_sub_vector_local:
-                    u_sub_vector_local[:] = sol_sub[:]
-        pm.u.x.scatter_forward()
-        pf.u.x.scatter_forward()
+        self.chimera_driver.update_solution(sol_vector)
         if interpolate:
             interpolate_solution_to_inactive(pf, pm)
         ps.u.x.array[:] = pf.u.x.array[:]
@@ -349,11 +338,12 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         pm.assemble_jacobian(finalize=False)
         self.chimera_driver.assemble_robin_jacobian_p_p_ext(self.chimera_driver.p1, self.chimera_driver.p2)
         self.chimera_driver.assemble_robin_jacobian_p_p_ext(self.chimera_driver.p2, self.chimera_driver.p1)
-        self.chimera_driver.assemble_robin_jacobian_p_p()
+        for p in [pf, pm]:
+            self.chimera_driver.assemble_robin_jacobian_p_p(p)
         J_mat.assemble()
 
     def assemble_residual(self, snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
-        (ps, pf, pm) = (self.ps, self.pf, self.pm)
+        (ps, pf, pm, cd) = (self.ps, self.pf, self.pm, self.chimera_driver)
         self.update_solution(x)
         Rf, Rm = R_vec.getNestSubVecs()
         with Rf.localForm() as R_local:
@@ -363,7 +353,8 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
                                                 restriction=pf.restriction)
         Rf.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
         pm.assemble_residual(Rm)
-        self.chimera_driver.assemble_robin_residual(R_vec)
+        for p, F_vec in zip([pf, pm], [Rf, Rm]):
+            cd.assemble_robin_residual(p, F_vec)
 
     def obj(  # type: ignore[no-any-unimported]
         self,
@@ -434,7 +425,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         snes.setFunction(self.assemble_residual, self.L)
         snes.setJacobian(self.assemble_jacobian, J=self.A, P=None)
         snes.setMonitor(lambda _, it, residual: print(it, residual, flush=True) if rank == 0 else None)
-        self.set_snes_sol_vector(self.x)
+        cd.set_snes_sol_vector(self.x)
         snes.solve(None, self.x)
         self.update_solution(self.x, interpolate=True)
         assert (snes.getConvergedReason() > 0)

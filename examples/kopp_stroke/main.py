@@ -7,7 +7,7 @@ from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.gcode import TrackType
 from mhs_fenicsx.chimera import build_moving_problem
 from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper, ChimeraSubstepper, MHSStaggeredChimeraSubstepper, MHSSemiMonolithicChimeraSubstepper
-from mhs_fenicsx.drivers import MonolithicRRDriver, MonolithicDomainDecompositionDriver, StaggeredRRDriver
+from mhs_fenicsx.drivers import MonolithicRRDriver, DomainDecompositionDriver, StaggeredRRDriver
 import argparse
 from line_profiler import LineProfiler
 
@@ -218,7 +218,7 @@ if __name__ == "__main__":
         lp.add_module(MHSStaggeredChimeraSubstepper)
         lp.add_module(MHSStaggeredSubstepper)
         lp.add_module(MHSSubstepper)
-        lp.add_module(MonolithicDomainDecompositionDriver)
+        lp.add_module(DomainDecompositionDriver)
         lp.add_module(MonolithicRRDriver)
         lp.add_module(ChimeraSubstepper)
         lp_wrapper = lp(run_staggered_chimera_rr)
@@ -227,7 +227,7 @@ if __name__ == "__main__":
     if args.run_chimera_hodge:
         lp.add_module(MHSSubstepper)
         lp.add_module(MHSSemiMonolithicChimeraSubstepper)
-        lp.add_module(MonolithicDomainDecompositionDriver)
+        lp.add_module(DomainDecompositionDriver)
         lp.add_module(MonolithicRRDriver)
         lp.add_module(ChimeraSubstepper)
         lp_wrapper = lp(run_chimera_hodge)

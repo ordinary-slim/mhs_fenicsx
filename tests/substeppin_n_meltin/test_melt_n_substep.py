@@ -5,7 +5,7 @@ import numpy as np
 import yaml
 import argparse
 from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, MHSStaggeredChimeraSubstepper, MHSSemiMonolithicSubstepper, MHSSemiMonolithicChimeraSubstepper
-from mhs_fenicsx.drivers import MonolithicRRDriver, MonolithicDomainDecompositionDriver, StaggeredRRDriver
+from mhs_fenicsx.drivers import MonolithicRRDriver, DomainDecompositionDriver, StaggeredRRDriver
 from mhs_fenicsx.chimera import build_moving_problem
 from mhs_fenicsx.problem.helpers import assert_pointwise_vals, print_vals
 

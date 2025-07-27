@@ -1,7 +1,7 @@
 import yaml
 from mpi4py import MPI
 
-from mhs_fenicsx.drivers import MonolithicRRDriver, MonolithicDomainDecompositionDriver, StaggeredRRDriver
+from mhs_fenicsx.drivers import MonolithicRRDriver, DomainDecompositionDriver, StaggeredRRDriver
 from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, ChimeraSubstepper, MHSStaggeredChimeraSubstepper, MHSSemiMonolithicChimeraSubstepper
 from test_2d_substepping import get_initial_condition, get_dt, write_gcode, get_mesh, get_max_timestep
 from mhs_fenicsx.problem import Problem
@@ -123,7 +123,7 @@ if __name__=="__main__":
         lp.add_module(MHSStaggeredChimeraSubstepper)
         lp.add_module(MHSStaggeredSubstepper)
         lp.add_module(MHSSubstepper)
-        lp.add_module(MonolithicDomainDecompositionDriver)
+        lp.add_module(DomainDecompositionDriver)
         lp.add_module(MonolithicRRDriver)
         lp.add_module(ChimeraSubstepper)
         lp.add_function(interpolate_solution_to_inactive)
@@ -136,7 +136,7 @@ if __name__=="__main__":
         from mhs_fenicsx.problem.helpers import interpolate_cg1
         lp.add_module(MHSSubstepper)
         lp.add_module(MHSSemiMonolithicChimeraSubstepper)
-        lp.add_module(MonolithicDomainDecompositionDriver)
+        lp.add_module(DomainDecompositionDriver)
         lp.add_module(MonolithicRRDriver)
         lp.add_module(ChimeraSubstepper)
         lp.add_function(interpolate_solution_to_inactive)

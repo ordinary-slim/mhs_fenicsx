@@ -14,6 +14,11 @@ from functools import partial
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
+'''
+Assembly-based domain decomposition Robin-Robin drivers.
+Both monolithic and staggered.
+'''
+
 class DomainDecompositionDriver:
     ''' Base class for domain decomposition drivers. '''
     def __init__(self, sub_problem_1: Problem, sub_problem_2: Problem):
@@ -355,7 +360,7 @@ class MonolithicRRDriver(RRDriver):
                 pass
         super()._destroy()
 
-class CompositeRRDriver(RRDriver):
+class StaggeredRRDriver(RRDriver):
     ''' Staggered driver using SNES composed solver. '''
     def __init__(self, sub_problem_1:Problem, sub_problem_2:Problem,
                  robin_coeff1: float, robin_coeff2: float, convergence_tol: float = 1e-6, max_it: int = 30):
@@ -426,11 +431,11 @@ class CompositeRRDriver(RRDriver):
 
         SNESs = {p : set_snes(p, p_ext) for p, p_ext in zip([p1, p2], [p2, p1])}
         has_converged = False
-        it = 0
-        while not(has_converged) and (it < self.max_it):
-            it += 1
+        self.iter = 0
+        while not(has_converged) and (self.iter < self.max_it):
+            self.iter += 1
             if rank==0:
-                print(f"Composite RR iteration {it}", flush=True)
+                print(f"Staggered RR iteration {self.iter}", flush=True)
             for p, p_ext in zip([p1, p2], [p2, p1]):
                 # PRE-ITERATE
                 self.previous_sol[p].x.array[:] = p.u.x.array[:]

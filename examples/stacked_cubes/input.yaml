@@ -127,7 +127,7 @@ substepping_parameters: {
   writepos: False,
   chimera_always_on: True,
   chimera_driver: {
-    type: "composite",
+    type: "staggered",
     gamma_coeff1 : 1.0,
     gamma_coeff2 : 1.0,
   },

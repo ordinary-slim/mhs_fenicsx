@@ -13,6 +13,11 @@ from abc import ABC, abstractmethod
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
+'''
+Interpolation-based domain decomposition drivers.
+Only staggered.
+'''
+
 class StaggeredInterpDDDriver(ABC):
     def __init__(self,sub_problem_1:Problem,sub_problem_2:Problem,
                  max_staggered_iters=40,

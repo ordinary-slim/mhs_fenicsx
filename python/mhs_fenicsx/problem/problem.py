@@ -549,7 +549,7 @@ class Problem:
             self.quadrature_points_cell)
         return quadrature_points
 
-    def find_gamma(self, p_ext, compute_monolithic_coupling_data=True):
+    def find_gamma(self, p_ext, compute_robin_coupling_data=True):
         self.bqpoints = self.generate_boundary_quadrature() # TODO: Try moving this to the constructor
         # and rotation
         num_gps_facet = self.Qe.num_entity_dofs[-1][0]
@@ -592,10 +592,10 @@ class Problem:
                                 mask_gamma_facets)
         self.set_gamma(p_ext, my_tag)
 
-        if compute_monolithic_coupling_data:
-            self.compute_monolithic_coupling_data(p_ext)
+        if compute_robin_coupling_data:
+            self.compute_robin_coupling_data(p_ext)
 
-    def compute_monolithic_coupling_data(self, p_ext : 'Problem'):
+    def compute_robin_coupling_data(self, p_ext : 'Problem'):
         # Prepare data for integration
         self.boun_renumbered_cells_ext[p_ext], \
         self.boun_mat_ids[p_ext], \

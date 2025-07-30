@@ -1,3 +1,3 @@
 from ._staggered_interp_drivers import StaggeredInterpDDDriver, StaggeredInterpDNDriver, StaggeredInterpRRDriver
-from ._monolithic_drivers import DomainDecompositionDriver, RRDriver, MonolithicRRDriver, CompositeRRDriver
+from ._robin_drivers import DomainDecompositionDriver, RRDriver, MonolithicRRDriver, StaggeredRRDriver
 from . import substeppers

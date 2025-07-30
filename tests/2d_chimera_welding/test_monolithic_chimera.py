@@ -1,5 +1,5 @@
 from mhs_fenicsx import problem
-from mhs_fenicsx.drivers import MonolithicRRDriver, CompositeRRDriver
+from mhs_fenicsx.drivers import MonolithicRRDriver, StaggeredRRDriver
 from mhs_fenicsx.chimera import build_moving_problem, interpolate_solution_to_inactive
 from mhs_fenicsx.problem.helpers import assert_pointwise_vals
 import numpy as np
@@ -46,8 +46,8 @@ def main(input_file, writepos=True):
     p_fixed.set_initial_condition(T_env)
     p_moving.set_initial_condition(T_env)
 
-    if driver_type == "composite":
-        Driver = CompositeRRDriver
+    if driver_type == "staggered":
+        Driver = StaggeredRRDriver
         k = p_fixed.materials[-1].k.Ys[0]
         gamma_coeff1 = 1.0
         gamma_coeff2 = k / el_size

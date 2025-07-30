@@ -25,3 +25,7 @@ run_type: "same_mesh"
 gamma_quadrature: {
   degree: 2,
 }
+dim: 3
+els_side: 4
+el_type: "hexa"
+driver_type: "monolithic"

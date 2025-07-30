@@ -7,7 +7,7 @@ from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.gcode import TrackType
 from mhs_fenicsx.chimera import build_moving_problem
 from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper, ChimeraSubstepper, MHSStaggeredChimeraSubstepper, MHSSemiMonolithicChimeraSubstepper
-from mhs_fenicsx.drivers import CompositeRRDriver, MonolithicRRDriver, DomainDecompositionDriver, StaggeredInterpRRDriver
+from mhs_fenicsx.drivers import StaggeredRRDriver, MonolithicRRDriver, DomainDecompositionDriver, StaggeredInterpRRDriver
 import argparse
 from line_profiler import LineProfiler
 
@@ -171,7 +171,7 @@ def run_staggered_chimera_rr(params, descriptor=""):
         deactivate_below_surface(p)
 
 
-    if params["substepping_parameters"]["chimera_driver"]["type"] == "composite":
+    if params["substepping_parameters"]["chimera_driver"]["type"] == "staggered":
         el_size = params["fine_el_size"]
         k = ps.materials[-1].k.Ys.mean()
         params["substepping_parameters"]["chimera_driver"]["gamma_coeff1"] = 1.0 / 4.0
@@ -267,7 +267,7 @@ if __name__ == "__main__":
         lp.add_module(MHSSubstepper)
         lp.add_module(DomainDecompositionDriver)
         lp.add_module(MonolithicRRDriver)
-        lp.add_module(CompositeRRDriver)
+        lp.add_module(StaggeredRRDriver)
         lp.add_module(ChimeraSubstepper)
         lp_wrapper = lp(run_staggered_chimera_rr)
         lp_wrapper(params, descriptor = args.descriptor)
@@ -277,7 +277,7 @@ if __name__ == "__main__":
         lp.add_module(MHSSemiMonolithicChimeraSubstepper)
         lp.add_module(DomainDecompositionDriver)
         lp.add_module(MonolithicRRDriver)
-        lp.add_module(CompositeRRDriver)
+        lp.add_module(StaggeredRRDriver)
         lp.add_module(ChimeraSubstepper)
         lp_wrapper = lp(run_chimera_hodge)
         lp_wrapper(params, descriptor = args.descriptor)

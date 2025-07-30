@@ -1,7 +1,7 @@
 from mhs_fenicsx.problem import Problem, L2Differ
 from mhs_fenicsx.problem.helpers import interpolate_cg1, interpolate_dg0
 from mhs_fenicsx.drivers.substeppers import MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper
-from mhs_fenicsx.drivers._monolithic_drivers import MonolithicRRDriver, CompositeRRDriver
+from mhs_fenicsx.drivers._robin_drivers import MonolithicRRDriver, StaggeredRRDriver
 from mhs_fenicsx.drivers._staggered_interp_drivers import StaggeredInterpDDDriver
 import mhs_fenicsx_cpp
 import ufl
@@ -36,7 +36,7 @@ class ChimeraSubstepper(ABC):
         driver_type = self.params["chimera_driver"].get("type", "monolithic")
         gamma_coeff1 = self.params["chimera_driver"].get("gamma_coeff1", 1.0)
         gamma_coeff2 = self.params["chimera_driver"].get("gamma_coeff2", 1.0)
-        DriverClass = CompositeRRDriver if driver_type == "composite" else MonolithicRRDriver
+        DriverClass = StaggeredRRDriver if driver_type == "staggered" else MonolithicRRDriver
 
         self.chimera_driver = DriverClass(self.pf, self.pm, gamma_coeff1, gamma_coeff2)
         self.chimera_always_on = self.params["chimera_always_on"]
@@ -139,7 +139,7 @@ class ChimeraSubstepper(ABC):
             next_track = self.pf.source.path.get_track(self.pf.time)
             return (((self.pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) >= 0.15)
 
-    def chimera_micro_pre_iterate(self, forced_time_derivative=False, compute_monolithic_coupling_data=True):
+    def chimera_micro_pre_iterate(self, forced_time_derivative=False, compute_robin_coupling_data=True):
         # TODO: Move this to Chimera driver?
         (pf, pm) = self.pf, self.pm
         prev_pm_active_nodes_mask = pm.active_nodes_func.x.array.copy()
@@ -168,7 +168,7 @@ class ChimeraSubstepper(ABC):
         for p in [pf, pm]:
             p.finalize_activation()
         for p, p_ext in ([pf, pm], [pm, pf]):
-            p.find_gamma(p_ext, compute_monolithic_coupling_data=compute_monolithic_coupling_data)
+            p.find_gamma(p_ext, compute_robin_coupling_data=compute_robin_coupling_data)
 
     def chimera_micro_post_iterate(self):
         (pf, pm) = self.pf, self.pm
@@ -371,7 +371,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         # NOTE: monolithic coupling data can't be computed yet because DOF numbering
         #      is not yet set up for pf
         self.chimera_micro_pre_iterate(forced_time_derivative=((pf.time - self.t0_macro_step) < 1e-7),
-                                       compute_monolithic_coupling_data=False)
+                                       compute_robin_coupling_data=False)
 
         assert(check_assumptions(ps, pf, pm))
 
@@ -391,7 +391,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         # NOTE: Now that all restrictions are set, final DOF numbering is set
         # and monolithic coupling data is computed
         for p, p_ext in [(pf, pm), (pm, pf)]:
-            p.compute_monolithic_coupling_data(p_ext)
+            p.compute_robin_coupling_data(p_ext)
 
         pf.pre_assemble()
 

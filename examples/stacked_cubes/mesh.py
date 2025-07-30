@@ -1,5 +1,6 @@
 import gmsh
 import yaml
+import numpy as np
 running_w_dolfinx = True
 try:
     from dolfinx.io.gmshio import model_to_mesh
@@ -98,9 +99,8 @@ def create_stacked_cubes_mesh(params):
         gmsh.model.geo.addVolume([40],2)
 
         # ---------------- Mesh settings ----------------
-        fine_el_size = params["fine_el_size"]
-        n_xy = int(L / fine_el_size) + 1
-        n_z = int((part_height + buffer_depth) / fine_el_size) + 1
+        n_xy = int(np.rint(L / fine_el_size) + 1)
+        n_z = int(np.rint(((part_height + buffer_depth) / fine_el_size)) + 1)
         for curve in [1,2,3,4,5,6,7,8]:
             gmsh.model.geo.mesh.setTransfiniteCurve(curve, n_xy)
         for curve in [9,10,11,12]:

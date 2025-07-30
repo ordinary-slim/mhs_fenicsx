@@ -18,6 +18,23 @@ def chimera_get_adim_back_len(fine_adim_dt: float = 0.5, adim_dt: float = 2):
     ''' Back length of moving domain'''
     return 4.0
 
+def get_pm(ps):
+    params = ps.input_parameters
+    hr = float(params["half_radius"])
+    return build_moving_problem(ps,
+                                params["moving_domain_params"]["els_per_radius"],
+                                #custom_get_adim_back_len=get_adim_back_len,
+                                #shift=np.array([0.0, hr/2, 0.0]),
+                                )
+
+def get_gamma_coeffs(p):
+    el_size = p.input_parameters["fine_el_size"]
+    k = p.materials[-1].k.Ys.mean()
+    a = 8.0
+    return 1.0 / a, 2 * k / (a * el_size)
+    #a = 2.0
+    #return a * k / np.sqrt(el_size), k / np.sqrt(el_size) / a
+
 def write_gcode(params):
     num_layers = params["num_layers"]
     layer_thickness = params["layer_thickness"]
@@ -40,7 +57,7 @@ def write_gcode(params):
         p0[2], p1[2] = z, z
         for ihatch in range(num_hatches):
             E += 0.1
-            fixed_coord = -half_len + (ihatch + 0.5) * layer_thickness
+            fixed_coord = -half_len + (ihatch + 0.5) * hatch_spacing
             sign = (ihatch + 1) % 2
             mov_coord0 = (-1)**sign * half_len
             mov_coord1 = -mov_coord0
@@ -162,20 +179,20 @@ def run_staggered_chimera_rr(params, descriptor=""):
     ps = Problem(domain, macro_params, finalize_activation=False,
                  name="chimera_staggered_rr" + descriptor)
 
-    pm = build_moving_problem(ps,
-                              macro_params["moving_domain_params"]["els_per_radius"],
-                              #custom_get_adim_back_len=chimera_get_adim_back_len,
-                              )
+    pm = get_pm(ps)
     for p in [ps, pm]:
         p.set_initial_condition(params["environment_temperature"])
         deactivate_below_surface(p)
 
 
-    if params["substepping_parameters"]["chimera_driver"]["type"] == "staggered":
-        el_size = params["fine_el_size"]
-        k = ps.materials[-1].k.Ys.mean()
-        params["substepping_parameters"]["chimera_driver"]["gamma_coeff1"] = 1.0 / 4.0
-        params["substepping_parameters"]["chimera_driver"]["gamma_coeff2"] = k / (4.0 * el_size)
+    is_staggered = (params["substepping_parameters"]["chimera_driver"]["type"] == "staggered")
+    if is_staggered:
+        gc1, gc2 = get_gamma_coeffs(ps)
+    else:
+        gc1, gc2 = 1.0, 1.0
+
+    params["substepping_parameters"]["chimera_driver"]["gamma_coeff1"] = gc1
+    params["substepping_parameters"]["chimera_driver"]["gamma_coeff2"] = gc2
 
     substeppin_driver = MHSStaggeredChimeraSubstepper(
         StaggeredInterpRRDriver,
@@ -194,6 +211,9 @@ def run_staggered_chimera_rr(params, descriptor=""):
         if writepos:
             for p in [ps, substeppin_driver.pf, pm]:
                 p.writepos(extension="vtx")
+    if is_staggered:
+        if rank == 0:
+            print(f"Average staggered iter: {substeppin_driver.chimera_driver.get_average_staggered_iter()}")
     return ps
 
 def run_chimera_hodge(params, descriptor=""):
@@ -205,15 +225,20 @@ def run_chimera_hodge(params, descriptor=""):
     ps = Problem(domain, macro_params, finalize_activation=False,
                  name="chimera_hodge" + descriptor)
 
-    pm = build_moving_problem(ps,
-                              macro_params["moving_domain_params"]["els_per_radius"],
-                              #custom_get_adim_back_len=get_adim_back_len,
-                              )
+    pm = get_pm(ps)
     for p in [ps, pm]:
         p.set_initial_condition(params["environment_temperature"])
         deactivate_below_surface(p)
 
 
+
+    if params["substepping_parameters"]["chimera_driver"]["type"] == "staggered":
+        gc1, gc2 = get_gamma_coeffs(ps)
+    else:
+        gc1, gc2 = 1.0, 1.0
+
+    params["substepping_parameters"]["chimera_driver"]["gamma_coeff1"] = gc1
+    params["substepping_parameters"]["chimera_driver"]["gamma_coeff2"] = gc2
     substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm)
 
     itime_step = 0

@@ -19,12 +19,25 @@ Assembly-based domain decomposition Robin-Robin drivers.
 Both monolithic and staggered.
 '''
 
+def skip_assembly(x, last_x, dx):
+    skip = False
+    if last_x is not None:
+        dx._copy(x)
+        dx.axpy(-1.0, last_x)
+        if dx.norm() < 1e-12:
+            skip = True
+        last_x._copy(x)
+    else:
+        dx, last_x = x.copy(), x.copy()
+    return skip
+
 class DomainDecompositionDriver:
     ''' Base class for domain decomposition drivers. '''
     def __init__(self, sub_problem_1: Problem, sub_problem_2: Problem):
         (p1, p2) = (sub_problem_1, sub_problem_2)
         self.p1 = p1
         self.p2 = p2
+        self.iter = 0
         if "petsc_opts_mono_robin" in p1.input_parameters:
             self.solver_opts = dict(p1.input_parameters["petsc_opts_mono_robin"])
         else:
@@ -57,6 +70,18 @@ class RRDriver(DomainDecompositionDriver):
         for attr in ["A12", "A21"]:
             try:
                 self.__dict__[attr].destroy()
+            except KeyError:
+                pass
+        for attr in ["_last_x", "_dx"]:
+            try:
+                attr = self.__dict__[attr]
+                if isinstance(attr, dict):
+                    for v in attr.values():
+                        if v is not None:
+                            v.destroy()
+                else:
+                    if attr is not None:
+                        attr.destroy()
             except KeyError:
                 pass
 
@@ -218,6 +243,7 @@ class RRDriver(DomainDecompositionDriver):
     def pre_assemble(self):
         ''' Instantiate forms and pre-assemble coupling matrices. '''
         (p1,p2) = (self.p1,self.p2)
+        self.iter += 1
         self._destroy()
         self.setup_coupling()
         self.instantiate_forms()
@@ -261,20 +287,6 @@ class MonolithicRRDriver(RRDriver):
         for p in [p1, p2]:
             self.assemble_robin_jacobian_p_p(p)
         J_mat.assemble()
-        #print(f"jacobian, snes iter: {snes.its}", flush=True)
-        #for i, pi in enumerate([p1, p2]):
-        #    prefix_i = "m" if "moving" in pi.name else "f"
-        #    for j, pj in enumerate([p1, p2]):
-        #        prefix_j = "m" if "moving" in pj.name else "f"
-        #        fname = f"J_{prefix_i}_{prefix_j}_nr{self.nr_iter}"
-        #        J_sub_mat = J_mat.getNestSubMatrix(i, j)
-        #        import scipy.sparse as sp
-        #        mat = J_sub_mat.getValuesCSR()
-        #        indptr, indices, data = mat
-        #        shape = J_sub_mat.getSize()
-        #        spmat = sp.csr_matrix((data, indices, indptr), shape=shape)
-        #        sp.save_npz(fname, spmat)
-
 
     def R_snes(self, snes: PETSc.SNES, x: PETSc.Vec, R_vec: PETSc.Vec): 
         (p1,p2) = (self.p1,self.p2)
@@ -282,39 +294,21 @@ class MonolithicRRDriver(RRDriver):
         for p, R_sub_vec in zip([p1, p2], R_vec.getNestSubVecs()):
             p.assemble_residual(R_sub_vec)
             self.assemble_robin_residual(p, R_sub_vec)
-        #print(f"residual, snes iter: {snes.its}", flush=True)
-        #if snes.its != self.nr_iter:
-        #    self.nr_iter = snes.its
-        #    self.ls_iter = 0
-        #else:
-        #    self.ls_iter += 1
-        #print(f"nr_iter: {self.nr_iter}, ls_iter: {self.ls_iter}", flush=True)
-        #for p, R_vec in zip([p1, p2], R_vec.getNestSubVecs()):
-        #    prefix = "m" if "moving" in p.name else "f"
-        #    fname = f"R_{prefix}_nr{self.nr_iter}_ls{self.ls_iter}.npy"
-        #    np.save(fname, R_vec.getArray(readonly=True))
 
     def obj_snes(  # type: ignore[no-any-unimported]
             self, snes: PETSc.SNES, x: PETSc.Vec
     ) -> np.float64:
         """Compute the norm of the residual."""
-        skip_assembly = False
-        # TODO: Use snes.getSolutionUpdate() instead of manually
-        # computing dx
-        if self._last_x is not None:
-            dx = x.copy()
-            dx.axpy(-1.0, self._last_x)
-            if dx.norm() < 1e-12:
-                skip_assembly = True
-        if not(skip_assembly):
+        skip = skip_assembly(x, self._last_x, self._dx)
+        if not(skip):
             self.R_snes(snes, x, self.obj_vec)
-        self._last_x = x.copy()
         return self.obj_vec.norm()
 
     def non_linear_solve(self):
         (p1,p2) = (self.p1,self.p2)
         self.pre_assemble()
-        self._last_x = None
+
+        self._last_x, self._dx = None, None
 
         # Solve
         snes = PETSc.SNES().create(p1.domain.comm)
@@ -371,6 +365,10 @@ class StaggeredRRDriver(RRDriver):
         self.gamma_dot = {p : GammaL2Dotter(p) for p in [p1, p2]}
         self.convergence_tol = convergence_tol
         self.max_it = max_it
+        self.staggered_iter_counter = 0
+
+    def get_average_staggered_iter(self):
+        return self.staggered_iter_counter / self.iter if self.iter > 0 else 0
 
     def check_convergence(self, p):
         p_ext = self.p2 if p == self.p1 else self.p1
@@ -405,8 +403,10 @@ class StaggeredRRDriver(RRDriver):
         snes: PETSc.SNES, x: PETSc.Vec
     ) -> np.float64:
         """Compute the norm of the residual."""
-        self.R(p, snes, x, p._obj_vec)
-        return p._obj_vec.norm()  # type: ignore[no-any-return]
+        skip = skip_assembly(x, self._last_x[p], self._dx[p])
+        if not(skip):
+            self.R(p, snes, x, p._obj_vec)
+        return p._obj_vec.norm()
 
     def non_linear_solve(self):
         (p1,p2) = (self.p1,self.p2)
@@ -430,12 +430,14 @@ class StaggeredRRDriver(RRDriver):
             return snes
 
         SNESs = {p : set_snes(p, p_ext) for p, p_ext in zip([p1, p2], [p2, p1])}
+        self._last_x = {p : None for p in [p1, p2]}
+        self._dx = {p : None for p in [p1, p2]}
         has_converged = False
-        self.iter = 0
-        while not(has_converged) and (self.iter < self.max_it):
-            self.iter += 1
+        self.staggered_iter = 0
+        while not(has_converged) and (self.staggered_iter < self.max_it):
+            self.staggered_iter += 1
             if rank==0:
-                print(f"Staggered RR iteration {self.iter}", flush=True)
+                print(f"Staggered RR iteration {self.staggered_iter}", flush=True)
             for p, p_ext in zip([p1, p2], [p2, p1]):
                 # PRE-ITERATE
                 self.previous_sol[p].x.array[:] = p.u.x.array[:]
@@ -445,6 +447,7 @@ class StaggeredRRDriver(RRDriver):
                 assert (snes.getConvergedReason() > 0), f"did not converge : {snes.getConvergedReason()}"
             has_converged = (self.check_convergence(p1) and
                             self.check_convergence(p2))
+        self.staggered_iter_counter += self.staggered_iter
         [SNESs[p].destroy() for p in [p1, p2]]
 
         for p in [p1, p2]:

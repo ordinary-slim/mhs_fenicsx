@@ -7,7 +7,7 @@ import yaml
 import numpy as np
 import argparse
 from mhs_fenicsx.problem.helpers import assert_pointwise_vals, print_vals
-from mhs_fenicsx.drivers import StaggeredRRDriver, StaggeredDNDriver
+from mhs_fenicsx.drivers import StaggeredInterpRRDriver, StaggeredInterpDNDriver
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -71,10 +71,10 @@ def get_mesh(params, radius, dim):
 def run_staggered(params, driver_type, writepos=True):
     radius = params["source_terms"][0]["radius"]
     if   driver_type=="robin":
-        driver_constructor = StaggeredRRDriver
+        driver_constructor = StaggeredInterpRRDriver
         initial_relaxation_factors=[1.0,1.0]
     elif driver_type=="dn":
-        driver_constructor = StaggeredDNDriver
+        driver_constructor = StaggeredInterpDNDriver
         initial_relaxation_factors=[0.5,1]
     else:
         raise ValueError("Undefined staggered driver type.")
@@ -94,7 +94,7 @@ def run_staggered(params, driver_type, writepos=True):
     staggered_driver = substeppin_driver.staggered_driver
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
 
-    if (type(staggered_driver)==StaggeredRRDriver):
+    if (type(staggered_driver)==StaggeredInterpRRDriver):
         el_density = np.round((1.0 / radius) * params["els_per_radius"]).astype(np.int32)
         h = 1.0 / el_density
         k = float(params["material_metal"]["conductivity"])
@@ -219,7 +219,7 @@ if __name__=="__main__":
         import mhs_fenicsx.geometry
         lp.add_module(MHSSubstepper)
         lp.add_module(MHSStaggeredSubstepper)
-        lp.add_module(StaggeredRRDriver)
+        lp.add_module(StaggeredInterpRRDriver)
         lp.add_function(mhs_fenicsx.geometry.mesh_collision)
         lp.add_function(build_subentity_to_parent_mapping)
         lp.add_function(compute_dg0_interpolation_data)

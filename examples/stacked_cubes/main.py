@@ -7,7 +7,7 @@ from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.gcode import TrackType
 from mhs_fenicsx.chimera import build_moving_problem
 from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper, ChimeraSubstepper, MHSStaggeredChimeraSubstepper, MHSSemiMonolithicChimeraSubstepper
-from mhs_fenicsx.drivers import CompositeRRDriver, MonolithicRRDriver, DomainDecompositionDriver, StaggeredRRDriver
+from mhs_fenicsx.drivers import CompositeRRDriver, MonolithicRRDriver, DomainDecompositionDriver, StaggeredInterpRRDriver
 import argparse
 from line_profiler import LineProfiler
 
@@ -113,7 +113,7 @@ def run_staggered(params, descriptor=""):
     ps.set_initial_condition(  params["environment_temperature"] )
     deactivate_below_surface(ps)
 
-    substeppin_driver = MHSStaggeredSubstepper(StaggeredRRDriver,
+    substeppin_driver = MHSStaggeredSubstepper(StaggeredInterpRRDriver,
                                                ps,
                                                staggered_relaxation_factors=[1.0, 1.0],)
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
@@ -178,7 +178,7 @@ def run_staggered_chimera_rr(params, descriptor=""):
         params["substepping_parameters"]["chimera_driver"]["gamma_coeff2"] = k / (4.0 * el_size)
 
     substeppin_driver = MHSStaggeredChimeraSubstepper(
-        StaggeredRRDriver,
+        StaggeredInterpRRDriver,
         ps, pm,
         staggered_relaxation_factors=[1.0, 1.0],)
 
@@ -251,7 +251,7 @@ if __name__ == "__main__":
     if args.run_stagg_sub:
         lp.add_module(MHSSubstepper)
         lp.add_module(MHSStaggeredSubstepper)
-        lp.add_module(StaggeredRRDriver)
+        lp.add_module(StaggeredInterpRRDriver)
         lp_wrapper = lp(run_staggered)
         lp_wrapper(params, descriptor = args.descriptor)
         profiling_file = f"profiling_ss_{rank}.txt"

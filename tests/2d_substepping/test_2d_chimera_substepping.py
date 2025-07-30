@@ -1,7 +1,7 @@
 import yaml
 from mpi4py import MPI
 
-from mhs_fenicsx.drivers import MonolithicRRDriver, DomainDecompositionDriver, StaggeredRRDriver
+from mhs_fenicsx.drivers import MonolithicRRDriver, DomainDecompositionDriver, StaggeredInterpRRDriver
 from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, ChimeraSubstepper, MHSStaggeredChimeraSubstepper, MHSSemiMonolithicChimeraSubstepper
 from test_2d_substepping import get_initial_condition, get_dt, write_gcode, get_mesh, get_max_timestep
 from mhs_fenicsx.problem import Problem
@@ -32,7 +32,7 @@ def run_staggered_RR(params, writepos=True):
     max_timesteps = get_max_timestep(params)
 
     substeppin_driver = MHSStaggeredChimeraSubstepper(
-            StaggeredRRDriver,
+            StaggeredInterpRRDriver,
             ps, pm,
             staggered_relaxation_factors=[1.0,1.0],)
 

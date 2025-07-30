@@ -1,6 +1,6 @@
 from mhs_fenicsx import problem
 from mhs_fenicsx.chimera import build_moving_problem, interpolate_solution_to_inactive, shape_moving_problem
-from mhs_fenicsx.drivers import StaggeredDNDriver, StaggeredRRDriver, MonolithicRRDriver
+from mhs_fenicsx.drivers import StaggeredInterpDNDriver, StaggeredInterpRRDriver, MonolithicRRDriver
 import numpy as np
 import yaml
 from mpi4py import MPI
@@ -94,9 +94,9 @@ def main():
             p.initialize_post()
         dd_type=params["dd_type"]
         if dd_type=="robin":
-            driver_type = StaggeredRRDriver
+            driver_type = StaggeredInterpRRDriver
         elif dd_type=="dn":
-            driver_type = StaggeredDNDriver
+            driver_type = StaggeredInterpDNDriver
         else:
             raise ValueError("dd_type must be 'dn' or 'robin'")
 
@@ -107,7 +107,7 @@ def main():
                              convergence_threshold=params["convergence_threshold"],
                              )
 
-        if (type(driver)==StaggeredRRDriver):
+        if (type(driver)==StaggeredInterpRRDriver):
             h = get_el_size(els_per_radius)
             k = float(params["material_metal"]["conductivity"])
             driver.dirichlet_coeff[driver.p1].value = 1.0 / 2.0
@@ -198,7 +198,7 @@ if __name__=="__main__":
         lp = LineProfiler()
         lp.add_module(problem)
         lp.add_function(build_moving_problem)
-        lp.add_module(StaggeredDNDriver)
+        lp.add_module(StaggeredInterpDNDriver)
         lp_wrapper = lp(main)
         lp_wrapper()
         with open(f"staggered_profiling_{rank}.txt", 'w') as pf:

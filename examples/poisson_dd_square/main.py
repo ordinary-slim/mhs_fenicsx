@@ -9,7 +9,7 @@ from mhs_fenicsx.submesh import build_subentity_to_parent_mapping,compute_dg0_in
         find_submesh_interface
 from line_profiler import LineProfiler
 import yaml
-from mhs_fenicsx.drivers import StaggeredDNDriver, StaggeredRRDriver
+from mhs_fenicsx.drivers import StaggeredInterpDNDriver, StaggeredInterpRRDriver
 import trace, sys
 import argparse
 
@@ -70,9 +70,9 @@ def run(params):
 
     dd_type=params["dd_type"]
     if dd_type=="robin":
-        driver_type = StaggeredRRDriver
+        driver_type = StaggeredInterpRRDriver
     elif dd_type=="dn":
-        driver_type = StaggeredDNDriver
+        driver_type = StaggeredInterpDNDriver
     else:
         raise ValueError("dd_type must be 'dn' or 'robin'")
 
@@ -109,7 +109,7 @@ def run(params):
                          max_staggered_iters=params["max_staggered_iters"],
                          initial_relaxation_factors=params["initial_relaxation_factors"])
 
-    if (type(driver)==StaggeredRRDriver):
+    if (type(driver)==StaggeredInterpRRDriver):
         h = 1.0 / els_side
         k = float(params["material"]["conductivity"])
         driver.dirichlet_coeff[driver.p1].value = 1.0
@@ -233,8 +233,8 @@ if __name__=="__main__":
     #    func = run
     #if profiling:
     #    lp = LineProfiler()
-    #    lp.add_module(StaggeredDNDriver)
-    #    lp.add_module(StaggeredRRDriver)
+    #    lp.add_module(StaggeredInterpDNDriver)
+    #    lp.add_module(StaggeredInterpRRDriver)
     #    lp.add_module(Problem)
     #    lp.add_function(fem.Function.interpolate)
     #    lp.add_function(interpolate_dg_at_facets)

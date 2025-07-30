@@ -2,7 +2,7 @@ from mhs_fenicsx.problem import Problem, L2Differ
 from mhs_fenicsx.problem.helpers import interpolate_cg1, interpolate_dg0
 from mhs_fenicsx.drivers.substeppers import MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper
 from mhs_fenicsx.drivers._monolithic_drivers import MonolithicRRDriver, CompositeRRDriver
-from mhs_fenicsx.drivers._staggered_drivers import StaggeredDomainDecompositionDriver
+from mhs_fenicsx.drivers._staggered_interp_drivers import StaggeredInterpDDDriver
 import mhs_fenicsx_cpp
 import ufl
 import numpy as np
@@ -188,7 +188,7 @@ class ChimeraSubstepper(ABC):
 
 class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
     def __init__(self,
-                 staggered_driver_class : typing.Type[StaggeredDomainDecompositionDriver],
+                 staggered_driver_class : typing.Type[StaggeredInterpDDDriver],
                  slow_problem:Problem, moving_problem : Problem,
                  staggered_relaxation_factors : list[float] = [1.0, 1.0],
                  max_nr_iters=25, max_ls_iters=5,

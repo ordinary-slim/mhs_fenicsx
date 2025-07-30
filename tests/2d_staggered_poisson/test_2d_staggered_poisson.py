@@ -4,7 +4,7 @@ from mpi4py import MPI
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.problem.helpers import assert_pointwise_vals, set_same_mesh_interface
 import yaml
-from mhs_fenicsx.drivers import StaggeredDNDriver, StaggeredRRDriver
+from mhs_fenicsx.drivers import StaggeredInterpDNDriver, StaggeredInterpRRDriver
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -51,10 +51,10 @@ def run(dd_type="dn", chimera=True):
               params["material"]["conductivity"],
               params["advection_speed"])
     if dd_type=="robin":
-        driver_type = StaggeredRRDriver
+        driver_type = StaggeredInterpRRDriver
         initial_relaxation_factors=[1.0,1.0]
     elif dd_type=="dn":
-        driver_type = StaggeredDNDriver
+        driver_type = StaggeredInterpDNDriver
         initial_relaxation_factors=[0.5,1.0]
     else:
         raise ValueError("dd_type must be 'dn' or 'robin'")

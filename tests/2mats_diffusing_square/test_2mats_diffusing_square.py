@@ -3,7 +3,7 @@ from mhs_fenicsx.problem import Problem, set_same_mesh_interface
 from mpi4py import MPI
 import yaml
 import numpy as np
-from mhs_fenicsx.drivers import StaggeredRRDriver, MonolithicRRDriver
+from mhs_fenicsx.drivers import StaggeredInterpRRDriver, MonolithicRRDriver
 from mhs_fenicsx.problem.helpers import assert_pointwise_vals, print_vals
 
 comm = MPI.COMM_WORLD
@@ -71,7 +71,7 @@ def staggered_robin(params, writepos=True):
     for p in [p_left,p_right]:
         p.set_activation(active_els[p])
     set_same_mesh_interface(p_left, p_right)
-    driver = StaggeredRRDriver(p_right, p_left, max_staggered_iters=20,
+    driver = StaggeredInterpRRDriver(p_right, p_left, max_staggered_iters=20,
                                initial_relaxation_factors=[1.0, 1.0])
 
     driver.pre_loop(set_bc=set_bc,

@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-class StaggeredDomainDecompositionDriver(ABC):
+class StaggeredInterpDDDriver(ABC):
     def __init__(self,sub_problem_1:Problem,sub_problem_2:Problem,
                  max_staggered_iters=40,
                  initial_relaxation_factors=[1.0,1.0],
@@ -217,7 +217,7 @@ class StaggeredDomainDecompositionDriver(ABC):
     def assert_tag(self, p):
         assert_gamma_tags(self.gamma_integration_tags.values(), p)
 
-class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
+class StaggeredInterpDNDriver(StaggeredInterpDDDriver):
     def __init__(self,
                  p_dirichlet:Problem,
                  p_neumann:Problem,
@@ -226,7 +226,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
                  convergence_threshold=1e-6
                  ):
         (self.p_dirichlet, self.p_neumann) = (p_dirichlet, p_neumann)
-        StaggeredDomainDecompositionDriver.__init__(self,
+        StaggeredInterpDDDriver.__init__(self,
                                                     p_dirichlet,
                                                     p_neumann,
                                                     max_staggered_iters,
@@ -266,14 +266,14 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         extra_funcs_p2 = [self.ext_flux[pn]] + extra_funcs_p2
                             
 
-        StaggeredDomainDecompositionDriver.write_results(self,extra_funcs_p1=extra_funcs_p1,extra_funcs_p2=extra_funcs_p2)
+        StaggeredInterpDDDriver.write_results(self,extra_funcs_p1=extra_funcs_p1,extra_funcs_p2=extra_funcs_p2)
 
     def pre_loop(self,set_bc=None, prepare_subproblems=True, preassemble=False):
         '''
         1. Set interface between subproblems
         2. Initialize vars to receive ext data
         '''
-        StaggeredDomainDecompositionDriver.pre_loop(self,set_bc=set_bc)
+        StaggeredInterpDDDriver.pre_loop(self,set_bc=set_bc)
         (pd,pn) = (self.p_dirichlet,self.p_neumann)
         if self.is_chimera:
             midpoints_neumann_facets = mesh.compute_midpoints(pn.domain,pn.domain.topology.dim-1,pn.gamma_facets[pd].find(1))
@@ -289,7 +289,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
 
     def prepare_subproblems(self, preassemble=True):
         (pn, pd) = plist = (self.p_neumann, self.p_dirichlet)
-        StaggeredDomainDecompositionDriver.prepare_subproblems(self, preassemble=preassemble)
+        StaggeredInterpDDDriver.prepare_subproblems(self, preassemble=preassemble)
         self.set_dirichlet_interface()
 
     def post_iterate(self, verbose=False):
@@ -413,7 +413,7 @@ class StaggeredDNDriver(StaggeredDomainDecompositionDriver):
         self.update_relaxation_factor()
         self.update_dirichlet_interface()
 
-class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
+class StaggeredInterpRRDriver(StaggeredInterpDDDriver):
     def __init__(self,
                  p1:Problem,
                  p2:Problem,
@@ -421,7 +421,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
                  initial_relaxation_factors=[1.0,1.0],
                  convergence_threshold=1e-6):
         self.dirichlet_coeff = {p1:fem.Constant(p1.domain, 1.0),p2:fem.Constant(p2.domain, 1.0)}
-        StaggeredDomainDecompositionDriver.__init__(self,
+        StaggeredInterpDDDriver.__init__(self,
                                                     p1,
                                                     p2,
                                                     max_staggered_iters,
@@ -458,7 +458,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
             self.initialize_post()
         for p in [p1,p2]:
             extra_funcs[p] = [p.grad_u, self.ext_sol[p], self.ext_flux[p], self.ext_material_gamma[p]] + extra_funcs[p]
-        StaggeredDomainDecompositionDriver.write_results(self,extra_funcs_p1=extra_funcs[p1],extra_funcs_p2=extra_funcs[p2])
+        StaggeredInterpDDDriver.write_results(self,extra_funcs_p1=extra_funcs[p1],extra_funcs_p2=extra_funcs[p2])
 
     def pre_iterate(self):
         super().pre_iterate()
@@ -473,7 +473,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
         1. Interface data
         2. Vars to receive p_ext data
         '''
-        StaggeredDomainDecompositionDriver.pre_loop(self,set_bc=set_bc)
+        StaggeredInterpDDDriver.pre_loop(self,set_bc=set_bc)
         (p1,p2) = (self.p1,self.p2)
         for p,p_ext in zip([p1,p2],[p2,p1]):
             if self.is_chimera: # If different meshes, build interp data
@@ -490,7 +490,7 @@ class StaggeredRRDriver(StaggeredDomainDecompositionDriver):
 
     def prepare_subproblems(self, preassemble=True):
         (p2, p1) = plist = (self.p2, self.p1)
-        StaggeredDomainDecompositionDriver.prepare_subproblems(self, preassemble=preassemble)
+        StaggeredInterpDDDriver.prepare_subproblems(self, preassemble=preassemble)
 
     def post_iterate(self, verbose=False):
         (p2, p1) = (self.p2, self.p1)

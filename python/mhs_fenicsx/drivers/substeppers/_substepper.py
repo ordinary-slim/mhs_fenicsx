@@ -4,7 +4,7 @@ from dolfinx import fem, io
 import ufl
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx_cpp import mesh_collision
-from mhs_fenicsx.drivers._staggered_drivers import StaggeredRRDriver, StaggeredDNDriver, StaggeredDomainDecompositionDriver
+from mhs_fenicsx.drivers._staggered_interp_drivers import StaggeredInterpRRDriver, StaggeredInterpDNDriver, StaggeredInterpDDDriver
 from mhs_fenicsx.geometry import OBB
 from mhs_fenicsx.gcode import TrackType
 import numpy as np
@@ -529,7 +529,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 
 class MHSStaggeredSubstepper(MHSSubstepper):
     def __init__(self,
-                 staggered_driver_class : typing.Type[StaggeredDomainDecompositionDriver],
+                 staggered_driver_class : typing.Type[StaggeredInterpDDDriver],
                  slow_problem : Problem,
                  staggered_relaxation_factors : list[float] = [1.0, 1.0],
                  max_nr_iters=25, max_ls_iters=5,
@@ -609,25 +609,25 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         pf.clear_subdomain_data()
         sd.instantiate_forms(pf)
         sd.assert_tag(pf)
-        if type(sd)==StaggeredRRDriver:
+        if type(sd)==StaggeredInterpRRDriver:
             f = self.fraction_macro_step
             sd.net_ext_sol[pf].x.array[:] = (1-f)*self.ext_sol_tn[pf].x.array[:] + \
                     f*self.ext_sol_array_tnp1[:]
             sd.net_ext_flux[pf].x.array[:] = (1-f)*self.ext_flux_tn[pf].x.array[:] + \
                     f*self.ext_flux_array_tnp1[:]
-        elif type(sd)==StaggeredDNDriver and sd.p_dirichlet==pf:
+        elif type(sd)==StaggeredInterpDNDriver and sd.p_dirichlet==pf:
             sd.dirichlet_tcon.g.x.array[:] = (1-sd.relaxation_coeff[pf].value)*pf.u.x.array[:] + \
                                              sd.relaxation_coeff[pf].value*((1-self.fraction_macro_step)*\
                                              sd.prev_ext_sol[pf].x.array[:] + self.fraction_macro_step*\
                                              sd.ext_sol[pf].x.array[:])
-        elif type(sd)==StaggeredDNDriver and sd.p_neumann==pf:
+        elif type(sd)==StaggeredInterpDNDriver and sd.p_neumann==pf:
             sd.relaxation_coeff[pf].value = self.fraction_macro_step
         pf.non_linear_solve()
 
     def iterate_substepped_rr(self):
         (ps,pf) = (self.ps,self.pf)
         rr_driver = self.staggered_driver
-        assert(type(rr_driver)==StaggeredRRDriver)
+        assert(type(rr_driver)==StaggeredInterpRRDriver)
         self.update_robin_fast()
         self.micro_steps()
         # have solution at tnp1
@@ -641,7 +641,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
 
     def iterate_substepped_dn(self):
         dn_driver = self.staggered_driver
-        assert(type(dn_driver)==StaggeredDNDriver)
+        assert(type(dn_driver)==StaggeredInterpDNDriver)
         (pn,pd) = (self.ps,self.pf)
 
         # Solve fast/Dirichlet problem
@@ -668,7 +668,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         '''
         sd = self.staggered_driver
         pf = self.pf
-        assert(type(sd)==StaggeredRRDriver)
+        assert(type(sd)==StaggeredInterpRRDriver)
         sd.update_robin(pf)
         self.ext_sol_array_tnp1 = sd.net_ext_sol[pf].x.array.copy()
         self.ext_flux_array_tnp1 = sd.net_ext_flux[pf].x.array.copy()
@@ -684,9 +684,9 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         super().pre_loop()
         (ps,pf) = (self.ps,self.pf)
         sd = self.staggered_driver
-        if type(sd)==StaggeredRRDriver:
+        if type(sd)==StaggeredInterpRRDriver:
             self.iterate = self.iterate_substepped_rr
-        elif type(sd)==StaggeredDNDriver:
+        elif type(sd)==StaggeredInterpDNDriver:
             self.iterate = self.iterate_substepped_dn
         else:
             raise ValueError("Unknown staggered driver type.")
@@ -696,11 +696,11 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         self.ext_flux_tn = {p:fem.Function(p.dg0_vec,name="ext_flux_tn")}
         p_ext.compute_gradient()
         # TODO: Are these necessary? Can I get them from my own data?
-        if type(sd)==StaggeredRRDriver:
+        if type(sd)==StaggeredInterpRRDriver:
             self.ext_sol_tn = {p:fem.Function(p.v,name="ext_sol_tn")}
             propagate_dg0_at_facets_same_mesh(p_ext, p_ext.grad_u, p, self.ext_flux_tn[p])
             self.ext_sol_tn[p].x.array[:] = p_ext.u.x.array[:]
-        elif type(sd)==StaggeredDNDriver:
+        elif type(sd)==StaggeredInterpDNDriver:
             if sd.p_dirichlet==pf:
                 self.ext_sol_tn = {p:fem.Function(p.v,name="ext_sol_tn")}
                 self.ext_sol_tn[p].x.array[:] = p_ext.u.x.array[:]

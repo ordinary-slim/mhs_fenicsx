@@ -6,7 +6,7 @@ from mpi4py import MPI
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.gcode import TrackType
 from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, MHSStaggeredChimeraSubstepper, MHSSemiMonolithicSubstepper, MHSSemiMonolithicChimeraSubstepper
-from mhs_fenicsx.drivers import MonolithicRRDriver, DomainDecompositionDriver, StaggeredRRDriver
+from mhs_fenicsx.drivers import MonolithicRRDriver, DomainDecompositionDriver, StaggeredInterpRRDriver
 from mhs_fenicsx.chimera import build_moving_problem
 from mhs_fenicsx.problem.helpers import assert_pointwise_vals, print_vals
 
@@ -104,7 +104,7 @@ def run_staggered(params, writepos=True):
 
     max_timesteps = params["max_timesteps"]
 
-    substeppin_driver = MHSStaggeredSubstepper(StaggeredRRDriver,
+    substeppin_driver = MHSStaggeredSubstepper(StaggeredInterpRRDriver,
                                                ps,
                                                staggered_relaxation_factors=[1.0, 1.0],)
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
@@ -164,7 +164,7 @@ def run_chimera_staggered(params, writepos=True):
             next_track = self.pf.source.path.get_track(pf.time)
             return (((pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) >= 0.15)
 
-    substeppin_driver = MyMHSStaggeredChimeraSubstepper(StaggeredRRDriver,
+    substeppin_driver = MyMHSStaggeredChimeraSubstepper(StaggeredInterpRRDriver,
                                                         ps, pm,
                                                         staggered_relaxation_factors=[1.0, 1.0])
 

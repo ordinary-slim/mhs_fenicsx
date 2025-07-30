@@ -54,7 +54,7 @@ class MHSSubstepper(ABC):
                 print("Step WITH substepping STARTS...", flush=True)
             pf.set_dt(pf.dimensionalize_mhs_timestep(track, self.params["micro_adim_dt"]))
             ps.set_dt(ps.dimensionalize_mhs_timestep(track, self.params["macro_adim_dt"]))
-            self.cap_timestep(ps)
+            ps.cap_timestep()
             self.do_substepped_timestep()
         else:
             if rank == 0:
@@ -67,18 +67,6 @@ class MHSSubstepper(ABC):
     def do_substepped_timestep(self):
         pass
 
-    def cap_timestep(self, p):
-        tracks = p.source.path.get_track_interval(p.time, p.time + p.dt.value)
-        max_t1 = tracks[0].t1
-        for track in tracks:
-            if track.type is not(TrackType.PRINTING):
-                break
-            else:
-                max_t1 = track.t1
-        max_dt = max_t1 - p.time
-        if (max_dt - p.dt.value) < 1e-9:
-            p.set_dt(max_dt)
-    
     @abstractmethod
     def compile_forms(self):
         pass
@@ -270,7 +258,7 @@ class MHSSubstepper(ABC):
     def prepare_micro_step(self):
         self.micro_iter += 1
         for p in self.fplist:
-            self.cap_timestep(p)
+            p.cap_timestep()
 
     def micro_pre_iterate(self):
         pf = self.pf

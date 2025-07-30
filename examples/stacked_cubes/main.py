@@ -27,6 +27,11 @@ def get_pm(ps):
                                 #shift=np.array([0.0, hr/2, 0.0]),
                                 )
 
+def get_max_timesteps(params):
+    mt = params.get("max_timesteps", 1e9)
+    mt = mt if mt >= 0 else 1e9
+    return mt
+
 def get_gamma_coeffs(p):
     el_size = p.input_parameters["fine_el_size"]
     k = p.materials[-1].k.Ys.mean()
@@ -99,23 +104,27 @@ def run_reference(params, descriptor=""):
     ps.set_forms()
     ps.compile_forms()
     adim_dt_print = params["substepping_parameters"]["micro_adim_dt"]
+    macro_adim_dt_print = params["substepping_parameters"]["macro_adim_dt"]
     adim_dt_cooling = params["substepping_parameters"]["cooling_adim_dt"]
     itime_step = 0
-    max_timesteps = params.get("max_timesteps", 1e9)
+    max_timesteps = get_max_timesteps(params)
     while (not(ps.is_path_over()) and itime_step < max_timesteps):
-        itime_step += 1
         track = ps.source.path.get_track(ps.time)
-        if ps.source.path.get_track(ps.time).type in [TrackType.RECOATING,
-                                                      TrackType.DWELLING]:
-            ps.set_dt(ps.dimensionalize_waiting_timestep(track, adim_dt_cooling))
-        else:
+        if ps.source.path.get_track(ps.time).type == TrackType.PRINTING:
             ps.set_dt(ps.dimensionalize_mhs_timestep(track, adim_dt_print))
+            ps.cap_timestep()
+            itime_step += ps.adimensionalize_mhs_timestep(ps.source.path.current_track) / macro_adim_dt_print
+        else:
+            ps.set_dt(ps.dimensionalize_waiting_timestep(track, adim_dt_cooling))
+            itime_step += 1
         ps.pre_iterate()
         ps.instantiate_forms()
         ps.pre_assemble()
         ps.non_linear_solve()
         ps.post_iterate()
-        if writepos:
+
+        itime_step = np.round(itime_step, 5)
+        if writepos and (itime_step % 1 == 0):
             ps.writepos(extension="vtx", extra_funcs=[ps.u_av])
     return ps
 
@@ -138,7 +147,7 @@ def run_staggered(params, descriptor=""):
     staggered_driver.set_dirichlet_coefficients(
             params["fine_el_size"], get_k(ps))
 
-    max_timesteps = params.get("max_timesteps", 1e9)
+    max_timesteps = get_max_timesteps(params)
     itime_step = 0
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
         itime_step += 1
@@ -161,7 +170,7 @@ def run_hodge(params, descriptor=""):
     substeppin_driver = MHSSemiMonolithicSubstepper(ps,)
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
 
-    max_timesteps = params.get("max_timesteps", 1e9)
+    max_timesteps = get_max_timesteps(params)
     itime_step = 0
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
         itime_step += 1
@@ -204,13 +213,12 @@ def run_staggered_chimera_rr(params, descriptor=""):
         params["fine_el_size"], get_k(ps))
 
     itime_step = 0
-    max_timesteps = params.get("max_timesteps", 1e9)
+    max_timesteps = get_max_timesteps(params)
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
         itime_step += 1
         substeppin_driver.do_timestep()
         if writepos:
-            for p in [ps, substeppin_driver.pf, pm]:
-                p.writepos(extension="vtx")
+            ps.writepos(extension="vtx")
     if is_staggered:
         if rank == 0:
             print(f"Average staggered iter: {substeppin_driver.chimera_driver.get_average_staggered_iter()}")
@@ -242,13 +250,12 @@ def run_chimera_hodge(params, descriptor=""):
     substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm)
 
     itime_step = 0
-    max_timesteps = params.get("max_timesteps", 1e9)
+    max_timesteps = get_max_timesteps(params)
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
         itime_step += 1
         substeppin_driver.do_timestep()
         if writepos:
-            for p in [ps, substeppin_driver.pf, pm]:
-                p.writepos(extension="vtx")
+            ps.writepos(extension="vtx")
     return ps
 
 if __name__ == "__main__":

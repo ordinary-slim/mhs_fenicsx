@@ -13,7 +13,7 @@ import basix.ufl
 from dolfinx import default_scalar_type
 import shutil
 from abc import ABC, abstractmethod
-from mhs_fenicsx import gcode
+from mhs_fenicsx.gcode import TrackType
 from mhs_fenicsx.problem.helpers import *
 from mhs_fenicsx.problem.heatsource import *
 from mhs_fenicsx.problem.printer import createPrinter, DEDPrinter, LPBFPrinter
@@ -195,10 +195,6 @@ class Problem:
                                       fem.IntegralType.exterior_facet : []}
         return result
 
-    def set_dt(self, dt : float):
-        self.dt.value = dt
-        self.dt_func.x.array.fill(dt)
-
     def set_domain_speed(self, v : npt.NDArray[typing.Union[np.float32, np.float64]]):
         assert(v.size == 3)
         self.domain_speed = v
@@ -272,6 +268,22 @@ class Problem:
             if not(idx == self.current_source_term):
                 source.fem_function.x.array.fill(0.0)
 
+    def set_dt(self, dt : float):
+        self.dt.value = dt
+        self.dt_func.x.array.fill(dt)
+
+    def cap_timestep(self):
+        tracks = self.source.path.get_track_interval(self.time, self.time + self.dt.value)
+        max_t1 = tracks[0].t1
+        for track in tracks:
+            if track.type is not(TrackType.PRINTING):
+                break
+            else:
+                max_t1 = track.t1
+        max_dt = max_t1 - self.time
+        if (max_dt - self.dt.value) < 1e-9:
+            self.set_dt(max_dt)
+    
     def dimensionalize_mhs_timestep(self, track : Track, adim_dt : float):
         return float(adim_dt * self.source.R / track.speed)
 

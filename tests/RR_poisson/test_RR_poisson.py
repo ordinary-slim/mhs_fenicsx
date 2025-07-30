@@ -250,7 +250,7 @@ def test_staggered_RR_poisson_2d():
                             1.48443777,
                             0.42878955]),
             }
-    assert(driver.iter == 5)
+    assert(driver.staggered_iter == 5)
     for p in [pl, pr]:
         assert_pointwise_vals(p, points_2d[p], vals_2d[p])
 
@@ -308,7 +308,7 @@ def test_staggered_RR_poisson_3d_tetra():
                             -0.58934953]),
             }
 
-    assert(driver.iter == 4)
+    assert(driver.staggered_iter == 4)
     for p in [pl, pr]:
         assert_pointwise_vals(p, points_3d[p], vals_3d_tetra[p])
 
@@ -366,7 +366,7 @@ def test_staggered_RR_poisson_3d_hexa():
                             -0.5937708 ]),
             }
 
-    assert(driver.iter == 4)
+    assert(driver.staggered_iter == 4)
     for p in [pl, pr]:
         assert_pointwise_vals(p, points_3d[p], vals_3d_tetra[p])
 

@@ -8,11 +8,11 @@ fine_el_size      : 0.05        # mm
 coarse_el_size    : 0.4          # mm
 layer_thickness   : &layer_thickness 0.1 # mm
 hatch_spacing     : *layer_thickness
-num_layers        : 2
+num_layers        : 1
 num_buffer_layers : 4
 
 dt               : 1.0     # placeholder
-max_timesteps    : 3
+max_timesteps    : -1
 isSteady         : False
 
 source_terms :
@@ -132,11 +132,11 @@ substepping_parameters: {
   cooling_adim_dt: 1,
   max_staggered_iters: 1,
   adim_lens: {
-    back_pad : 12,
-    front_pad : 8,
-    side_pad : 10,
+    back_pad : 3,
+    front_pad : 3,
+    side_pad : 3,
     top_pad : 1,
-    bot_pad : 6,
+    bot_pad : 3,
   },
   predictor: {
     enabled :  True,

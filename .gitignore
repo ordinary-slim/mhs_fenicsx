@@ -26,3 +26,4 @@ nohup.out
 *.npz
 *.npy
 *.geo
+*.btr

@@ -99,6 +99,7 @@ substepping_parameters: {
   micro_adim_dt: 0.5,
   macro_adim_dt: 7.5,
   cooling_adim_dt: 0.5,
+  dwelling_adim_dt: 0.5,
   max_staggered_iters: 1,
   predictor: {
     enabled :  True,

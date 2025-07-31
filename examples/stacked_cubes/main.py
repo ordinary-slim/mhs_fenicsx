@@ -48,6 +48,9 @@ def write_gcode(params):
     half_len = width / 2.0
     num_hatches = np.rint(width / hatch_spacing).astype(int)
     speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
+    pre_recoating_dwell_time = params["pre_recoating_dwell_time"]
+    post_recoating_dwell_time = params["post_recoating_dwell_time"]
+    final_dwelling_time = params["final_dwelling_time"]
     gcode_lines = []
     p0, p1 = np.zeros(3), np.zeros(3)
     E = 0.0
@@ -70,13 +73,14 @@ def write_gcode(params):
             p0[mov_idx], p1[mov_idx] = mov_coord0, mov_coord1
             if ihatch==0:
                 gcode_lines.append(f"G0 X{p0[0]:g} Y{p0[1]:g} Z{z} F{speed:g}")
-                gcode_lines.append(f"G4 P0.5")
-                gcode_lines.append(f"G4 P0.5 R1")
+                gcode_lines.append(f"G4 P{pre_recoating_dwell_time}")
+                gcode_lines.append(f"G4 P{post_recoating_dwell_time} R1")
             else:
                 positionning_line = f"G0 X{p0[0]:g} Y{p0[1]:g}"
                 gcode_lines.append(positionning_line)
             printing_line = f"G1 X{p1[0]:g} Y{p1[1]:g} E{E:g}"
             gcode_lines.append(printing_line)
+    gcode_lines.append(f"G4 P{final_dwelling_time}")
 
     gcode_file = params["source_terms"][0]["path"]
     with open(gcode_file,'w') as f:
@@ -106,16 +110,21 @@ def run_reference(params, descriptor=""):
     adim_dt_print = params["substepping_parameters"]["micro_adim_dt"]
     macro_adim_dt_print = params["substepping_parameters"]["macro_adim_dt"]
     adim_dt_cooling = params["substepping_parameters"]["cooling_adim_dt"]
+    adim_dt_dwelling = params["substepping_parameters"]["dwelling_adim_dt"]
     itime_step = 0
     max_timesteps = get_max_timesteps(params)
     while (not(ps.is_path_over()) and itime_step < max_timesteps):
         track = ps.source.path.get_track(ps.time)
-        if ps.source.path.get_track(ps.time).type == TrackType.PRINTING:
+        if track.type == TrackType.PRINTING:
             ps.set_dt(ps.dimensionalize_mhs_timestep(track, adim_dt_print))
             ps.cap_timestep()
             itime_step += ps.adimensionalize_mhs_timestep(ps.source.path.current_track) / macro_adim_dt_print
         else:
-            ps.set_dt(ps.dimensionalize_waiting_timestep(track, adim_dt_cooling))
+            if track.type == TrackTrackType.COOLING:
+                adim_dt = adim_dt_cooling
+            else:
+                adim_dt = adim_dt_dwelling
+            ps.set_dt(ps.dimensionalize_waiting_timestep(track, adim_dt))
             itime_step += 1
         ps.pre_iterate()
         ps.instantiate_forms()

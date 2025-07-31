@@ -60,7 +60,11 @@ class MHSSubstepper(ABC):
             if rank == 0:
                 print("Step WITHOUT substepping STARTS...", flush=True)
             for p in self.plist:
-                p.set_dt(p.dimensionalize_waiting_timestep(track, self.params["cooling_adim_dt"]))
+                if track.type == TrackType.COOLING:
+                    adim_dt = self.params["cooling_adim_dt"]
+                else:
+                    adim_dt = self.params["dwelling_adim_dt"]
+                p.set_dt(p.dimensionalize_waiting_timestep(track, adim_dt))
             self.step_without_substepping()
 
     @abstractmethod

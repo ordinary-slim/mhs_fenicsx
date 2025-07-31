@@ -3,12 +3,15 @@ radius            : &radius 0.1       # mm
 half_radius       : &half_radius 0.05 # mm
 substrate_depth   : 1.0          # mm
 width             : 1.0          # mm
-adim_pad_width: 1 # pad width by one radius
+adim_pad_width: 3 # * radius
 fine_el_size      : 0.05        # mm
-coarse_el_size    : 0.4          # mm
-layer_thickness   : &layer_thickness 0.1 # mm
+coarse_el_size    : 0.4         # mm
+layer_thickness   : &layer_thickness 0.05 # mm
 hatch_spacing     : *layer_thickness
-num_layers        : 1
+pre_recoating_dwell_time : 9.0 # s
+post_recoating_dwell_time : 1.0 # s
+final_dwelling_time : 5.0 # s
+num_layers        : 20
 num_buffer_layers : 4
 
 dt               : 1.0     # placeholder
@@ -17,10 +20,10 @@ isSteady         : False
 
 source_terms :
   - type            : gaussian3d
-    initial_position: &p0 [-5000.0, 0.0, 0.0]   # mm
-    initial_speed   : &speed [500.0, 0.0, 0.0]  # mm / s
+    initial_position: &p0 [-5000.0, 0.0, 0.0]   # mm, placeholder
+    initial_speed   : &speed [1000.0, 0.0, 0.0]  # mm / s
     radius          : *radius
-    power           : &power 60 # W
+    power           : &power 70 # W
     path            : &path "Path.gcode"
   - type            : gaussian3d
     initial_position: *p0
@@ -29,24 +32,24 @@ source_terms :
     power           : 0.0
     path            : *path
 
-environment_temperature : &environment_temperature 25          # °C
+environment_temperature : &environment_temperature 25 # C
 bb_tree_padding         : 1.0E-08 # mm
 
-# MATERIAL PROPERTIES (units consistent with mm)
+# MATERIAL PROPERTIES (Mind the mm!)
 material_powder : {
   density        : &density_powder [[20, 2.8E-06], [1625, 3.8E-06]], # kg / mm3 
-  conductivity   : [[20, 1.7E-03], [1000, 11.5E-03], [1650, 24.0E-03], [2000, 27.5E-03]], # W / mm / K
+  conductivity   : [[20, 1.7E-03], [1000, 6.5E-03], [1650, 24.0E-03], [2000, 27.5E-03]], # (C, W / mm / K)
   specific_heat  : &specific_heat 560, # J / kg / K
   phase_change   : {
     latent_heat : &latent_heat 350.0E+03,
-    solidus_temperature   : &solidus_temperature 1600.0,  # °C
-    liquidus_temperature  : &liquidus_temperature 1650.0, # °C
+    solidus_temperature   : &solidus_temperature 1600.0,  # C
+    liquidus_temperature  : &liquidus_temperature 1650.0, # C
     melts_to              : "metal",
   }
 }
 material_metal : {
   density : &density_metal [[20, 4.42E-06], [1625, 3.8E-06]], # kg / mm3
-  conductivity : [[20, 7.7E-03], [1000, 17.5E-03], [1650, 24.0E-03], [2000, 27.5E-03]],
+  conductivity : [[20, 7.7E-03], [1000, 17.5E-03], [1650, 24.0E-03], [2000, 27.5E-03]], # (C, W / mm / K)
   specific_heat : *specific_heat,
   phase_change : {
     latent_heat : *latent_heat,
@@ -54,22 +57,26 @@ material_metal : {
     liquidus_temperature : *liquidus_temperature,
   }
 }
-convection_coeff : 1.0E-05 # W / mm2 / K
-radiation_coeff: 0.0
+smoothing_cte_phase_change : 0.25
+convection_coeff : 2.5E-05 # W / mm2 / K
+# radiation_coeff -> emissivity * steffan_boltzman
+# steffan_boltzman = 5.67E-8 W / m2 / K4 = 5.67E-14 W / mm2 / K4
+# emissivity = 0.3
+radiation_coeff: 2.835E-14 # W / mm2 / K4
 # LINEAR SOLVER OPTIONS
 petsc_opts_micro: {
   "ksp_error_if_not_converged" : "true",
   "ksp_type" : "gmres",
-  "ksp_atol" : 1e-13,
-  "ksp_rtol" : 1e-13,
-  "pc_type" : "jacobi",
+  "ksp_atol" : 1e-10,
+  "ksp_rtol" : 1e-10,
+  "pc_type" : "hypre",
 }
 petsc_opts_macro: {
   "ksp_error_if_not_converged" : "true",
   "ksp_type" : "gmres",
-  "ksp_atol" : 1e-13,
-  "ksp_rtol" : 1e-13,
-  "pc_type" : "jacobi",
+  "ksp_atol" : 1e-10,
+  "ksp_rtol" : 1e-10,
+  "pc_type" : "hypre",
   "snes_linesearch_type" : "basic",
   #"pc_type" : "lu",
   #"pc_factor_mat_solver_type" : "superlu_dist",
@@ -77,9 +84,9 @@ petsc_opts_macro: {
 petsc_opts_moving: {
   "ksp_error_if_not_converged" : "true",
   "ksp_type" : "gmres",
-  "ksp_atol" : 1e-13,
-  "ksp_rtol" : 1e-13,
-  "pc_type" : "jacobi",
+  "ksp_atol" : 1e-10,
+  "ksp_rtol" : 1e-10,
+  "pc_type" : "hypre",
   "snes_linesearch_type" : "basic",
   #"pc_type" : "lu",
   #"pc_factor_mat_solver_type" : "superlu_dist",
@@ -129,7 +136,8 @@ petsc_opts_macro_chimera: {
 substepping_parameters: {
   micro_adim_dt: 0.5,
   macro_adim_dt: 10.0,
-  cooling_adim_dt: 1,
+  dwelling_adim_dt : 0.5,
+  cooling_adim_dt: 1.0,
   max_staggered_iters: 1,
   adim_lens: {
     back_pad : 3,

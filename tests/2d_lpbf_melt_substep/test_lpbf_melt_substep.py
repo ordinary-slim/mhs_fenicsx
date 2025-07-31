@@ -73,14 +73,14 @@ def run_reference(params, writepos=True):
 
     ps.set_forms()
     ps.compile_forms()
-    adim_dt_cooling = params["substepping_parameters"]["cooling_adim_dt"]
+    adim_dt_dwelling = params["substepping_parameters"]["dwelling_adim_dt"]
     itime_step = 0
     while not(ps.is_path_over()):
         itime_step += 1
         track = ps.source.path.get_track(ps.time)
         if ps.source.path.get_track(ps.time).type in [TrackType.RECOATING,
                                                       TrackType.DWELLING]:
-            ps.set_dt(adim_dt_cooling*(track.t1 - track.t0))
+            ps.set_dt(adim_dt_dwelling*(track.t1 - track.t0))
         else:
             ps.set_dt(print_dt)
         ps.pre_iterate()

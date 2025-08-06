@@ -168,7 +168,7 @@ class MHSSubstepper(ABC):
             adim_bot_pad = 3
         back_pad = adim_back_pad*hs_radius
         front_pad = adim_front_pad*hs_radius
-        side_pad = adim_side_pad*hs_radius
+        width = 2*adim_side_pad*hs_radius
         top_pad = adim_top_pad * hs_radius
         bot_pad = adim_bot_pad * hs_radius
         subproblem_els_mask = np.zeros((ps.cell_map.size_local + ps.cell_map.num_ghosts), dtype=np.bool_)
@@ -178,7 +178,7 @@ class MHSSubstepper(ABC):
             direction = track.get_direction()
             p0 -= direction*back_pad
             p1 += direction*front_pad
-            obb = OBB(p0, p1, width=side_pad, height=top_pad, depth=bot_pad, dim=cdim,
+            obb = OBB(p0, p1, width=width, height=top_pad, depth=bot_pad, dim=cdim,
                                            shrink=False)
             obb_mesh = obb.get_dolfinx_mesh()
             #subproblem_els = mhs_fenicsx.geometry.mesh_collision(ps.domain,obb_mesh,bb_tree_mesh_big=ps.bb_tree)

@@ -26,6 +26,16 @@ def get_adim_back_len(fine_adim_dt : float = 0.5, adim_dt : float = 2):
     ''' Back length of moving domain'''
     return 8
 
+def get_gamma_coeffs(p):
+    els_per_radius1 = p.input_parameters["moving_domain_params"]["els_per_radius"]
+    els_per_radius2 = p.input_parameters["els_per_radius"]
+    els_per_radius = (els_per_radius1 + els_per_radius2) / 2.0
+    radius = p.source.R
+    el_size = radius / els_per_radius
+    k = p.materials[-1].k.Ys.mean()
+    a = 8.0
+    return 1.0 / a, 2 * k / (a * el_size)
+
 
 def define_substepper(domain, params, descriptor):
     params["petsc_opts"] = params["petsc_opts_macro"]
@@ -38,10 +48,20 @@ def define_substepper(domain, params, descriptor):
     for p in [ps, pm]:
         p.set_initial_condition(params["environment_temperature"])
 
+    is_staggered = (params["substepping_parameters"]["chimera_driver"]["type"] == "staggered")
+    if is_staggered:
+        gc1, gc2 = get_gamma_coeffs(ps)
+    else:
+        gc1, gc2 = 1.0, 1.0
+
+    params["substepping_parameters"]["chimera_driver"]["gamma_coeff1"] = gc1
+    params["substepping_parameters"]["chimera_driver"]["gamma_coeff2"] = gc2
+
     substeppin_driver = MHSStaggeredChimeraSubstepper(
             StaggeredInterpRRDriver,
             ps, pm,
             staggered_relaxation_factors=[1.0, 1.0],)
+
     staggered_driver = substeppin_driver.staggered_driver
     staggered_driver.set_dirichlet_coefficients(
             get_h(ps, params["els_per_radius"]), get_k(ps))
@@ -78,22 +98,17 @@ def run_staggered_chimera_rr(domain, params, descriptor="",
                 if "depth" in hs_params:
                     source.depth = hs_params["depth"]
                 source.R = hs_params["radius"]
+                p.smoothing_cte_phase_change.value = float(params["smoothing_cte_phase_change"])
 
-    S = ps.smoothing_cte_phase_change.value.copy()
     itime_step = 0
     max_timesteps = params["max_timesteps"]
     while ((itime_step < max_timesteps) and not (ps.is_path_over())):
         itime_step += 1
         #print(f"{rank}: id of problem: {id(ps)} id of source: {id(ps.source)}, id of path: {id(ps.source.path)}, speed of first track: {ps.source.path.tracks[0].speed}", flush=True)
         substepper.do_timestep()
-        for p in [ps, pf, pm]:
-            if itime_step == 1:
-                p.smoothing_cte_phase_change.value = S / 2.0
-            else:
-                p.smoothing_cte_phase_change.value = S
-        writepos_every_iter = True
         if writepos_every_iter:
             ps.writepos(extension="vtx")
+            pm.writepos(extension="vtx")
     if not (writepos_every_iter):
         ps.writepos(extension="vtx")
     return ps, pf, pm
@@ -137,9 +152,10 @@ def loop(params, writepos_every_iter=False):
     params["materials"] = materials
     substepper = define_substepper(domain, params, "looping")
 
-    def iterate(absorptivity, depth_factor, density_factor, latent_heat_factor, case=0, writepos_every_iter=False):
+    def iterate(smoothing_cte_phase_change, absorptivity1, absorptivity2, depth_factor, case=0, writepos_every_iter=False):
         for hs_params in params["source_terms"]:
             assert ("power" in hs_params)
+            absorptivity = absorptivity1 if case == 0 else absorptivity2
             hs_params["power"] = 179.2 * absorptivity if hs_params["power"] > 0.0 else 0.0
             if "depth" in hs_params:
                 hs_params["depth"] = params["radius"] * depth_factor
@@ -147,54 +163,56 @@ def loop(params, writepos_every_iter=False):
         #Tl = 1330 + (1370 - 1330) * fliquidus_tem
         #params["material_in625"]["phase_change"]["liquidus_temperature"] = Tl
         #materials[0].T_l.value = Tl
+        params["smoothing_cte_phase_change"] = smoothing_cte_phase_change
         if case == 0:
             speed = 0.8
         else:
             speed = 1.2
         assert ("initial_speed" in params["source_terms"][0])
         params["source_terms"][0]["initial_speed"][0] = speed
-        #
-        assert ("density" in params["material_in625"])
-        rho = (1.0 + density_factor)*8.44E+03
-        params["material_in625"]["density"] = rho
-        materials[0].rho.value = rho
-        #
-        assert ("latent_heat" in params["material_in625"]["phase_change"])
-        L = (1.0 + latent_heat_factor)*280.0E+03
-        params["material_in625"]["phase_change"]["latent_heat"] = L
-        materials[0].L.value = L
 
-        descriptor = f"nu{absorptivity}-d{depth_factor}-rho{rho}-L{L}".replace(".", "_")
+        descriptor = f"V{speed}-S{smoothing_cte_phase_change}-nu{absorptivity}-d{depth_factor}".replace(".", "_")
         return get_meltpool_dims(domain, params, descriptor,
                                  substepper=substepper,
                                  writepos_every_iter=writepos_every_iter)
 
-    #target0 = np.array([359.0, 66.0, 36.0])
+    target0 = np.array([359.0, 66.0, 36.0])
     target1 = np.array([370.0, 56.5, 29.0])
 
     def residuals(params):
-        #dims0 = iterate(*params, case=0, writepos_every_iter=writepos_every_iter)
-        #res0 = (dims0 - target0) / target0
-        #if rank == 0:
-        #    print(f"target: L = {target0[0]}, W = {target0[1]}, T = {target0[2]}",
-        #          flush=True)
-        #    print(f"res0 = {res0}", flush=True)
+        dims0 = iterate(*params, case=0, writepos_every_iter=writepos_every_iter)
+        res0 = (dims0 - target0) / target0
+        if rank == 0:
+            print(f"target: L = {target0[0]}, W = {target0[1]}, T = {target0[2]}",
+                  flush=True)
+            print(f"res0 = {res0}", flush=True)
         dims1 = iterate(*params, case=1, writepos_every_iter=writepos_every_iter)
         res1 = (dims1 - target1) / target1
         if rank == 0:
             print(f"target: L = {target1[0]}, W = {target1[1]}, T = {target1[2]}",
                   flush=True)
             print(f"res1 = {res1}", flush=True)
-        #return np.hstack((res0, res1))
-        return res1
+        return np.hstack((res0, res1))
 
     #initial_guess = [0.22036165690870016, 0.34526776845021717, 0.3143414300451578, 0.02]
     #initial_guess = [0.2, 0.8, 1.0, 0.5]
-    initial_guess = [0.77692017, 0.95789302, 0.0, 0.0]
-    result = least_squares(residuals, initial_guess,
-                           verbose=2, bounds=([0.0, 1e-3, -0.2, -0.4],
-                                              [1.0, 2.0, +0.2, +0.4]),
-                           x_scale=[1.0, 1.0, 0.01, 0.01],
+    #S, nu1, nu2, depth_factor
+    #initial_guess = [0.3, 0.3, 0.3, 0.3]
+    initial_guess = [0.23336689, 0.33574148, 0.37668996, 0.32177079]
+    bounds = ([0.1, 0.0, 0.0, 0.0],
+              [2.0, 1.0, 1.0, 1.0])
+    close_to_sol = True
+    if close_to_sol:
+        method = 'lm'
+        bounds = ([-np.inf, -np.inf, -np.inf, -np.inf,],
+                  [+np.inf, +np.inf, +np.inf, +np.inf,])
+    else:
+        method = 'trf'
+    result = least_squares(residuals,
+                           initial_guess,
+                           verbose=2,
+                           method=method,
+                           bounds=bounds,
                            )
     if rank == 0:
         print("Optimized parameters:", result.x)

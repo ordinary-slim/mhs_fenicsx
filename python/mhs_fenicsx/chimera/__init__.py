@@ -21,23 +21,23 @@ def interpolate_solution_to_inactive(p:Problem, p_ext:Problem, cells1 = None, fi
 
 
 def shape_moving_problem(pm: Problem):
-    if not(pm.input_parameters["moving_domain_params"]["shape"]):
+    mdparams = pm.input_parameters["moving_domain_params"]
+    if not(mdparams["shape"]):
         pm.reset_activation(finalize=False)
     else:
         next_track = pm.source.path.get_track(pm.time)
         adim_dt = pm.adimensionalize_mhs_timestep(next_track)
-        mdparams = pm.input_parameters["moving_domain_params"]
         radius = pm.source.R
         center = np.array(pm.source.x)
         e = next_track.get_direction()
         back_len = pm.get_adim_back_len(0.5, adim_dt) * radius
         front_len = mdparams["adim_front_len"] * radius
-        side_len = mdparams["adim_side_len"] * radius
+        width = 2 * mdparams["adim_side_len"] * radius
         bot_len = mdparams["adim_bot_len"] * radius
         top_len = mdparams["adim_top_len"] * radius
         p0 = center - back_len * e
         p1 = center + front_len * e
-        obb = OBB(p0, p1, side_len, top_len, bot_len, pm.dim)
+        obb = OBB(p0, p1, width, top_len, bot_len, pm.dim)
         colliding_els = obb.broad_collision(pm.bb_tree)
         pm.set_activation(colliding_els, finalize=False)
 
@@ -99,29 +99,31 @@ def mesh_around_hs(hs:HeatSource,
 
     el_size = hs.R / float(els_per_radius)
 
-    mesh_bounds = [
-            center_of_mesh[0]-back_length,
-            center_of_mesh[1]-side_length,
-            center_of_mesh[2]-bot_length,
-            center_of_mesh[0]+front_length,
-            center_of_mesh[1]+side_length,
-            center_of_mesh[2]+top_length,
-            ]
+    lens = np.array([-back_length,
+                     -side_length,
+                     -bot_length,
+                     +front_length,
+                     +side_length,
+                     +top_length,])
+
+    for symmetry in symmetries:
+        axis, side = symmetry[0], symmetry[1]
+        # We are keeping side `side`and discarding the other side
+        idx_bound = axis + (-side > 0) * 3
+        lens[idx_bound] = 0.0
+
+    mesh_bounds = np.hstack((center_of_mesh, center_of_mesh)) + lens
+
     if shift is not None:
         assert(shift.size == 3)
         for i in range(3):
             mesh_bounds[i]   += shift[i]
             mesh_bounds[i+3] += shift[i]
-    nx = np.rint((back_length+front_length)/el_size).astype(int)
-    ny = np.rint(side_length*2/el_size).astype(int)
-    nz = np.rint((top_length+bot_length)/el_size).astype(int)
-    nels = [nx, ny, nz]
 
-    for symmetry in symmetries:
-        axis, side = symmetry[0], symmetry[1]
-        nels[axis] /= 2
-        nels[axis] = np.ceil(nels[axis]).astype(int)
-        mesh_bounds[axis+(1-side)*3] = center_of_mesh[axis]
+    nels = [-1] * 3
+    for axis in range(3):
+        len = abs(lens[axis]) + abs(lens[axis+3])
+        nels[axis] = np.rint(len/el_size).astype(int)
 
     if dim==1:
         return dolfinx.mesh.create_interval(MPI.COMM_WORLD,

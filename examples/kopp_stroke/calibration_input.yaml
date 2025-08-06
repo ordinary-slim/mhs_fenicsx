@@ -10,11 +10,11 @@ coarsening_factor : 1.5
 source_terms :
   - type : penetrating_gaussian
     initial_position : &p0 [-5.0, 0.0, 0.0]
-    initial_speed : &speed [1.2, 0.0, 0]
+    initial_speed : &speed [0.8, 0.0, 0]
     radius : *radius
-    power : &power 57.344
+    power : &power 64.2
     path: &path "Path.gcode"
-    depth : &depth 0.0119E-03
+    depth : &depth 0.01364E-03
   - type : lumped
     initial_position : *p0
     initial_speed : *speed
@@ -44,22 +44,40 @@ material_in625 : {
 }
 convection_coeff : 0.0
 radiation_coeff: 0.0
-smoothing_cte_phase_change : 0.5
+smoothing_cte_phase_change : 0.23336689
 environment_temperature : &environment_temperature 25
 # END_ESSENTIAL
 petsc_opts_micro: {
   "ksp_error_if_not_converged" : "true",
   "ksp_type" : "gmres",
-  "ksp_atol" : 1e-13,
-  "ksp_rtol" : 1e-13,
-  "pc_type" : "jacobi",
+  "ksp_atol" : 1e-10,
+  "ksp_rtol" : 1e-10,
+  "pc_type" : "hypre",
+  "snes_linesearch_type" : "basic",
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
 }
 petsc_opts_macro: {
   "ksp_error_if_not_converged" : "true",
   "ksp_type" : "gmres",
-  "ksp_atol" : 1e-13,
-  "ksp_rtol" : 1e-13,
-  "pc_type" : "jacobi",
+  "ksp_atol" : 1e-10,
+  "ksp_rtol" : 1e-10,
+  "pc_type" : "hypre",
+  "snes_linesearch_type" : "basic",
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
+}
+petsc_opts_moving: {
+  "ksp_error_if_not_converged" : "true",
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-10,
+  "ksp_rtol" : 1e-10,
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
+  "pc_type" : "hypre",
+  "snes_linesearch_type" : "basic",
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
 }
 petsc_opts_mono_robin: {
   #"snes_max_it" : 30,
@@ -71,6 +89,8 @@ petsc_opts_mono_robin: {
   "ksp_atol" : 1e-13,
   "ksp_rtol" : 1e-13,
   "pc_type" : "fieldsplit",
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
 }
 petsc_opts_macro_chimera: {
   "snes_max_it" : 30,
@@ -82,6 +102,8 @@ petsc_opts_macro_chimera: {
   "ksp_atol" : 1e-13,
   "ksp_rtol" : 1e-13,
   "pc_type" : "fieldsplit",
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
 }
 
 max_timesteps: 8
@@ -98,16 +120,16 @@ max_nr_iters: 30
 max_ls_iters: 5
 
 substepping_parameters: {
-  micro_adim_dt: 2.0,
+  micro_adim_dt: 1.0,
   macro_adim_dt: 6.0,
   cooling_adim_dt: 1,
   max_staggered_iters: 1,
   adim_lens: {
     back_pad : 12,
-    front_pad : 8,
-    side_pad : 11,
-    top_pad : 1,
-    bot_pad : 6,
+    front_pad : 6,
+    side_pad : 6,
+    top_pad : 0.5,
+    bot_pad : 5,
   },
   predictor: {
     enabled :  True,
@@ -117,26 +139,30 @@ substepping_parameters: {
   mono_robin_gamma_quadrature_degree : 4,
   chimera_always_on: True,
   chimera_driver: {
-    type: "monolithic",
+    type: "staggered",
     gamma_coeff1 : 1.0,
     gamma_coeff2 : 1.0,
   },
   chimera_steadiness_workflow: {
     enabled: True,
     adim_dt_increment: 0.5,
-    max_adim_dt: &max_adim_dt 2.0,
+    max_adim_dt: &max_adim_dt 1.0,
     threshold : 0.05,
   },
 }
 
 moving_domain_params : {
   shape : True,
-  els_per_radius : 4.0,
+  els_per_radius : 8.0,
   max_adim_dt : *max_adim_dt,
   adim_front_len : 4,
-  adim_side_len : 9,
+  adim_side_len : 4,
   adim_bot_len : 3,
   adim_top_len : 0.0,
+}
+
+gamma_quadrature: {
+  degree: 4,
 }
 
 carry_on_non_convergence: true

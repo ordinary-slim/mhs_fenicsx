@@ -119,7 +119,6 @@ def run_hodge(params, writepos=True, descriptor=""):
     return ps
 
 def run_staggered_chimera_rr(params, writepos=True, descriptor=""):
-    initial_relaxation_factors=
     big_mesh = get_mesh(params)
 
     macro_params = params.copy()

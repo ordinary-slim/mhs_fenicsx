@@ -209,3 +209,16 @@ def assert_gamma_tags(gamma_tags:typing.List[int], p:'Problem'):
         if not(all_tags_found):
             break
     assert(all_tags_found)
+
+def skip_assembly(x, last_x, dx):
+    skip = False
+    if last_x is not None:
+        dx._copy(x)
+        dx.axpy(-1.0, last_x)
+        if dx.norm() < 1e-12:
+            skip = True
+        last_x._copy(x)
+    else:
+        dx, last_x = x.copy(), x.copy()
+    return skip
+

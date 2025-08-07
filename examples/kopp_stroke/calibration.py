@@ -113,7 +113,6 @@ def run_staggered_chimera_rr(domain, params, descriptor="",
         ps.writepos(extension="vtx")
     return ps, pf, pm
 
-
 def get_meltpool_dims(domain, params, descriptor, writepos_every_iter=False, remove=True, substepper=None):
     ps, pf, pm = run_staggered_chimera_rr(domain, params, descriptor,
                                           writepos_every_iter=writepos_every_iter,
@@ -176,22 +175,37 @@ def loop(params, writepos_every_iter=False):
                                  substepper=substepper,
                                  writepos_every_iter=writepos_every_iter)
 
-    target0 = np.array([359.0, 66.0, 36.0])
-    target1 = np.array([370.0, 56.5, 29.0])
+    target = {0 : np.array([359.0, 66.0, 36.0]),
+              1 : np.array([370.0, 56.5, 29.0])}
+
+    cache = {case_idx : {"params" : None, "results" : None} for case_idx in range(2)}
+
+    def get_residual_case(params, case):
+        # WARNING: This is a hacky
+        if case == 0:
+            current_params = (params[0], params[1], params[3])
+        else:
+            current_params = (params[0], params[2], params[3])
+
+        if cache[case]["params"] != current_params:
+            dims = iterate(*params, case=case, writepos_every_iter=writepos_every_iter)
+            cache[case]["params"] = current_params
+            cache[case]["results"] = dims
+        else:
+            dims = cache[case]["results"]
+        target = target[case]
+        res = (dims - target) / target
+
+        if rank == 0:
+            print(f"target: L = {target[0]}, W = {target[1]}, T = {target[2]}",
+                  flush=True)
+            print(f"res = {res}", flush=True)
+
+        return res
 
     def residuals(params):
-        dims0 = iterate(*params, case=0, writepos_every_iter=writepos_every_iter)
-        res0 = (dims0 - target0) / target0
-        if rank == 0:
-            print(f"target: L = {target0[0]}, W = {target0[1]}, T = {target0[2]}",
-                  flush=True)
-            print(f"res0 = {res0}", flush=True)
-        dims1 = iterate(*params, case=1, writepos_every_iter=writepos_every_iter)
-        res1 = (dims1 - target1) / target1
-        if rank == 0:
-            print(f"target: L = {target1[0]}, W = {target1[1]}, T = {target1[2]}",
-                  flush=True)
-            print(f"res1 = {res1}", flush=True)
+        res0 = get_residual_case(params, 0)
+        res1 = get_residual_case(params, 1)
         return np.hstack((res0, res1))
 
     #initial_guess = [0.22036165690870016, 0.34526776845021717, 0.3143414300451578, 0.02]

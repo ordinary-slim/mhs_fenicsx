@@ -78,6 +78,8 @@ petsc_opts_macro: {
   "ksp_rtol" : 1e-10,
   "pc_type" : "hypre",
   "snes_linesearch_type" : "basic",
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
   #"pc_type" : "lu",
   #"pc_factor_mat_solver_type" : "superlu_dist",
 }
@@ -87,9 +89,9 @@ petsc_opts_moving: {
   "ksp_atol" : 1e-10,
   "ksp_rtol" : 1e-10,
   "pc_type" : "hypre",
-  "snes_linesearch_type" : "basic",
-  #"pc_type" : "lu",
-  #"pc_factor_mat_solver_type" : "superlu_dist",
+  #"snes_linesearch_type" : "basic",
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
 }
 #"newtonls" "newtontr" "newtontrdc" "python" "nrichardson" "ksponly"
 #"ksptransposeonly" "vinewtonrsls" "vinewtonssls" "ngmres" "qn" "shell" "ngs"
@@ -141,8 +143,8 @@ substepping_parameters: {
   max_staggered_iters: 1,
   adim_lens: {
     back_pad : 3,
-    front_pad : 3,
-    side_pad : 3,
+    front_pad : 4,
+    side_pad : 4,
     top_pad : 1,
     bot_pad : 3,
   },
@@ -171,7 +173,7 @@ moving_domain_params : {
   els_per_radius : 2,
   max_adim_dt : *max_adim_dt,
   adim_front_len : 3,
-  adim_side_len : 6,
+  adim_side_len : 3,
   adim_bot_len : 2.5,
   adim_top_len : 0.0,
 }

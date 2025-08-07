@@ -3,7 +3,7 @@ from dolfinx import fem, la
 import basix.ufl
 from mhs_fenicsx_cpp import cellwise_determine_point_ownership, scatter_cell_integration_data_po, \
                             MonolithicRobinRobinAssembler64, interpolate_dg0_at_facets
-from mhs_fenicsx.problem.helpers import get_identity_maps
+from mhs_fenicsx.problem.helpers import get_identity_maps, skip_assembly
 import numpy as np
 from petsc4py import PETSc
 import multiphenicsx, multiphenicsx.fem.petsc
@@ -18,18 +18,6 @@ rank = comm.Get_rank()
 Assembly-based domain decomposition Robin-Robin drivers.
 Both monolithic and staggered.
 '''
-
-def skip_assembly(x, last_x, dx):
-    skip = False
-    if last_x is not None:
-        dx._copy(x)
-        dx.axpy(-1.0, last_x)
-        if dx.norm() < 1e-12:
-            skip = True
-        last_x._copy(x)
-    else:
-        dx, last_x = x.copy(), x.copy()
-    return skip
 
 class DomainDecompositionDriver:
     ''' Base class for domain decomposition drivers. '''

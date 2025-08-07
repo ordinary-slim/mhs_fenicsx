@@ -24,7 +24,7 @@ def get_pm(ps):
     return build_moving_problem(ps,
                                 params["moving_domain_params"]["els_per_radius"],
                                 #custom_get_adim_back_len=get_adim_back_len,
-                                #shift=np.array([0.0, hr/2, 0.0]),
+                                shift=np.array([0.0, hr/2, 0.0]),
                                 )
 
 def get_max_timesteps(params):

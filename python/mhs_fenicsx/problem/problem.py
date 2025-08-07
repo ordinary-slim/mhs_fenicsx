@@ -891,7 +891,7 @@ class Problem:
                     sol_sub_vector_local[:] = x_wrapper
 
     def _destroy(self):
-        for attr in ["x", "A", "L", "snes"]:
+        for attr in ["x", "A", "L", "_obj_vec"]:
             try:
                 self.__dict__[attr].destroy()
             except KeyError:

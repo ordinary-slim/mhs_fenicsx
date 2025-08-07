@@ -52,21 +52,37 @@ environment_temperature : &environment_temperature 25
 petsc_opts_micro: {
   "ksp_error_if_not_converged" : "true",
   "ksp_type" : "gmres",
-  "ksp_atol" : 1e-13,
-  "ksp_rtol" : 1e-13,
+  "ksp_atol" : 1e-08,
+  "ksp_rtol" : 1e-08,
   "pc_type" : "jacobi",
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
 }
 petsc_opts_macro: {
   "ksp_error_if_not_converged" : "true",
   "ksp_type" : "gmres",
-  "ksp_atol" : 1e-13,
-  "ksp_rtol" : 1e-13,
+  "ksp_atol" : 1e-08,
+  "ksp_rtol" : 1e-08,
   "pc_type" : "jacobi",
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
+}
+petsc_opts_moving: {
+  "ksp_error_if_not_converged" : "true",
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-10,
+  "ksp_rtol" : 1e-10,
+  "pc_type" : "hypre",
+  "snes_linesearch_type" : "basic",
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
 }
 petsc_opts_mono_robin: {
   "snes_max_it" : 30,
   "ksp_atol" : 1e-09,
   "ksp_rtol" : 1e-09,
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
   #"snes_stol" : 1e-3,
   "snes_linesearch_max_it" : 15,
   "ksp_error_if_not_converged" : "true",
@@ -77,17 +93,17 @@ petsc_opts_mono_robin: {
   "fieldsplit_0_pc_type" : "lu",
   "fieldsplit_0_pc_factor_mat_solver_type" : "superlu_dist",
   "fieldsplit_1_pc_type" : "lu",
-  "fieldsplit_1_pc_factor_mat_solver_type" : "superlu_dist"
+  "fieldsplit_1_pc_factor_mat_solver_type" : "superlu_dist",
 }
 petsc_opts_macro_chimera: {
   "snes_max_it" : 30,
   "ksp_atol" : 1e-09,
   "ksp_rtol" : 1e-09,
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
   "snes_linesearch_max_it" : 15,
   "ksp_error_if_not_converged" : "true",
   "ksp_type" : "gmres",
-  "ksp_atol" : 1e-13,
-  "ksp_rtol" : 1e-13,
   "pc_type" : "fieldsplit",
 }
 

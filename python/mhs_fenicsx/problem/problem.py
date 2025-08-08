@@ -44,9 +44,6 @@ class Problem:
                                                            self.domain.basix_cell(),
                                                            0,
                                                            shape=(self.dim,)))
-        # Material parameters
-        self.define_materials(parameters)
-
         for dim in [self.dim, self.dim-1]:
             self.domain.topology.create_entities(dim)
         self.domain.topology.create_connectivity(self.dim,self.dim)
@@ -73,6 +70,9 @@ class Problem:
         self.grad_u = fem.Function(self.dg0_vec,name="grad")
         self.is_grad_computed = False
         self.dirichlet_bcs = []
+
+        # Material parameters
+        self.define_materials(parameters)
 
         # BCs / Interface
         self.ext_nodal_activation : dict['Problem', npt.NDArray[np.bool_]] = {}
@@ -233,6 +233,8 @@ class Problem:
                     self.materials.append(material)
         self.material_library = {mat.name : mat for mat in self.materials}
         self.material_library[None] = None
+        self.absorptivity = {mat : mat.nu.ufl(self.u, extrapolate=False) for mat in self.materials}
+        # Phase change and melting
         for material in self.materials:
             self.phase_change = (self.phase_change or material.phase_change)
             self.melting = (self.melting or (material.melts_to is not None))
@@ -715,8 +717,8 @@ class Problem:
             if self.rhs is not None:
                 self.source.fem_function.interpolate(self.rhs)
 
-            l_ufl.append(mat.nu.ufl(u, extrapolate=False) * \
-                self.sources[self.current_source_term].fem_function*v*dx(itag))
+            l_ufl.append(self.absorptivity[mat] * \
+                self.sources[self.current_source_term].fem_function * v * dx(itag))
 
             # Time derivative
             time_derivative_coefficient = mat.rho.ufl(u) * mat.cp.ufl(u)

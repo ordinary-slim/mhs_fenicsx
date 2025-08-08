@@ -95,6 +95,15 @@ def set_problem(p, params, problem_name):
             source.depth = hs_params["depth"]
         source.R = hs_params["radius"]
         p.smoothing_cte_phase_change.value = float(params["smoothing_cte_phase_change"])
+        # Absorptivity
+        absorptivity_lov = params["material_in625"]["absorptivity"]
+        T0, nu0 = absorptivity_lov[0][0], absorptivity_lov[0][1]
+        T1, nu1 = absorptivity_lov[1][0], absorptivity_lov[1][1]
+        nu = next(iter(p.absorptivity.values()))
+        nu.ufl_operands[0].ufl_operands[1]._value = T1
+        nu.ufl_operands[1].value = nu1
+        nu.ufl_operands[2].ufl_operands[0]._value = nu0
+        nu.ufl_operands[2].ufl_operands[1].ufl_operands[0]._value = (nu1 - nu0) / (T1 - T0)
 
 def run_simulation(domain, params, descriptor="",
                    writepos_every_iter=True, substepper=None):
@@ -176,36 +185,53 @@ def loop(params, writepos_every_iter=False):
     params["materials"] = materials
     substepper = define_substepper(domain, params, "looping")
 
-    def iterate(smoothing_cte_phase_change, absorptivity1, absorptivity2, depth_factor, case=0, writepos_every_iter=False):
-        for hs_params in params["source_terms"]:
-            assert ("power" in hs_params)
-            absorptivity = absorptivity1 if case == 0 else absorptivity2
-            hs_params["power"] = 179.2 * absorptivity if hs_params["power"] > 0.0 else 0.0
-            if "depth" in hs_params:
-                hs_params["depth"] = params["radius"] * depth_factor
-        #assert ("liquidus_temperature" in params["material_in625"]["phase_change"])
-        #Tl = 1330 + (1370 - 1330) * fliquidus_tem
-        #params["material_in625"]["phase_change"]["liquidus_temperature"] = Tl
-        #materials[0].T_l.value = Tl
-        params["smoothing_cte_phase_change"] = smoothing_cte_phase_change
+    def set_speed(case):
         if case == 0:
             speed = 0.8
         else:
             speed = 1.2
         assert ("initial_speed" in params["source_terms"][0])
         params["source_terms"][0]["initial_speed"][0] = speed
+        return speed
 
-        descriptor = f"V{speed}-S{smoothing_cte_phase_change}-nu{absorptivity}-d{depth_factor}".replace(".", "_")
+    def set_params_Snu0nu1depth(S, nu1, nu2, depth_factor):
+        for hs_params in params["source_terms"]:
+            assert ("power" in hs_params)
+            absorptivity = absorptivity1 if case == 0 else absorptivity2
+            hs_params["power"] = 179.2 * absorptivity if hs_params["power"] > 0.0 else 0.0
+            if "depth" in hs_params:
+                hs_params["depth"] = params["radius"] * depth_factor
+        params["smoothing_cte_phase_change"] = smoothing_cte_phase_change
+        return f"S{smoothing_cte_phase_change}-nu{absorptivity}-d{depth_factor}"
+
+    def set_params_absorptivity(nu0, T1, nu1):
+        nu_params = params["material_in625"]["absorptivity"]
+        nu_params[0][1] = nu0
+        nu_params[1][0] = T1
+        nu_params[1][1] = nu1
+        return f"nu0{nu0}-T1{T1}-nu1{nu1}"
+
+    def wrapper_get_meltpool_dims(case, descriptor, writepos_every_iter):
+        speed = set_speed(case)
+        descriptor = (f"V{speed}-" + descriptor).replace(".", "_")
         return get_meltpool_dims(domain, params, descriptor,
                                  substepper=substepper,
                                  writepos_every_iter=writepos_every_iter)
+
+    def iterate_Snu0nu1depth(smoothing_cte_phase_change, absorptivity1, absorptivity2, depth_factor, case=0, writepos_every_iter=False):
+        descriptor = set_params_Snu0nu1depth(smoothing_cte_phase_change, absorptivity1, absorptivity2, depth_factor, case)
+        return wrapper_get_meltpool_dims(case, descriptor, writepos_every_iter)
+
+    def iterate_absorptivity(nu0, T1, nu1, case=0, writepos_every_iter=False):
+        descriptor = set_params_absorptivity(nu0, T1, nu1, case)
+        return wrapper_get_meltpool_dims(case, descriptor, writepos_every_iter)
 
     target = {0 : np.array([359.0, 66.0, 36.0]),
               1 : np.array([370.0, 56.5, 29.0])}
 
     cache = {case_idx : {} for case_idx in range(2)}
 
-    def get_residual_case(params, case):
+    def get_residual_case_Snu0nu1depth(params, case):
         # WARNING: This is a hacky
         if case == 0:
             current_params = (params[0], params[1], params[3])
@@ -213,7 +239,7 @@ def loop(params, writepos_every_iter=False):
             current_params = (params[0], params[2], params[3])
 
         if current_params not in cache[case]:
-            dims = iterate(*params, case=case, writepos_every_iter=writepos_every_iter)
+            dims = iterate_Snu0nu1depth(*params, case=case, writepos_every_iter=writepos_every_iter)
             cache[case][current_params] = dims
         else:
             dims = cache[case][current_params]
@@ -233,31 +259,66 @@ def loop(params, writepos_every_iter=False):
 
         return res
 
-    def residuals(params):
-        res0 = get_residual_case(params, 0)
-        res1 = get_residual_case(params, 1)
+    def get_residual_case_absorptivities(params, case):
+        dims = iterate_absorptivity(*params, case=case, writepos_every_iter=writepos_every_iter)
+        t = target[case]
+        res = (dims - t) / t
+        if rank == 0:
+            print(f"t: L = {t[0]}, W = {t[1]}, T = {t[2]}",
+                  flush=True)
+            print(f"res = {res}", flush=True)
+
+        return res
+
+    def residuals_Snu0nu1depth(params):
+        res0 = get_residual_case_Snu0nu1depth(params, 0)
+        res1 = get_residual_case_Snu0nu1depth(params, 1)
         return np.hstack((res0, res1))
 
-    #initial_guess = [0.22036165690870016, 0.34526776845021717, 0.3143414300451578, 0.02]
-    #initial_guess = [0.2, 0.8, 1.0, 0.5]
-    #S, nu1, nu2, depth_factor
-    initial_guess = [0.3, 0.3, 0.3, 0.3]
-    #initial_guess = [0.23336689, 0.33574148, 0.37668996, 0.32177079]
-    bounds = ([0.1, 0.0, 0.0, 0.0],
-              [2.0, 1.0, 1.0, 1.0])
-    close_to_sol = False
-    if close_to_sol:
-        method = 'lm'
-        bounds = ([-np.inf, -np.inf, -np.inf, -np.inf,],
-                  [+np.inf, +np.inf, +np.inf, +np.inf,])
+    def residuals_absorptivities(params):
+        res0 = get_residual_case_absorptivities(params, 0)
+        res1 = get_residual_case_absorptivities(params, 1)
+        return np.hstack((res0, res1))
+
+    calibration_type = params["calibration_type"]
+
+    if calibration_type == "Snu0n1depth":
+        #initial_guess = [0.22036165690870016, 0.34526776845021717, 0.3143414300451578, 0.02]
+        #initial_guess = [0.2, 0.8, 1.0, 0.5]
+        #S, nu1, nu2, depth_factor
+        initial_guess = [0.3, 0.3, 0.3, 0.3]
+        #initial_guess = [0.23336689, 0.33574148, 0.37668996, 0.32177079]
+        bounds = ([0.1, 0.0, 0.0, 0.0],
+                  [2.0, 1.0, 1.0, 1.0])
+        close_to_sol = False
+        if close_to_sol:
+            method = 'lm'
+            bounds = ([-np.inf, -np.inf, -np.inf, -np.inf,],
+                      [+np.inf, +np.inf, +np.inf, +np.inf,])
+        else:
+            method = 'trf'
+        residuals = residuals_Snu0nu1depth
+    elif calibration_type == "absorptivities":
+        initial_guess = [0.3, 2000.0, 0.3]
+        bounds = ([0.1,  500.0, 0.1],
+                  [0.9, 4000.0, 0.9])
+        close_to_sol = False
+        if close_to_sol:
+            method = 'lm'
+            bounds = ([-np.inf, -np.inf, -np.inf, -np.inf,],
+                      [+np.inf, +np.inf, +np.inf, +np.inf,])
+        else:
+            method = 'trf'
+        residuals = residuals_absorptivities
     else:
-        method = 'trf'
+        raise ValueError(f"Unknown calibration type: {calibration_type}")
+
     result = least_squares(residuals,
                            initial_guess,
                            verbose=2,
                            method=method,
-                           bounds=bounds,
-                           )
+                           bounds=bounds)
+
     if rank == 0:
         print("Optimized parameters:", result.x)
 

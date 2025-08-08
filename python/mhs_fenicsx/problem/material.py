@@ -8,6 +8,7 @@ import ctypes
 class Material:
     def __init__(self, params: typing.Dict, name="mat"):
         self.name = name
+        self.nu  = to_piecewise_linear(params.get("absorptivity", 1.0))
         self.k   = to_piecewise_linear(params["conductivity"], compile=True)
         self.rho = to_piecewise_linear(params["density"])
         self.cp  = to_piecewise_linear(params["specific_heat"])
@@ -83,7 +84,7 @@ class PiecewiseLinearProperty:
         if compile:
             self.compiled_func, self.compiled_dfunc = self._compile_interpolation()
 
-    def ufl(self, u):
+    def ufl(self, u, extrapolate=True):
         """From https://github.com/jpdean/culham_thermomech/blob/dbcb95779dda4ab9185a35965e6bb3ced136b0c1/utils.py"""
         # Compute gradients and constants for each piece
         ms = []
@@ -95,8 +96,11 @@ class PiecewiseLinearProperty:
         # Construct interpolant using UFL conditional
         conditions = [ufl.gt(u, x) for x in self.Xs]
         pieces = [m * u + c for (m, c) in zip(ms, cs)]
-        # If u < self.Xs[-1], extrapolate using the last piece
-        pieces.append(pieces[-1])
+        if extrapolate:
+            # If u < self.Xs[-1], extrapolate using the last piece
+            pieces.append(pieces[-1])
+        else:
+            pieces.append(fem.Constant(u.ufl_domain(), self.Ys[-1]))
 
         interp = ufl.conditional(conditions[1], pieces[1], pieces[0])
         for i in range(1, len(conditions) - 1):

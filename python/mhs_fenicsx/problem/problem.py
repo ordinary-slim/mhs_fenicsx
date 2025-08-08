@@ -715,8 +715,8 @@ class Problem:
             if self.rhs is not None:
                 self.source.fem_function.interpolate(self.rhs)
 
-            for source in self.sources:
-                l_ufl.append(source.fem_function*v*dx(itag))
+            l_ufl.append(mat.nu.ufl(u, extrapolate=False) * \
+                self.sources[self.current_source_term].fem_function*v*dx(itag))
 
             # Time derivative
             time_derivative_coefficient = mat.rho.ufl(u) * mat.cp.ufl(u)

@@ -114,7 +114,7 @@ quadrature_metadata: {
   quadrature_degree : 4,
 }
 supg: 1
-scale_stabilization: 4.0
+scale_stabilization: 1.0
 
 max_nr_iters: 30
 max_ls_iters: 5
@@ -143,17 +143,11 @@ substepping_parameters: {
     gamma_coeff1 : 1.0,
     gamma_coeff2 : 1.0,
   },
-  chimera_steadiness_workflow: {
-    enabled: True,
-    adim_dt_increment: 0.5,
-    max_adim_dt: &max_adim_dt 1.0,
-    threshold : 0.05,
-  },
 }
 
 moving_domain_params : {
   shape : True,
-  els_per_radius : 8.0,
+  els_per_radius : 4.0,
   max_adim_dt : *max_adim_dt,
   adim_front_len : 4,
   adim_side_len : 4,
@@ -165,4 +159,5 @@ gamma_quadrature: {
   degree: 4,
 }
 
+run_type : "chimera"
 carry_on_non_convergence: true

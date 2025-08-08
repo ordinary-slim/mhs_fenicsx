@@ -36,87 +36,113 @@ def get_gamma_coeffs(p):
     a = 8.0
     return 1.0 / a, 2 * k / (a * el_size)
 
-
 def define_substepper(domain, params, descriptor):
+    run_type = params.get("run_type", "chimera")
     params["petsc_opts"] = params["petsc_opts_macro"]
-    ps = Problem(domain, params, name="chimera_staggered_rr" + descriptor,
-                 finalize_activation=True)
-    pm = build_moving_problem(ps,
-                              params["moving_domain_params"]["els_per_radius"],
-                              custom_get_adim_back_len=get_adim_back_len,
-                              symmetries=[(1, 1)])
-    for p in [ps, pm]:
-        p.set_initial_condition(params["environment_temperature"])
+    if run_type == "chimera":
+        ps = Problem(domain, params, name="chimera_staggered_rr" + descriptor,
+                     finalize_activation=True)
+        pm = build_moving_problem(ps,
+                                  params["moving_domain_params"]["els_per_radius"],
+                                  custom_get_adim_back_len=get_adim_back_len,
+                                  symmetries=[(1, 1)])
+        for p in [ps, pm]:
+            p.set_initial_condition(params["environment_temperature"])
 
-    is_staggered = (params["substepping_parameters"]["chimera_driver"]["type"] == "staggered")
-    if is_staggered:
-        gc1, gc2 = get_gamma_coeffs(ps)
+        is_staggered = (params["substepping_parameters"]["chimera_driver"]["type"] == "staggered")
+        if is_staggered:
+            gc1, gc2 = get_gamma_coeffs(ps)
+        else:
+            gc1, gc2 = 1.0, 1.0
+
+        params["substepping_parameters"]["chimera_driver"]["gamma_coeff1"] = gc1
+        params["substepping_parameters"]["chimera_driver"]["gamma_coeff2"] = gc2
+
+        substeppin_driver = MHSStaggeredChimeraSubstepper(
+                StaggeredInterpRRDriver,
+                ps, pm,
+                staggered_relaxation_factors=[1.0, 1.0],)
+
+        staggered_driver = substeppin_driver.staggered_driver
+        staggered_driver.set_dirichlet_coefficients(
+                get_h(ps, params["els_per_radius"]), get_k(ps))
     else:
-        gc1, gc2 = 1.0, 1.0
+        ps = Problem(domain, params, name="chimera_staggered_rr" + descriptor,
+                     finalize_activation=True)
+        ps.set_initial_condition(params["environment_temperature"])
 
-    params["substepping_parameters"]["chimera_driver"]["gamma_coeff1"] = gc1
-    params["substepping_parameters"]["chimera_driver"]["gamma_coeff2"] = gc2
+        substeppin_driver = MHSStaggeredSubstepper(StaggeredInterpRRDriver,
+                                                   ps,
+                                                   staggered_relaxation_factors=[1.0, 1.0],)
 
-    substeppin_driver = MHSStaggeredChimeraSubstepper(
-            StaggeredInterpRRDriver,
-            ps, pm,
-            staggered_relaxation_factors=[1.0, 1.0],)
-
-    staggered_driver = substeppin_driver.staggered_driver
-    staggered_driver.set_dirichlet_coefficients(
-            get_h(ps, params["els_per_radius"]), get_k(ps))
+        staggered_driver = substeppin_driver.staggered_driver
+        staggered_driver.set_dirichlet_coefficients(
+                get_h(ps, params["els_per_radius"]), get_k(ps))
     return substeppin_driver
 
+def set_problem(p, params, problem_name):
+    p.name = problem_name
+    p.initialize_post()
+    p.set_initial_condition(params["environment_temperature"])
+    p.time = 0.0
+    p.iter = 0
+    for idx, source in enumerate(p.sources):
+        hs_params = params["source_terms"][idx]
+        path = gcode_to_path(hs_params["path"], default_power=hs_params["power"])
+        source.set_path(path)
+        source.power = source.path.tracks[0].power
+        if "depth" in hs_params:
+            source.depth = hs_params["depth"]
+        source.R = hs_params["radius"]
+        p.smoothing_cte_phase_change.value = float(params["smoothing_cte_phase_change"])
 
-def run_staggered_chimera_rr(domain, params, descriptor="",
-                             writepos_every_iter=True, substepper=None):
+def run_simulation(domain, params, descriptor="",
+                   writepos_every_iter=True, substepper=None):
     if rank == 0:
         write_gcode(params)
     comm.barrier()
 
+    run_type = params.get("run_type", "chimera")
+
+    skip_setting = False
     if substepper is None:
         substepper = define_substepper(domain, params, descriptor)
-        ps, pf, pm = substepper.ps, substepper.pf, substepper.pm
-    else:
-        ps, pf, pm = substepper.ps, substepper.pf, substepper.pm
+        skip_setting = True
+
+    ps, pf, pm = substepper.ps, substepper.pf, None
+    if run_type == "chimera":
+        pm = substepper.pm
+
+    if not(skip_setting):
         base_name = {ps: "case",
-                     pf: "case_micro_iters",
-                     pm: "case_moving"}
-        dx = pm.source.path.tracks[0].p0 - pm.source.x.copy()
-        pm.move(dx)
-        for p in [ps, pf, pm]:
-            p.name = f"{base_name[p]}-{descriptor}"
-            p.initialize_post()
-            p.set_initial_condition(params["environment_temperature"])
-            p.time = 0.0
-            p.iter = 0
-            for idx, source in enumerate(p.sources):
-                hs_params = params["source_terms"][idx]
-                path = gcode_to_path(hs_params["path"], default_power=hs_params["power"])
-                source.set_path(path)
-                source.power = source.path.tracks[0].power
-                if "depth" in hs_params:
-                    source.depth = hs_params["depth"]
-                source.R = hs_params["radius"]
-                p.smoothing_cte_phase_change.value = float(params["smoothing_cte_phase_change"])
+                     pf: "case_micro_iters"}
+
+        if run_type == "chimera":
+            base_name[pm] = "case_moving"
+            dx = pm.source.path.tracks[0].p0 - pm.source.x.copy()
+            pm.move(dx)
+
+        for p in substepper.plist:
+            set_problem(p, params, f"{base_name[p]}-{descriptor}")
 
     itime_step = 0
     max_timesteps = params["max_timesteps"]
     while ((itime_step < max_timesteps) and not (ps.is_path_over())):
         itime_step += 1
-        #print(f"{rank}: id of problem: {id(ps)} id of source: {id(ps.source)}, id of path: {id(ps.source.path)}, speed of first track: {ps.source.path.tracks[0].speed}", flush=True)
         substepper.do_timestep()
         if writepos_every_iter:
             ps.writepos(extension="vtx")
-            pm.writepos(extension="vtx")
+            if pm is not None:
+                pm.writepos(extension="vtx")
     if not (writepos_every_iter):
         ps.writepos(extension="vtx")
-    return ps, pf, pm
+    return substepper.plist
 
 def get_meltpool_dims(domain, params, descriptor, writepos_every_iter=False, remove=True, substepper=None):
-    ps, pf, pm = run_staggered_chimera_rr(domain, params, descriptor,
-                                          writepos_every_iter=writepos_every_iter,
-                                          substepper=substepper)
+    plist = run_simulation(domain, params, descriptor,
+                           writepos_every_iter=writepos_every_iter,
+                           substepper=substepper)
+    ps = plist[0]
     post_folder = "./" + ps.result_folder
     bp_file = post_folder + "/" + ps.name + ".bp/"
     if rank == 0:
@@ -125,15 +151,14 @@ def get_meltpool_dims(domain, params, descriptor, writepos_every_iter=False, rem
         if remove:
             subprocess.run(["rm", "-rf", post_folder])
         stdout = result.stdout
-        res = stdout.rstrip()
-        res = res.split(",")
-        res = [float(measurement) for measurement in res]
-        print(f"L = {res[0]}, W = {res[1]}, T = {res[2]}", flush=True)
+        dims = stdout.rstrip()
+        dims = dims.split(",")
+        dims = [float(measurement) for measurement in dims]
+        print(f"L = {dims[0]}, W = {dims[1]}, T = {dims[2]}", flush=True)
     else:
-        res = None
-    res = comm.bcast(res, root=0)
-    return np.array(res)
-
+        dims = None
+    dims = comm.bcast(dims, root=0)
+    return np.array(dims)
 
 def loop(params, writepos_every_iter=False):
     domain = get_mesh(params, symmetry=True)
@@ -178,7 +203,7 @@ def loop(params, writepos_every_iter=False):
     target = {0 : np.array([359.0, 66.0, 36.0]),
               1 : np.array([370.0, 56.5, 29.0])}
 
-    cache = {case_idx : {"params" : None, "results" : None} for case_idx in range(2)}
+    cache = {case_idx : {} for case_idx in range(2)}
 
     def get_residual_case(params, case):
         # WARNING: This is a hacky
@@ -187,17 +212,22 @@ def loop(params, writepos_every_iter=False):
         else:
             current_params = (params[0], params[2], params[3])
 
-        if cache[case]["params"] != current_params:
+        if current_params not in cache[case]:
             dims = iterate(*params, case=case, writepos_every_iter=writepos_every_iter)
-            cache[case]["params"] = current_params
-            cache[case]["results"] = dims
+            cache[case][current_params] = dims
         else:
-            dims = cache[case]["results"]
-        target = target[case]
-        res = (dims - target) / target
+            dims = cache[case][current_params]
+            if rank == 0:
+                print("Cache hit!", flush=True)
+                print(f"params S = {current_params[0]}, nu = {current_params[1]}, d = {current_params[2]}",
+                      flush=True)
+                print(f"L = {dims[0]}, W = {dims[1]}, T = {dims[2]}", flush=True)
+
+        t = target[case]
+        res = (dims - t) / t
 
         if rank == 0:
-            print(f"target: L = {target[0]}, W = {target[1]}, T = {target[2]}",
+            print(f"t: L = {t[0]}, W = {t[1]}, T = {t[2]}",
                   flush=True)
             print(f"res = {res}", flush=True)
 
@@ -211,11 +241,11 @@ def loop(params, writepos_every_iter=False):
     #initial_guess = [0.22036165690870016, 0.34526776845021717, 0.3143414300451578, 0.02]
     #initial_guess = [0.2, 0.8, 1.0, 0.5]
     #S, nu1, nu2, depth_factor
-    #initial_guess = [0.3, 0.3, 0.3, 0.3]
-    initial_guess = [0.23336689, 0.33574148, 0.37668996, 0.32177079]
+    initial_guess = [0.3, 0.3, 0.3, 0.3]
+    #initial_guess = [0.23336689, 0.33574148, 0.37668996, 0.32177079]
     bounds = ([0.1, 0.0, 0.0, 0.0],
               [2.0, 1.0, 1.0, 1.0])
-    close_to_sol = True
+    close_to_sol = False
     if close_to_sol:
         method = 'lm'
         bounds = ([-np.inf, -np.inf, -np.inf, -np.inf,],
@@ -230,7 +260,6 @@ def loop(params, writepos_every_iter=False):
                            )
     if rank == 0:
         print("Optimized parameters:", result.x)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

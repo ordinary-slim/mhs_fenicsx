@@ -718,7 +718,7 @@ class Problem:
                 self.source.fem_function.interpolate(self.rhs)
 
             l_ufl.append(self.absorptivity[mat] * \
-                self.sources[self.current_source_term].fem_function * v * dx(itag))
+                self.source.fem_function * v * dx(itag))
 
             # Time derivative
             time_derivative_coefficient = mat.rho.ufl(u) * mat.cp.ufl(u)
@@ -767,6 +767,7 @@ class Problem:
                             advection_coefficient * \
                             ufl.dot(self.advection_speed,ufl.grad(v)) * dx(itag))
                     l_ufl.append(supg_coeff * \
+                            self.absorptivity[mat] * \
                             self.source.fem_function * \
                             advection_coefficient * \
                             ufl.dot(self.advection_speed,ufl.grad(v)) * dx(itag))

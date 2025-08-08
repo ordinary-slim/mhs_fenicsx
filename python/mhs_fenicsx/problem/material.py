@@ -86,27 +86,29 @@ class PiecewiseLinearProperty:
 
     def ufl(self, u, extrapolate=True):
         """From https://github.com/jpdean/culham_thermomech/blob/dbcb95779dda4ab9185a35965e6bb3ced136b0c1/utils.py"""
+        get_constant = lambda c : fem.Constant(u.ufl_domain(), np.float64(c))
         # Compute gradients and constants for each piece
         ms = []
         cs = []
         for i in range(len(self.Xs) - 1):
-            ms.append((self.Ys[i + 1] - self.Ys[i]) / (self.Xs[i + 1] - self.Xs[i]))
-            cs.append(self.Ys[i] - ms[i] * self.Xs[i])
+            m = (self.Ys[i + 1] - self.Ys[i]) / (self.Xs[i + 1] - self.Xs[i])
+            c = self.Ys[i] - m * self.Xs[i]
+            ms.append(get_constant(m))
+            cs.append(get_constant(c))
 
         # Construct interpolant using UFL conditional
-        conditions = [ufl.gt(u, x) for x in self.Xs]
-        pieces = [m * u + c for (m, c) in zip(ms, cs)]
+        conditions = [ufl.gt(u, get_constant(x)) for x in self.Xs]
+        pieces = [(c + m * u if m.value > 0.0 else c) for (m, c) in zip(ms, cs)]
         if extrapolate:
-            # If u < self.Xs[-1], extrapolate using the last piece
+            # If u > self.Xs[-1], extrapolate using the last piece
             pieces.append(pieces[-1])
         else:
-            pieces.append(fem.Constant(u.ufl_domain(), self.Ys[-1]))
+            pieces.append(get_constant(self.Ys[-1]))
 
         interp = ufl.conditional(conditions[1], pieces[1], pieces[0])
         for i in range(1, len(conditions) - 1):
             interp = ufl.conditional(conditions[i + 1], pieces[i + 1], interp)
         return interp
-
 
     def __eq__(self, other):
         if isinstance(other, PiecewiseLinearProperty):

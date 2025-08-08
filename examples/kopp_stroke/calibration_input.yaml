@@ -12,9 +12,9 @@ source_terms :
     initial_position : &p0 [-5.0, 0.0, 0.0]
     initial_speed : &speed [0.8, 0.0, 0]
     radius : *radius
-    power : &power 64.2
+    power : &power 179.2
     path: &path "Path.gcode"
-    depth : &depth 0.01364E-03
+    depth : &depth 0.0131866569E-03
   - type : lumped
     initial_position : *p0
     initial_speed : *speed
@@ -39,14 +39,14 @@ material_in625 : {
     solidus_temperature : &solidus_temperature 1290.0,
     liquidus_temperature : &liquidus_temperature 1350.0,
   },
-  absorptivity : [[*environment_temperature, 0.3], [2000.0, 0.3]],
+  absorptivity : [[*environment_temperature, 0.3], [2000.0, 0.4]],
   density : 8.44E+03, # kg / mm3
   conductivity : [[0.0, 9.5], [1320.0, 28.85], [2000.0, 28.85]],
   specific_heat : [[0.0, 405.0], [1320.0, 723.63], [2000.0, 723.63]],
 }
 convection_coeff : 0.0
 radiation_coeff: 0.0
-smoothing_cte_phase_change : 0.23336689
+smoothing_cte_phase_change : 0.25285274
 # END_ESSENTIAL
 petsc_opts_micro: {
   "ksp_error_if_not_converged" : "true",
@@ -71,12 +71,10 @@ petsc_opts_macro: {
 petsc_opts_moving: {
   "ksp_error_if_not_converged" : "true",
   "ksp_type" : "gmres",
-  "ksp_atol" : 1e-10,
-  "ksp_rtol" : 1e-10,
-  "snes_rtol" : 1e-8,
-  "snes_atol" : 1e-8,
+  "ksp_atol" : 1e-09,
+  "ksp_rtol" : 1e-09,
   "pc_type" : "hypre",
-  "snes_linesearch_type" : "basic",
+  #"snes_linesearch_type" : "basic",
   "snes_rtol" : 1e-8,
   "snes_atol" : 1e-8,
 }
@@ -133,10 +131,10 @@ substepping_parameters: {
   max_staggered_iters: 1,
   adim_lens: {
     back_pad : 12,
-    front_pad : 6,
-    side_pad : 6,
+    front_pad : 4.5,
+    side_pad : 5,
     top_pad : 0.5,
-    bot_pad : 5,
+    bot_pad : 4.5,
   },
   predictor: {
     enabled :  True,
@@ -156,9 +154,9 @@ moving_domain_params : {
   shape : True,
   els_per_radius : 4.0,
   max_adim_dt : *max_adim_dt,
-  adim_front_len : 4,
+  adim_front_len : 3.5,
   adim_side_len : 4,
-  adim_bot_len : 3,
+  adim_bot_len : 3.5,
   adim_top_len : 0.0,
 }
 
@@ -167,5 +165,5 @@ gamma_quadrature: {
 }
 
 run_type : "chimera"
-calibration_type : "Snu0n1depth"
+calibration_type : "absorptivities"
 carry_on_non_convergence: true

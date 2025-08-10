@@ -98,7 +98,7 @@ class PiecewiseLinearProperty:
 
         # Construct interpolant using UFL conditional
         conditions = [ufl.gt(u, get_constant(x)) for x in self.Xs]
-        pieces = [(c + m * u if m.value > 0.0 else c) for (m, c) in zip(ms, cs)]
+        pieces = [(c if np.isclose(m.value, 0.0) else c + m * u) for (m, c) in zip(ms, cs)]
         if extrapolate:
             # If u > self.Xs[-1], extrapolate using the last piece
             pieces.append(pieces[-1])

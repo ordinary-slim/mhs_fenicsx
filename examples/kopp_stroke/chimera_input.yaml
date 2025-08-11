@@ -4,7 +4,7 @@ part : [2.0E-03, 0.425E-03, 0.0]
 els_per_radius : 8.0
 radius : &radius 0.0425E-03
 half_radius : &half_radius 0.02125E-03
-num_boundary_layers : [12, 4, 12]
+adim_fine_pads : [3, 1, 3]
 coarsest_el_factor : 32.0
 coarsening_factor : 1.5
 source_terms :

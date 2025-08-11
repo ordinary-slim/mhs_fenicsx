@@ -1,20 +1,19 @@
 isSteady: False
-substrate : [4.25E-03, 2.05E-03, 1.755E-03]
-part : [2.0E-03, 0.425E-03, 0.0]
+substrate : [4.25, 2.05, 1.755]
+part : [2.0, 0.425, 0.0]
 els_per_radius : 8.0
-radius : &radius 0.0425E-03
-layer_thickness : &layer_thickness 0.0425E-03
-half_radius : &half_radius 0.02125E-03
-heat_source_depth : &heat_source_depth 0.0119E-03
-num_boundary_layers : [12, 4, 16]
-coarsest_el_factor : 32.0
+radius : &radius 0.0425
+layer_thickness : &layer_thickness 0.0425
+half_radius : &half_radius 0.02125
+heat_source_depth : &heat_source_depth 0.0119
+adim_fine_pads : [3, 1, 3]
 coarsening_factor : 1.5
 source_terms :
   - type : penetrating_gaussian
-    initial_position : &p0 [-5.0, 0.0, 0.0]
-    initial_speed : &speed [0.8, 0.0, 0]
+    initial_position : &p0 [.0, 0.0, 0.0]
+    initial_speed : &speed [400.0, 0.0, 0]
     radius : *radius
-    power : &power 57.344
+    power : &power 44.128
     path: &path "Path.gcode"
     depth : *heat_source_depth
   - type : lumped
@@ -40,13 +39,13 @@ material_in625 : {
     solidus_temperature : &solidus_temperature 1290.0,
     liquidus_temperature : &liquidus_temperature 1350.0,
   },
-  density : 8.44E+03, # kg / mm3
-  conductivity : [[0.0, 9.5], [1320.0, 28.85], [2000.0, 28.85]],
+  density : 8.44E-06,
+  conductivity : [[0.0, 9.5E-03], [1320.0, 28.85E-03], [2000.0, 28.85E-03]],
   specific_heat : [[0.0, 405.0], [1320.0, 723.63], [2000.0, 723.63]],
 }
 convection_coeff : 0.0
 radiation_coeff: 0.0
-smoothing_cte_phase_change : 8.0
+smoothing_cte_phase_change : 0.25
 environment_temperature : &environment_temperature 25
 # END_ESSENTIAL
 petsc_opts_micro: {

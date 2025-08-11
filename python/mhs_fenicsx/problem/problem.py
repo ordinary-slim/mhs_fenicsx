@@ -56,11 +56,11 @@ class Problem:
         self.num_cells = self.cell_map.size_local + self.cell_map.num_ghosts
         self.num_facets = self.facet_map.size_local + self.facet_map.num_ghosts
         self.num_nodes = self.node_map.size_local + self.node_map.num_ghosts
-        bb_tree_padding = parameters.get("bb_tree_padding", 1e-7)
+        self.spatial_search_pad = parameters.get("spatial_threshold", 1e-7)
         self.bb_tree = geometry.bb_tree(self.domain,
                                         self.dim,
                                         np.arange(self.num_cells,dtype=np.int32),
-                                        padding=bb_tree_padding)
+                                        padding=self.spatial_search_pad)
         self.restriction: typing.Optional[multiphenicsx.fem.DofMapRestriction] = None
         self.initialize_activation(finalize=finalize_activation)
 
@@ -342,7 +342,8 @@ class Problem:
                       self.dof_coords]:
             array[:] -= center
             array[:]  = center + np.matmul(array, Rt)
-        self.bb_tree = geometry.bb_tree(self.domain,self.dim,np.arange(self.num_cells,dtype=np.int32),padding=1e-7)
+        self.bb_tree = geometry.bb_tree(self.domain,self.dim,np.arange(self.num_cells,dtype=np.int32),
+                                        padding=self.spatial_search_pad)
 
     def post_modify_solution(self, cells=None):
         self.is_grad_computed = False
@@ -573,7 +574,7 @@ class Problem:
             self.bqpoints,
             num_gps_facet,
             p_ext.local_active_els,
-            self.input_parameters.get("spatial_threshold", 1e-7),
+            self.spatial_search_pad,
             extrapolate=False)
         ##
         num_gps_facet = self.Qe.num_entity_dofs[-1][0]

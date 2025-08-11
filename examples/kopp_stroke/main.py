@@ -44,7 +44,7 @@ def write_gcode(params):
         f.writelines("\n".join(gcode_lines))
 
 def run_reference(params, writepos=True, descriptor=""):
-    domain = get_mesh(params)
+    domain = get_mesh(params, symmetry=True)
     params["petsc_opts"] = params["petsc_opts_macro"]
     ps = Problem(domain, params, name="ref" + descriptor)
 
@@ -73,7 +73,7 @@ def run_reference(params, writepos=True, descriptor=""):
     return ps
 
 def run_staggered(params, writepos=True, descriptor=""):
-    big_mesh = get_mesh(params)
+    big_mesh = get_mesh(params, symmetry=True)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
@@ -100,7 +100,7 @@ def run_staggered(params, writepos=True, descriptor=""):
 
 
 def run_hodge(params, writepos=True, descriptor=""):
-    big_mesh = get_mesh(params)
+    big_mesh = get_mesh(params, symmetry=True)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
@@ -119,7 +119,7 @@ def run_hodge(params, writepos=True, descriptor=""):
     return ps
 
 def run_staggered_chimera_rr(params, writepos=True, descriptor=""):
-    big_mesh = get_mesh(params)
+    big_mesh = get_mesh(params, symmetry=True)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
@@ -152,7 +152,7 @@ def run_staggered_chimera_rr(params, writepos=True, descriptor=""):
     return ps
 
 def run_chimera_hodge(params, writepos=True, descriptor=""):
-    big_mesh = get_mesh(params)
+    big_mesh = get_mesh(params, symmetry=True)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]

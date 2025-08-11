@@ -1,9 +1,8 @@
 #!/bin/bash
 nps=$1
-runType=$2
-descriptor="calibrate_T1nu1"
-jobName="kopp_stroke_${runType}_${descriptor}"
+descriptor=$2
 partition=$3
+jobName="kopp_stroke_${descriptor}"
 printFile=$jobName.print
 echo $jobName
 sbatch <<EOT
@@ -12,7 +11,7 @@ sbatch <<EOT
 #SBATCH --partition=$partition
 #SBATCH --nodes=1
 #SBATCH --ntasks=$nps
-#SBATCH --mem-per-cpu=4G
+#SBATCH --mem=100G
 #SBATCH --time=2-0
 #SBATCH --output=$jobName.out
 #SBATCH --error=$jobName.err

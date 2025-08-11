@@ -3,14 +3,16 @@ import gmsh
 from dolfinx.io.gmshio import model_to_mesh
 from dolfinx.mesh import GhostMode, create_cell_partitioner
 from mpi4py import MPI
+import argparse
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-def boundary_layer_progression(fine_el_size, coarsest_el_factor, coarsening_factor):
-    num_layers = np.rint(np.ceil(np.emath.logn(coarsening_factor, coarsest_el_factor))).astype(int)
-    heights = [((coarsening_factor)**(i+1))*fine_el_size for i in range(num_layers)] # el sizes
-    num_elements_per_layer = [1 for _ in range(num_layers)]
+def boundary_layer_progression(fine_el_size, coarsening_factor, len_extrusion):
+    Sn = (len_extrusion / fine_el_size)
+    num_layers = np.rint(np.emath.logn(coarsening_factor, -(len_extrusion/fine_el_size*(1 - coarsening_factor) - coarsening_factor))).astype(int)
+    heights = coarsening_factor**np.arange(1, num_layers+1)
+    num_elements_per_layer = [1]*num_layers
 
     # format heights to cumsum
     heights = np.cumsum( heights )
@@ -27,8 +29,9 @@ def get_mesh(params, symmetry=False):
         radius = params["source_terms"][0]["radius"]
         els_per_radius = params["els_per_radius"]
         fine_el_size = radius / els_per_radius
-        nboun_layers = params["num_boundary_layers"]
-        coarsest_el_factor = params["coarsest_el_factor"]
+        adim_fine_pads = params["adim_fine_pads"]
+        nboun_layers = [np.rint(pad * els_per_radius).astype(int) \
+            for pad in adim_fine_pads]
         coarsening_factor = params["coarsening_factor"]
         # Adjust lengths so that they are multiples of fine_el_size
         for lens in [part_lens, substrate_lens]:
@@ -76,7 +79,7 @@ def get_mesh(params, symmetry=False):
         midBotSurface, _, xSideMidBot1, ySideMidBot1, xSideMidBot2, ySideMidBot2 = uniformBotExtrusion
         ## Coarsening
         lenCoarseBotExtrusion = substrate_lens[2] - nboun_layers_z*fine_el_size
-        nElements, heights = boundary_layer_progression(fine_el_size, coarsest_el_factor, coarsening_factor)
+        nElements, heights = boundary_layer_progression(fine_el_size, coarsening_factor, lenCoarseBotExtrusion)
         coarseBotExtrusion = gmsh.model.geo.extrude([(2, midBotSurface[1])], 0, 0, -lenCoarseBotExtrusion, numElements = nElements, heights= heights, recombine= True)
         botBotSurface, _, xSideBotBot1, ySideBotBot1, xSideBotBot2, ySideBotBot2 = coarseBotExtrusion
         # Substrate extrusions Y
@@ -94,7 +97,7 @@ def get_mesh(params, symmetry=False):
         ## Coarse extrusions
         coarseYExtrusions = []
         lenCoarseYExtrusion = (substrate_lens[1] - part_lens[1])/2 - nboun_layers_y*fine_el_size
-        nElements, heights = boundary_layer_progression(fine_el_size, coarsest_el_factor, coarsening_factor)
+        nElements, heights = boundary_layer_progression(fine_el_size, coarsening_factor, lenCoarseYExtrusion)
         for idx, extrusion in enumerate(uniformYExtrusions):
             if extrusion is None:
                 coarseYExtrusions.append(None)
@@ -131,7 +134,7 @@ def get_mesh(params, symmetry=False):
             negativeUniformExtrusionsX.append( gmsh.model.geo.extrude([(2, surface)], -extrusionLen, 0.0, 0.0, numElements =[numElements], recombine= True ) )
         ## Coarse extrusions
         extrusionLen = (substrate_lens[0] - part_lens[0])/2 - nboun_layers_x*fine_el_size
-        nElements, heights = boundary_layer_progression(fine_el_size, coarsest_el_factor, coarsening_factor)
+        nElements, heights = boundary_layer_progression(fine_el_size, coarsening_factor, extrusionLen)
         positiveCoarseExtrusionsX = []
         negativeCoarseExtrusionsX = []
         for extrusion in positiveUniformExtrusionsX:
@@ -193,8 +196,16 @@ def get_mesh(params, symmetry=False):
 if __name__ == "__main__":
     import yaml
     from dolfinx import io
-    with open("input.yaml", 'r') as f:
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-i', '--input-file', default="input.yaml")
+
+    args = parser.parse_args()
+
+    params_file = args.input_file
+    with open(params_file, 'r') as f:
         params = yaml.safe_load(f)
+
     domain = get_mesh(params)
     with io.VTKFile(domain.comm, "mesh.pvd", "wb") as f:
         f.write_mesh(domain)

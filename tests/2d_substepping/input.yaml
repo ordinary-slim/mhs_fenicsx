@@ -3,7 +3,7 @@ isSteady: False
 radius : &radius 0.05
 half_radius : &half_radius 0.025
 source_terms :
-  - initial_position : [-5.0, 0.0, 0.0]
+  - initial_position : [0.0, 0.0, 0.0]
     initial_speed : &speed [1000.0, 0.0, 0]
     radius : *radius
     power : &power 500
@@ -17,53 +17,107 @@ source_terms :
     mdwidth  : *radius
     mdheight : *half_radius
     mddepth: *half_radius
+  - initial_position : [0.0, 0.0, 0.0]
+    initial_speed : *speed
+    radius : *radius
+    power : 0.0
+    path: *path
 # PROPS
 el_type : quadrilateral
 material_metal : {
   density : 4.3E-06, # kg / mm3
-  conductivity : 10.0E-03, # W / mm / K
+  conductivity : 5.0E-03, # W / mm / K
   specific_heat : 700, # J / kg / K
-  #phase_change : {
-  #  latent_heat : 350.0E+03,
-  #  solidus_temperature : &solidus_temperature 1600.0,
-  #  liquidus_temperature : 1650.0
-  #}
+  phase_change : {
+    latent_heat : 350.0E+03,
+    solidus_temperature : &solidus_temperature 1600.0,
+    liquidus_temperature : 1650.0
+  }
 }
-smoothing_cte_phase_change : 1.0
+smoothing_cte_phase_change : 0.5
 #convection_coeff : 1.0E-00
 environment_temperature : 25
 # END_ESSENTIAL
 petsc_opts_micro: {
-  "ksp_type" : "cg",
-  "ksp_rtol" : 1e-14,
-  "pc_type" : "jacobi",
+  "ksp_error_if_not_converged" : "true",
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-10,
+  "ksp_rtol" : 1e-10,
+  "pc_type" : "hypre",
 }
 petsc_opts_macro: {
-  "ksp_type" : "cg",
-  "ksp_rtol" : 1e-14,
-  "pc_type" : "jacobi",
-}
-petsc_opts_mono_robin: {
   "ksp_error_if_not_converged" : "true",
   "ksp_type" : "gmres",
-  "ksp_atol" : 1e-13,
-  "ksp_rtol" : 1e-13,
+  "ksp_atol" : 1e-10,
+  "ksp_rtol" : 1e-10,
+  "pc_type" : "hypre",
+  "snes_linesearch_type" : "basic",
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
+  #"pc_type" : "lu",
+  #"pc_factor_mat_solver_type" : "superlu_dist",
+}
+petsc_opts_moving: {
+  "ksp_error_if_not_converged" : "true",
+  "ksp_type" : "gmres",
+  "ksp_atol" : 1e-10,
+  "ksp_rtol" : 1e-10,
+  "pc_type" : "hypre",
+  #"snes_linesearch_type" : "basic",
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
+}
+#"newtonls" "newtontr" "newtontrdc" "python" "nrichardson" "ksponly"
+#"ksptransposeonly" "vinewtonrsls" "vinewtonssls" "ngmres" "qn" "shell" "ngs"
+#"ncg" "fas" "ms" "nasm" "anderson" "aspin" "composite" "patch" "newtonal"
+petsc_opts_mono_robin: {
+  #"snes_type" : "anderson",
+  #"snes_linesearch_monitor" : "",
+  "snes_linesearch_type" : "bt",
+  "snes_linesearch_order" : 1,
+  #"snes_linesearch_alpha": 1e-4,
+  "snes_linesearch_minlambda" : 1e-2,
+  "snes_linesearch_maxstep" : 1e8,
+  "snes_linesearch_max_it" : 5,
+
+  "snes_max_it" : 30,
+  "ksp_atol" : 1e-09,
+  "ksp_rtol" : 1e-09,
+  #"snes_stol" : 1e-3,
+  #"snes_linesearch_type": "none",
+  "ksp_error_if_not_converged" : "true",
   "pc_type" : "fieldsplit",
+  "pc_fieldsplit_type" : "additive",
+  "ksp_type" : "gmres",
+  #"ksp_view" : 100,
+  #"pc_fieldsplit_schur_factorization_type" : "full",
+  #"fieldsplit_0_pc_type" : "lu",
+  #"fieldsplit_0_pc_factor_mat_solver_type" : "superlu_dist",
+  #"fieldsplit_1_pc_type" : "lu",
+  #"fieldsplit_1_pc_factor_mat_solver_type" : "superlu_dist"
+   #"pc_type" : "lu",
+   #"pc_factor_mat_solver_type" : "mumps",
 }
 petsc_opts_macro_chimera: {
-  "ksp_error_if_not_converged" : "true",
-  "ksp_type" : "gmres",
+  "snes_max_it" : 30,
   "ksp_atol" : 1e-13,
   "ksp_rtol" : 1e-13,
+  "snes_linesearch_max_it" : 15,
+  "ksp_error_if_not_converged" : "true",
+  "ksp_type" : "gmres",
   "pc_type" : "fieldsplit",
 }
-domain_width: 1
-domain_height: 1
-els_per_radius: &els_per_radius 4
+domain_width: 2.0
+width_path_fraction: 0.8
+domain_height: 0.4
+height_path_fraction: 0.8
+els_per_radius: &els_per_radius 8
+straight_line : True
 
-max_timesteps: 1
+max_timesteps: -1
 dt : 1.0
 driver_type: "robin"
+aitken_relaxation: False
 initial_condition: False
 quadrature_metadata: {}
 supg: 1
@@ -73,8 +127,8 @@ max_ls_iters: 5
 post_freq : 8
 
 substepping_parameters: {
-  micro_adim_dt: 0.5,
-  macro_adim_dt: 5.0,
+  micro_adim_dt: 0.25,
+  macro_adim_dt: 4.0,
   max_staggered_iters: 1,
   adim_lens: {
     back_pad : 3,
@@ -85,9 +139,11 @@ substepping_parameters: {
   },
   predictor: {
     enabled :  True,
-    #source_term : 1,
+    source_term : 2,
+    nnlinear : True,
   },
   writepos: True,
+  only_writepos_macro: True,
   chimera_always_on: False,
   chimera_driver: {
     type: "monolithic",

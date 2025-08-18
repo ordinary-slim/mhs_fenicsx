@@ -48,7 +48,9 @@ petsc_opts_macro_chimera: {
   "pc_type" : "fieldsplit",
 }
 domain_width: 1
+width_path_fraction: 0.75
 domain_height: 1
+height_path_fraction: 0.75
 domain_depth: 0.05
 
 els_per_radius: 2

@@ -29,14 +29,21 @@ def get_dt(adim_dt, radius, speed):
 def write_gcode(params):
     (Lx, Ly) = (params["domain_width"], params["domain_height"])
     speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
-    hlenx = + 3.0 * Lx / 8.0
-    hleny = + 3.0 * Ly / 8.0
+    width_path_fraction = params.get("width_path_fraction", 3.0/4.0)
+    height_path_fraction = params.get("height_path_fraction", 3.0/4.0)
+    hlenx = np.round(Lx * width_path_fraction / 2.0, 4)
+    hleny = np.round(Ly * height_path_fraction / 2.0, 4)
     gcode_lines = []
-    gcode_lines.append(f"G0 F{speed} X-{hlenx} Y-{hleny} Z0\n")
-    gcode_lines.append(f"G1 X+{hlenx} E0.1\n")
-    gcode_lines.append(f"G1 Y+{hleny} E0.2\n")
-    gcode_lines.append(f"G1 X-{hlenx} E0.3\n")
-    gcode_lines.append(f"G1 Y-{hleny} E0.4\n")
+    is_straight_line = params.get("straight_line", False)
+    if not is_straight_line:
+        gcode_lines.append(f"G0 F{speed} X-{hlenx} Y-{hleny} Z0\n")
+        gcode_lines.append(f"G1 X+{hlenx} E0.1\n")
+        gcode_lines.append(f"G1 Y+{hleny} E0.2\n")
+        gcode_lines.append(f"G1 X-{hlenx} E0.3\n")
+        gcode_lines.append(f"G1 Y-{hleny} E0.4\n")
+    else:
+        gcode_lines.append(f"G0 F{speed} X-{hlenx} Y0.0 Z0\n")
+        gcode_lines.append(f"G1 X+{hlenx} E0.1\n")
     with open(params["source_terms"][0]["path"],'w') as f:
         f.writelines(gcode_lines)
 
@@ -68,21 +75,22 @@ def get_mesh(params, radius, dim):
                                el_type)
 
 
-def run_staggered(params, driver_type, writepos=True):
+def run_staggered(params, driver_type, descriptor="", writepos=True):
     radius = params["source_terms"][0]["radius"]
     if   driver_type=="robin":
         driver_constructor = StaggeredInterpRRDriver
-        initial_relaxation_factors=[1.0,1.0]
+        initial_relaxation_factors = [1.0, 1.0]
     elif driver_type=="dn":
         driver_constructor = StaggeredInterpDNDriver
-        initial_relaxation_factors=[0.5,1]
+        initial_relaxation_factors = [1.0, 1.0]
     else:
         raise ValueError("Undefined staggered driver type.")
     big_mesh = get_mesh(params, radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    big_p = Problem(big_mesh, macro_params, name=f"big_ss_{driver_type}")
+    descriptor = f"ss{driver_type}" + descriptor
+    big_p = Problem(big_mesh, macro_params, name=descriptor)
     initial_condition_fun = get_initial_condition(params)
     big_p.set_initial_condition(  initial_condition_fun )
 
@@ -108,13 +116,15 @@ def run_staggered(params, driver_type, writepos=True):
             ps.writepos(extension="vtx")
     return big_p
 
-def run_semi_monolithic(params, writepos=True):
+def run_semi_monolithic(params, descriptor="", writepos=True):
     radius = params["source_terms"][0]["radius"]
     big_mesh = get_mesh(params, radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    big_p = Problem(big_mesh, macro_params, name=f"big_sms")
+
+    descriptor = f"sms" + descriptor
+    big_p = Problem(big_mesh, macro_params, name=descriptor)
     initial_condition_fun = get_initial_condition(params)
     big_p.set_initial_condition(  initial_condition_fun )
 
@@ -131,7 +141,7 @@ def run_semi_monolithic(params, writepos=True):
                 p.writepos(extension="vtx")
     return big_p
 
-def run_reference(params, writepos=True):
+def run_reference(params, descriptor="", writepos=True):
     radius = params["source_terms"][0]["radius"]
     speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     domain = get_mesh(params, radius, 2)
@@ -140,7 +150,8 @@ def run_reference(params, writepos=True):
     print_dt = get_dt(params["substepping_parameters"]["micro_adim_dt"], radius, speed)
     macro_params["dt"] = print_dt
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(domain, macro_params, finalize_activation=True, name="big")
+    descriptor = "ref" + descriptor
+    ps = Problem(domain, macro_params, finalize_activation=True, name=descriptor)
 
     initial_condition_fun = get_initial_condition(params)
     ps.set_initial_condition(initial_condition_fun)
@@ -206,10 +217,16 @@ if __name__=="__main__":
     parser.add_argument('-sms','--run-sub-mon',action='store_true')
     parser.add_argument('-r','--run-ref',action='store_true')
     parser.add_argument('-t','--run-test',action='store_true')
+
+    parser.add_argument('-d', '--descriptor', default="")
+    parser.add_argument('-i','--input-file', default='input.yaml')
+
     args = parser.parse_args()
+    input_file = args.input_file
+
     lp = LineProfiler()
     lp.add_module(Problem)
-    with open("input.yaml", 'r') as f:
+    with open(input_file, 'r') as f:
         params = yaml.safe_load(f)
     write_gcode(params)
     profiling_file = None
@@ -226,13 +243,13 @@ if __name__=="__main__":
         lp.add_function(find_submesh_interface)
         driver_type = params["driver_type"]
         lp_wrapper = lp(run_staggered)
-        lp_wrapper(params, driver_type)
+        lp_wrapper(params, driver_type, descriptor=args.descriptor)
         profiling_file = f"profiling_ss_{rank}.txt"
     if args.run_sub_mon:
         lp.add_module(MHSSubstepper)
         lp.add_module(MHSSemiMonolithicSubstepper)
         lp_wrapper = lp(run_semi_monolithic)
-        lp_wrapper(params)
+        lp_wrapper(params, descriptor=args.descriptor)
         profiling_file = f"profiling_sms_{rank}.txt"
     if args.run_ref:
         lp_wrapper = lp(run_reference)

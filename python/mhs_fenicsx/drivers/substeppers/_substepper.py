@@ -31,11 +31,13 @@ class MHSSubstepper(ABC):
         self.fplist = [self.pf]
         ps, pf = self.ps, self.pf
         self.do_writepos = self.params["writepos"]
+        self.only_writepos_macro = self.params.get("only_writepos_macro", False)
         self.writers = dict()
         self.max_nr_iters = max_nr_iters
         self.max_ls_iters = max_ls_iters
-        self.do_predictor = self.params["predictor"]["enabled"]
-        self.predictor_source_term_idx = self.params["predictor"]["source_term"] if "source_term" in self.params["predictor"] else 0
+        self.predictor_params = self.params["predictor"]
+        self.predictor_params["idx_source_term"] = self.predictor_params.get("source_term", 0.0)
+        self.predictor_params["nnlinear"] = self.predictor_params.get("nnlinear", False)
         self.r_ufl, self.j_ufl, self.r_compiled, self.j_compiled = {}, {}, {}, {}
         for mat in pf.material_to_itag:
             pf.material_to_itag[mat] += len(ps.materials)
@@ -104,9 +106,9 @@ class MHSSubstepper(ABC):
         pf.set_linear_solver(pf.input_parameters["petsc_opts_micro"])
         # Subtract fast
         ps.active_els_func.x.array[self.fast_els] = 0.0
-        ps.set_activation(ps.active_els_func, finalize=not(self.do_predictor))
+        ps.set_activation(ps.active_els_func, finalize=not(self.predictor_params["enabled"]))
         self.slow_els = ps.active_els.copy()
-        if self.do_predictor:
+        if self.predictor_params["enabled"]:
             ps.update_boundary()
         set_same_mesh_interface(ps, pf)
         self.dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim, self.fast_els)
@@ -188,22 +190,22 @@ class MHSSubstepper(ABC):
         return subproblem_els_mask.nonzero()[0]
 
     def predictor_step(self, writepos=False):
-        ''' Always linear '''
         if rank == 0:
             print("PREDICTOR step...", flush=True)
         ps = self.ps
         # Save current data
         slow_subdomain_data = ps.form_subdomain_data
         source_term_idx = ps.current_source_term
-        ps.switch_source_term(self.predictor_source_term_idx)
+        ps.switch_source_term(self.predictor_params["idx_source_term"])
         ps.set_activation(self.initial_active_els)
         # MACRO-STEP
         ps.pre_iterate()
         self.instantiate_forms(ps)
         ps.pre_assemble()
-        linear_solve_opts = ps.snes_opts.copy()
-        linear_solve_opts['-snes_type'] = 'ksponly'
-        ps.non_linear_solve(snes_opts=linear_solve_opts)
+        predictor_solver_opts = ps.snes_opts.copy()
+        if not(self.predictor_params["nnlinear"]):
+            predictor_solver_opts['-snes_type'] = 'ksponly'
+        ps.non_linear_solve(snes_opts=predictor_solver_opts)
         #ps.non_linear_solve()
         ps.post_iterate()
 
@@ -292,7 +294,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
     def do_substepped_timestep(self):
         self.update_fast_problem()
         self.pre_loop()
-        if self.do_predictor:
+        if self.predictor_params["enabled"]:
             self.predictor_step(writepos=self.do_writepos)
         for _ in range(self.max_staggered_iters):
             self.pre_iterate()
@@ -504,20 +506,20 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
             self.initialize_post()
         if case=="predictor":
             p, p_ext = (ps, pf)
-            time = 0.0
         elif case=="micro":
             p, p_ext = (pf, ps)
-            time = (self.macro_iter-1) + self.fraction_macro_step
         else:
             p, p_ext = (ps, pf)
-            time = (self.macro_iter-1) + self.fraction_macro_step
+        time = max((self.macro_iter-1) + self.fraction_macro_step, 0.0)
         funs = [p.u, p.gamma_nodes[p_ext],p.source.fem_function,p.active_els_func,p.grad_u,
                 p.u_prev,self.u_prev[p], p.material_id]
         funs += extra_funs
 
         p.compute_gradient()
         #print(f"time = {time}, micro_iter = {self.micro_iter}, macro_iter = {self.macro_iter}")
-        self.writers[pf].write_function(funs,t=time)
+        pass_writepos = self.only_writepos_macro and not(((time>0) and np.round(time, 7).is_integer()))
+        if not(pass_writepos):
+            self.writers[pf].write_function(funs,t=time)
 
 class MHSStaggeredSubstepper(MHSSubstepper):
     def __init__(self,
@@ -537,7 +539,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         self.update_fast_problem()
         staggered_driver.pre_loop(prepare_subproblems=False)
         self.pre_loop()
-        if self.do_predictor:
+        if self.predictor_params["enabled"]:
             self.predictor_step(writepos=self.do_writepos)
         for p in (ps, pf):
             staggered_driver.instantiate_forms(p)
@@ -573,13 +575,11 @@ class MHSStaggeredSubstepper(MHSSubstepper):
             self.initialize_post()
         if case=="predictor":
             p, p_ext = (ps, pf)
-            time = 0.0
         elif case=="micro":
             p, p_ext = (pf, ps)
-            time = (self.macro_iter-1) + self.fraction_macro_step
         else:
             p, p_ext = (ps, pf)
-            time = (self.macro_iter-1) + self.fraction_macro_step
+        time = max((self.macro_iter-1) + self.fraction_macro_step, 0.0)
         funs = [p.u,p.gamma_nodes[p_ext], p.source.fem_function, p.active_els_func, p.grad_u,
                 p.u_prev, self.u_prev[p], p.material_id]
         for fun_dic in [sd.ext_flux,sd.net_ext_flux,sd.ext_sol,
@@ -590,7 +590,9 @@ class MHSStaggeredSubstepper(MHSSubstepper):
                 continue
 
         funs += extra_funs
-        self.writers[p].write_function(funs,t=time)
+        pass_writepos = self.only_writepos_macro and not(((time>0) and np.round(time, 7).is_integer()))
+        if not(pass_writepos):
+            self.writers[p].write_function(funs,t=time)
 
     def is_substepping(self):
         return (self.t1_macro_step - self.pf.time) > 1e-7

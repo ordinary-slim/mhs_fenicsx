@@ -113,6 +113,8 @@ if __name__=="__main__":
     parser.add_argument('-sms','--run-sub-mon',action='store_true')
     parser.add_argument('-t','--testing',action='store_true')
     parser.add_argument('-tsms','--test-semi-mono-substep',action='store_true')
+    parser.add_argument('-d', '--descriptor', default="")
+
     write_gcode(params)
     lp = LineProfiler()
     lp.add_module(Problem)
@@ -129,7 +131,7 @@ if __name__=="__main__":
         lp.add_function(interpolate_solution_to_inactive)
         lp.add_function(interpolate_cg1)
         lp_wrapper = lp(run_staggered_RR)
-        lp_wrapper(params, writepos = True)
+        lp_wrapper(params, descriptor=args.descriptor, writepos = True)
         profiling_file = f"profiling_chimera_rss_{rank}.txt"
     if args.run_sub_mon:
         from mhs_fenicsx.chimera import interpolate_solution_to_inactive
@@ -142,7 +144,7 @@ if __name__=="__main__":
         lp.add_function(interpolate_solution_to_inactive)
         lp.add_function(interpolate_cg1)
         lp_wrapper = lp(run_hodge)
-        lp_wrapper(params,True)
+        lp_wrapper(params, descriptor=args.descriptor, writepos = True)
         profiling_file = f"profiling_chimera_hodge_{rank}.txt"
     if args.testing:
         test_staggered_robin_chimera_substepper()

@@ -232,11 +232,11 @@ class StaggeredInterpDNDriver(StaggeredInterpDDDriver):
                  ):
         (self.p_dirichlet, self.p_neumann) = (p_dirichlet, p_neumann)
         StaggeredInterpDDDriver.__init__(self,
-                                                    p_dirichlet,
-                                                    p_neumann,
-                                                    max_staggered_iters,
-                                                    initial_relaxation_factors,
-                                                    convergence_threshold)
+                                         p_dirichlet,
+                                         p_neumann,
+                                         max_staggered_iters,
+                                         initial_relaxation_factors,
+                                         convergence_threshold)
         self.aitken_relaxation = self.p1.input_parameters.get("aitken_relaxation", True)
 
     def initialize_coupling_functions(self):
@@ -289,13 +289,13 @@ class StaggeredInterpDNDriver(StaggeredInterpDDDriver):
                                         np.float64(1e-6))
 
         # Forms and allocation
+        self.set_dirichlet_interface()
         if prepare_subproblems:
             self.prepare_subproblems(preassemble = preassemble)
 
     def prepare_subproblems(self, preassemble=True):
         (pn, pd) = plist = (self.p_neumann, self.p_dirichlet)
         StaggeredInterpDDDriver.prepare_subproblems(self, preassemble=preassemble)
-        self.set_dirichlet_interface()
 
     def post_iterate(self, verbose=False):
         (pn, pd) = (self.p_neumann, self.p_dirichlet)
@@ -473,7 +473,7 @@ class StaggeredInterpRRDriver(StaggeredInterpDDDriver):
                 self.prev_ext_flux[p].x.array[:] = self.ext_flux[p].x.array[:]
                 self.prev_ext_sol[p].x.array[:] = self.ext_sol[p].x.array[:]
 
-    def pre_loop(self,set_bc=None, prepare_subproblems=True, preassemble=False):
+    def pre_loop(self, set_bc=None, prepare_subproblems=True, preassemble=False):
         '''
         1. Interface data
         2. Vars to receive p_ext data

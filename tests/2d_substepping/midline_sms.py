@@ -2,6 +2,7 @@ import os
 from paraview.simple import *
 import argparse
 import pandas as pd
+import numpy as np
 
 def extract_midline_smsbp(dataset_file):
     paraview.simple._DisableFirstRenderCameraReset()
@@ -83,8 +84,9 @@ def extract_midline_sspvd(substep_folder):
 
 
     extension = {micro_iters_dataset: 'micro_iters', slow_dataset: 'slow'}
+    df = {micro_iters_dataset: None, slow_dataset: None}
 
-    for dataset in [micro_iters_dataset, slow_dataset]:
+    for dataset in [slow_dataset, micro_iters_dataset]:
         threshold1 = Threshold(Input=dataset)
 
         threshold1.Set(
@@ -110,13 +112,28 @@ def extract_midline_sspvd(substep_folder):
         # save data
         target_csv = os.path.join(substep_folder, f'{dataset_name}-{extension[dataset]}-midline.csv')
         SaveData(target_csv, proxy=plotOverLine1, ChooseArraysToWrite=1, PointDataArrays=['uh'])
-        df = pd.read_csv(target_csv)
-        df = df.drop(columns=['Points:1', 'Points:2'])
-        df = df.rename(columns={'Points:0': 'x'})
-        df = df[['x', 'uh']]
-        df = df.dropna(subset=['uh']).drop_duplicates(subset=['x'])
-        df.to_csv(target_csv, index=False)
-        print(f"Midline data saved to {target_csv}")
+        df[dataset] = pd.read_csv(target_csv)
+        df[dataset] = df[dataset].drop(columns=['Points:1', 'Points:2'])
+        df[dataset] = df[dataset].rename(columns={'Points:0': 'x'})
+        df[dataset] = df[dataset][['x', 'uh']]
+        df[dataset] = df[dataset].dropna(subset=['uh']).drop_duplicates(subset=['x'])
+        df[dataset] = df[dataset].sort_values("x").reset_index(drop=True)
+        if dataset == slow_dataset:
+            dx = df[dataset]["x"].diff()
+            gap_indices = dx[dx > 0.1].index
+            assert(len(gap_indices) == 1)
+            gap_idx = gap_indices[0]
+    sides_left  = df[slow_dataset].iloc[:gap_idx].copy()
+    sides_right = df[slow_dataset].iloc[gap_idx:].copy()
+    x_left  = sides_left["x"].iloc[-1]
+    x_right = sides_right["x"].iloc[0]
+    nan_row_left = pd.DataFrame({'x': [x_left], 'uh': [np.nan]})
+    nan_row_right = pd.DataFrame({'x': [x_right], 'uh': [np.nan]})
+    df = pd.concat([sides_left, nan_row_left, df[micro_iters_dataset], nan_row_right, sides_right], ignore_index=True)
+
+    target_csv = os.path.join(substep_folder, f'{dataset_name}-midline.csv')
+    df.to_csv(target_csv, index=False, na_rep='NaN')
+    print(f"Midline data saved to {target_csv}")
 
 
 if __name__ == "__main__":

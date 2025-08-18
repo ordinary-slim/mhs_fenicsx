@@ -36,7 +36,7 @@ class MHSSubstepper(ABC):
         self.max_nr_iters = max_nr_iters
         self.max_ls_iters = max_ls_iters
         self.predictor_params = self.params["predictor"]
-        self.predictor_params["idx_source_term"] = self.predictor_params.get("source_term", 0.0)
+        self.predictor_params["idx_source_term"] = self.predictor_params.get("source_term", 0)
         self.predictor_params["nnlinear"] = self.predictor_params.get("nnlinear", False)
         self.r_ufl, self.j_ufl, self.r_compiled, self.j_compiled = {}, {}, {}, {}
         for mat in pf.material_to_itag:

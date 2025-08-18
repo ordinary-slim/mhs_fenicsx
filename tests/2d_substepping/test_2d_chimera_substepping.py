@@ -17,6 +17,7 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
 def run_staggered_RR(params, writepos=True):
+    write_gcode(params)
     radius = params["source_terms"][0]["radius"]
     big_mesh = get_mesh(params, radius, 2)
 
@@ -51,6 +52,7 @@ def run_staggered_RR(params, writepos=True):
     return ps
 
 def run_hodge(params, writepos=True):
+    write_gcode(params)
     els_per_radius = params["els_per_radius"]
     radius = params["source_terms"][0]["radius"]
     big_mesh = get_mesh(params, radius, 2)
@@ -106,19 +108,21 @@ def test_sms_chimera_substepper():
     assert_pointwise_vals(p,points,vals)
 
 if __name__=="__main__":
-    with open("input.yaml", 'r') as f:
-        params = yaml.safe_load(f)
     parser = argparse.ArgumentParser()
     parser.add_argument('-ss','--run-sub-sta',action='store_true')
     parser.add_argument('-sms','--run-sub-mon',action='store_true')
     parser.add_argument('-t','--testing',action='store_true')
     parser.add_argument('-tsms','--test-semi-mono-substep',action='store_true')
     parser.add_argument('-d', '--descriptor', default="")
+    parser.add_argument('-i', '--input-file', default="input.yaml")
 
-    write_gcode(params)
+    args = parser.parse_args()
+    input_file = args.input_file
+    with open(input_file, 'r') as f:
+        params = yaml.safe_load(f)
+
     lp = LineProfiler()
     lp.add_module(Problem)
-    args = parser.parse_args()
     if args.run_sub_sta:
         from mhs_fenicsx.chimera import interpolate_solution_to_inactive
         from mhs_fenicsx.problem.helpers import interpolate_cg1

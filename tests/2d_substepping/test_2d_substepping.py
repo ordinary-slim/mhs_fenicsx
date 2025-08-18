@@ -76,6 +76,7 @@ def get_mesh(params, radius, dim):
 
 
 def run_staggered(params, driver_type, descriptor="", writepos=True):
+    write_gcode(params)
     radius = params["source_terms"][0]["radius"]
     if   driver_type=="robin":
         driver_constructor = StaggeredInterpRRDriver
@@ -117,6 +118,7 @@ def run_staggered(params, driver_type, descriptor="", writepos=True):
     return big_p
 
 def run_semi_monolithic(params, descriptor="", writepos=True):
+    write_gcode(params)
     radius = params["source_terms"][0]["radius"]
     big_mesh = get_mesh(params, radius, 2)
 
@@ -142,6 +144,7 @@ def run_semi_monolithic(params, descriptor="", writepos=True):
     return big_p
 
 def run_reference(params, descriptor="", writepos=True):
+    write_gcode(params)
     radius = params["source_terms"][0]["radius"]
     speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     domain = get_mesh(params, radius, 2)
@@ -217,18 +220,17 @@ if __name__=="__main__":
     parser.add_argument('-sms','--run-sub-mon',action='store_true')
     parser.add_argument('-r','--run-ref',action='store_true')
     parser.add_argument('-t','--run-test',action='store_true')
-
     parser.add_argument('-d', '--descriptor', default="")
     parser.add_argument('-i','--input-file', default='input.yaml')
 
     args = parser.parse_args()
     input_file = args.input_file
+    with open(input_file, 'r') as f:
+        params = yaml.safe_load(f)
 
     lp = LineProfiler()
     lp.add_module(Problem)
-    with open(input_file, 'r') as f:
-        params = yaml.safe_load(f)
-    write_gcode(params)
+
     profiling_file = None
     if args.run_sub_sta:
         from mhs_fenicsx.submesh import build_subentity_to_parent_mapping, find_submesh_interface, \

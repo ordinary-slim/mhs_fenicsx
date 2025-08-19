@@ -28,11 +28,11 @@ material_metal : {
   density : 4.3E-06, # kg / mm3
   conductivity : 5.0E-03, # W / mm / K
   specific_heat : 700, # J / kg / K
-  phase_change : {
-    latent_heat : 350.0E+03,
-    solidus_temperature : &solidus_temperature 1600.0,
-    liquidus_temperature : 1650.0
-  }
+  #phase_change : {
+  #  latent_heat : 350.0E+03,
+  #  solidus_temperature : &solidus_temperature 1600.0,
+  #  liquidus_temperature : 1650.0
+  #}
 }
 smoothing_cte_phase_change : 0.5
 #convection_coeff : 1.0E-00
@@ -111,7 +111,7 @@ domain_width: 2.0
 width_path_fraction: 0.8
 domain_height: 0.4
 height_path_fraction: 0.8
-els_per_radius: &els_per_radius 8
+els_per_radius: &els_per_radius 4
 straight_line : True
 
 max_timesteps: -1
@@ -127,8 +127,8 @@ max_ls_iters: 5
 post_freq : 8
 
 substepping_parameters: {
-  micro_adim_dt: 0.25,
-  macro_adim_dt: 4.0,
+  micro_adim_dt: 0.5,
+  macro_adim_dt: 16.0,
   max_staggered_iters: 1,
   adim_lens: {
     back_pad : 3,
@@ -138,12 +138,13 @@ substepping_parameters: {
     bot_pad : 3,
   },
   predictor: {
+    theoretical: True,
     enabled :  True,
     source_term : 2,
     nnlinear : True,
   },
   writepos: True,
-  only_writepos_macro: True,
+  only_writepos_macro: False,
   chimera_always_on: False,
   chimera_driver: {
     type: "monolithic",

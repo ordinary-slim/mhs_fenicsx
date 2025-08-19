@@ -198,20 +198,24 @@ class MHSSubstepper(ABC):
         source_term_idx = ps.current_source_term
         ps.switch_source_term(self.predictor_params["idx_source_term"])
         ps.set_activation(self.initial_active_els)
-        # MACRO-STEP
+        prev_iter = ps.iter
+
         ps.pre_iterate()
-        self.instantiate_forms(ps)
-        ps.pre_assemble()
-        predictor_solver_opts = ps.snes_opts.copy()
-        if not(self.predictor_params["nnlinear"]):
-            predictor_solver_opts['-snes_type'] = 'ksponly'
-        ps.non_linear_solve(snes_opts=predictor_solver_opts)
-        #ps.non_linear_solve()
+        if "custom" in self.predictor_params:
+            ps.u.x.array[:] = self.predictor_params["custom"].x.array[:]
+            if rank == 0:
+                print("Fed CUSTOM PREDICTOR", flush=True)
+        else:
+            # MACRO-STEP
+            self.instantiate_forms(ps)
+            ps.pre_assemble()
+            predictor_solver_opts = ps.snes_opts.copy()
+            if not(self.predictor_params["nnlinear"]):
+                predictor_solver_opts['-snes_type'] = 'ksponly'
+            ps.non_linear_solve(snes_opts=predictor_solver_opts)
         ps.post_iterate()
 
-        # Reset iter to prev.
-        # Useful for writepos
-        ps.iter -= 1
+        ps.iter = prev_iter
         if writepos:
             self.writepos("predictor")
         ps.switch_source_term(source_term_idx)
@@ -516,10 +520,9 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         funs += extra_funs
 
         p.compute_gradient()
-        #print(f"time = {time}, micro_iter = {self.micro_iter}, macro_iter = {self.macro_iter}")
         pass_writepos = self.only_writepos_macro and not(((time>0) and np.round(time, 7).is_integer()))
         if not(pass_writepos):
-            self.writers[pf].write_function(funs,t=time)
+            self.writers[pf].write_function(funs,t=np.round(time, 8))
 
 class MHSStaggeredSubstepper(MHSSubstepper):
     def __init__(self,
@@ -592,7 +595,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         funs += extra_funs
         pass_writepos = self.only_writepos_macro and not(((time>0) and np.round(time, 7).is_integer()))
         if not(pass_writepos):
-            self.writers[p].write_function(funs,t=time)
+            self.writers[p].write_function(funs,t=np.round(time, 8))
 
     def is_substepping(self):
         return (self.t1_macro_step - self.pf.time) > 1e-7

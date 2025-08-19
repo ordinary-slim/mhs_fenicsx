@@ -1,6 +1,6 @@
 from line_profiler import LineProfiler
 from mpi4py import MPI
-from dolfinx import mesh
+from dolfinx import mesh, io
 from mhs_fenicsx.problem import Problem
 from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubstepper, MHSSemiMonolithicSubstepper
 import yaml
@@ -119,6 +119,7 @@ def run_staggered(params, driver_type, descriptor="", writepos=True):
 
 def run_semi_monolithic(params, descriptor="", writepos=True):
     write_gcode(params)
+    theoretical_predictor = params["substepping_parameters"]["predictor"].get("theoretical", False)
     radius = params["source_terms"][0]["radius"]
     big_mesh = get_mesh(params, radius, 2)
 
@@ -134,13 +135,43 @@ def run_semi_monolithic(params, descriptor="", writepos=True):
     substeppin_driver = MHSSemiMonolithicSubstepper(big_p)
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
 
+    if theoretical_predictor:
+        ps2 = ps.copy(name=f"{descriptor}_theoretical_predictor")
+        micro_dt = ps.dimensionalize_mhs_timestep(ps.source.path.tracks[0], params["substepping_parameters"]["micro_adim_dt"])
+        macro_dt = ps.dimensionalize_mhs_timestep(ps.source.path.tracks[0], params["substepping_parameters"]["macro_adim_dt"])
+        ps2.set_dt(micro_dt)
+        ps2.set_forms()
+        ps2.compile_forms()
+        ps2.reset_activation(finalize=True)
+        ps.input_parameters["substepping_parameters"]["predictor"]["custom"] = ps2.u
+
     itime_step = 0
     while ((itime_step < max_timesteps) and not(big_p.is_path_over())):
+        if theoretical_predictor:
+            # This while loop is not super robust, but should work for simple
+            # case without cooling
+            dt_s = min(macro_dt, ps.source.path.times[-1] - ps.time)
+            writer = io.VTXWriter(ps2.domain.comm,
+                                  f"post_substep#{itime_step}_{ps2.name}.bp",
+                                  output=[ps2.u, ps2.u_prev])
+            while (np.round(ps.time + dt_s - ps2.time, 6) > 0):
+                ps2.pre_iterate()
+                ps2.instantiate_forms()
+                ps2.pre_assemble()
+                ps2.non_linear_solve()
+                ps2.post_iterate()
+                t = np.round((ps2.time - ps.time) / dt_s, 6)
+                writer.write(np.round(t, 7))
+            writer.close()
+
         itime_step += 1
         substeppin_driver.do_timestep()
         if writepos:
             for p in [ps,pf]:
                 p.writepos(extension="vtx")
+        if theoretical_predictor:
+            ps2.u.x.array[:] = ps.u.x.array[:]
+
     return big_p
 
 def run_reference(params, descriptor="", writepos=True):
@@ -175,7 +206,6 @@ def run_reference(params, descriptor="", writepos=True):
         if writepos and (abs(ps.time / macro_dt - np.rint(ps.time / macro_dt)) < 1e-7):
             ps.writepos(extension="vtx")
     return ps
-
 
 def test_staggered_robin_substepper():
     with open("test_input.yaml", 'r') as f:

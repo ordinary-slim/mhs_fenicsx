@@ -142,7 +142,7 @@ class Problem:
             pass
         self._destroy()
 
-    def copy(self,name=None):
+    def copy(self, name=None):
         self.is_mesh_shared = True
         to_be_skipped = set([
             "restriction",

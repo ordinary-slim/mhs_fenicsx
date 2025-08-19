@@ -4,9 +4,16 @@ import argparse
 import pandas as pd
 import numpy as np
 
+def cleanup_csv(target_csv):
+    df = pd.read_csv(target_csv)
+    df = df.drop(columns=['Points:1', 'Points:2'])
+    df = df.rename(columns={'Points:0': 'x'})
+    df = df.dropna(subset=['uh']).drop_duplicates(subset=['x'])
+    df.to_csv(target_csv, index=False)
+
 def extract_midline_smsbp(dataset_file):
     paraview.simple._DisableFirstRenderCameraReset()
-    dataset_name = os.path.basename(dataset_file).split('.')[0]
+    dataset_name = os.path.basename(dataset_file.rstrip("/")).split('.')[0]
     dataset_folder = os.path.dirname(dataset_file)
 
     # create a new 'ADIOS2VTXReader'
@@ -63,12 +70,8 @@ def extract_midline_smsbp(dataset_file):
     # save data
     target_csv = os.path.join(dataset_folder, f'{dataset_name}-midline.csv')
     SaveData(target_csv, proxy=plotOverLine1, ChooseArraysToWrite=1, PointDataArrays=['uh'])
-    df = pd.read_csv(target_csv)
-    df = df.drop(columns=['Points:1', 'Points:2'])
-    df = df.rename(columns={'Points:0': 'x'})
-    df = df[['x', 'uh']]
-    df = df.dropna(subset=['uh']).drop_duplicates(subset=['x'])
-    df.to_csv(target_csv, index=False)
+
+    cleanup_csv(target_csv)
     print(f"Midline data saved to {target_csv}")
 
 def extract_midline_sspvd(substep_folder):
@@ -81,7 +84,6 @@ def extract_midline_sspvd(substep_folder):
     # create a new 'PVD Reader'
     micro_iters_dataset = PVDReader(registrationName='micro_iters.pvd', FileName= micro_iters_pvd)
     slow_dataset = PVDReader(registrationName='slow.pvd', FileName= slow_pvd)
-
 
     extension = {micro_iters_dataset: 'micro_iters', slow_dataset: 'slow'}
     df = {micro_iters_dataset: None, slow_dataset: None}
@@ -135,12 +137,89 @@ def extract_midline_sspvd(substep_folder):
     df.to_csv(target_csv, index=False, na_rep='NaN')
     print(f"Midline data saved to {target_csv}")
 
+def wrong_interpolation_csvs(substep_folder, predictor_bp):
+    paraview.simple._DisableFirstRenderCameraReset()
+    dataset_name = os.path.dirname(substep_folder)
+    dataset_name = dataset_name.split("post_")[-1]
+    dataset_name = dataset_name.split('_substeps')[0]
+
+    predictor_name = os.path.basename(predictor_bp.rstrip("/")).split('.')[0]
+    predictor_folder = os.path.dirname(predictor_bp)
+
+    micro_iters_pvd = f"{substep_folder}/{dataset_name}_micro_iters.pvd"
+    # create a new 'PVD Reader'
+    micro_iters_dataset = PVDReader(registrationName='micro_iters.pvd', FileName= micro_iters_pvd)
+
+    predictor_ds = ADIOS2VTXReader(registrationName='sms_predictor.bp', FileName=predictor_bp)
+    predictor_ds = RemoveGhostInformation(Input=predictor_ds)
+
+    threshold1 = Threshold(Input=micro_iters_dataset)
+    threshold1.Set(
+        Scalars=['CELLS', 'active_els'],
+        UpperThreshold=0.1,
+        ThresholdMethod='Above Upper Threshold',
+    )
+
+    active_ds = RemoveGhostInformation(Input=threshold1)
+    ds = RemoveGhostInformation(Input=micro_iters_dataset)
+
+    active_plot = PlotOverLine(Input=active_ds)
+    plot = PlotOverLine(Input=ds)
+    predictor_plot = PlotOverLine(Input=predictor_ds)
+
+    for p in [active_plot, plot, predictor_plot]:
+        p.Set(
+            SamplingPattern = 'Sample At Cell Boundaries',
+            Point1=[-1.0, 0.0, 0.0],
+            Point2=[+1.0, 0.0, 0.0],
+        )
+
+    ## FROM PLOT, WE WANT UH_N AND UH AT TIME 0, AND UH AT TIME 1.0
+
+    def get_target_csv(time, sol=True):
+        time_str = str(time).replace(".", "_")
+        if sol:
+            folder = substep_folder
+            dsname = dataset_name
+        else:
+            # predictor
+            folder = predictor_folder
+            dsname = predictor_name
+        csv_name = f'{dsname}-midline_t{time_str}.csv'
+        csv_name = csv_name.replace("#", "")
+        return os.path.join(folder, csv_name)
+
+    def write_csv(p, time, arrays, sol=True):
+        p.UpdatePipeline(time=time)
+        # save data
+        target_csv = get_target_csv(time, sol=sol)
+        SaveData(target_csv,
+                 proxy=p,
+                 ChooseArraysToWrite=1,
+                 PointDataArrays=arrays)
+        cleanup_csv(target_csv)
+        print(f"Wrote {target_csv} for time {time}")
+
+    write_csv(plot, 0.0, ['uh', 'uh_n'])
+    write_csv(plot, 1.0, ['uh'])
+
+    ## FROM ACTIVE_PLOT, WE WANT UH at intermediate times
+    ## SAME FROM PREDICTOR_PLOT
+    for t in micro_iters_dataset.TimestepValues:
+        if np.isclose(t, 0.0) or np.isclose(t, 1.0):
+            continue
+        write_csv(active_plot, t, ['uh'], sol=True)
+        write_csv(predictor_plot, t, ['uh'], sol=False)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('data')
+    parser.add_argument('data_bis', default=None)
     args = parser.parse_args()
-    if args.data.endswith('.pvd'):
+    if args.data_bis is not None:
+        wrong_interpolation_csvs(args.data, args.data_bis)
+    elif args.data.endswith('.pvd'):
         extract_midline_smsbp(args.data)
     else:
         extract_midline_sspvd(args.data)

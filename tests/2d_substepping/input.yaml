@@ -116,8 +116,8 @@ straight_line : True
 
 max_timesteps: -1
 dt : 1.0
-driver_type: "robin"
-aitken_relaxation: False
+driver_type: "dn"
+aitken_relaxation: True
 initial_condition: False
 quadrature_metadata: {}
 supg: 1
@@ -127,9 +127,9 @@ max_ls_iters: 5
 post_freq : 8
 
 substepping_parameters: {
-  micro_adim_dt: 0.125,
-  macro_adim_dt: 16.0,
-  max_staggered_iters: 1,
+  micro_adim_dt: 0.25,
+  macro_adim_dt: 8.0,
+  max_staggered_iters: 12,
   adim_lens: {
     back_pad : 3,
     front_pad : 3,
@@ -138,13 +138,13 @@ substepping_parameters: {
     bot_pad : 3,
   },
   predictor: {
-    theoretical: True,
+    theoretical: False,
     enabled :  True,
     source_term : 2,
     nnlinear : True,
   },
   writepos: True,
-  only_writepos_macro: False,
+  only_writepos_macro: True,
   chimera_always_on: False,
   chimera_driver: {
     type: "monolithic",

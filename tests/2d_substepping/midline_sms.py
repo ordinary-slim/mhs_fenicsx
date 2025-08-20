@@ -74,9 +74,11 @@ def extract_midline_smsbp(dataset_file):
     cleanup_csv(target_csv)
     print(f"Midline data saved to {target_csv}")
 
-def extract_midline_sspvd(substep_folder):
+def extract_midline_sspvd(substep_folder, times=[1.0]):
     paraview.simple._DisableFirstRenderCameraReset()
     dataset_name = os.path.dirname(substep_folder)
+    if not(dataset_name):
+        dataset_name = os.path.basename(substep_folder)
     dataset_name = dataset_name.split("post_")[-1]
     dataset_name = dataset_name.split('_substeps')[0]
     slow_pvd = f"{substep_folder}/{dataset_name}.pvd"
@@ -86,56 +88,71 @@ def extract_midline_sspvd(substep_folder):
     slow_dataset = PVDReader(registrationName='slow.pvd', FileName= slow_pvd)
 
     extension = {micro_iters_dataset: 'micro_iters', slow_dataset: 'slow'}
-    df = {micro_iters_dataset: None, slow_dataset: None}
+    mode = "sms" if 'sms' in dataset_name else "ss"
+    upper_threshold_activation = 0.1 * (mode == "ss")
 
-    for dataset in [slow_dataset, micro_iters_dataset]:
-        threshold1 = Threshold(Input=dataset)
+    if isinstance(times, (str)):
+        times = [float(t) for t in times.split(',')]
+        if times[0] == -1.0:
+            times = micro_iters_dataset.TimestepValues
 
-        threshold1.Set(
-            Scalars=['CELLS', 'active_els'],
-            UpperThreshold=0.1,
-            ThresholdMethod='Above Upper Threshold',
-        )
+    for time in times:
+        df = {micro_iters_dataset: None, slow_dataset: None}
+        for dataset in [slow_dataset, micro_iters_dataset]:
+            if mode == "sms" and dataset == slow_dataset:
+                continue
+            threshold1 = Threshold(Input=dataset)
 
-        removeGhostInformation1 = RemoveGhostInformation(Input=threshold1)
+            threshold1.Set(
+                Scalars=['CELLS', 'active_els'],
+                UpperThreshold=upper_threshold_activation,
+                ThresholdMethod='Above Upper Threshold',
+            )
 
-        # create a new 'Plot Over Line'
-        plotOverLine1 = PlotOverLine(Input=removeGhostInformation1)
+            removeGhostInformation1 = RemoveGhostInformation(Input=threshold1)
 
-        # Properties modified on plotOverLine1
-        plotOverLine1.Set(
-            SamplingPattern = 'Sample At Cell Boundaries',
-            Point1=[-1.0, 0.0, 0.0],
-            Point2=[+1.0, 0.0, 0.0],
-        )
+            # create a new 'Plot Over Line'
+            plotOverLine1 = PlotOverLine(Input=removeGhostInformation1)
 
-        plotOverLine1.UpdatePipeline(time=1.0)
+            # Properties modified on plotOverLine1
+            plotOverLine1.Set(
+                SamplingPattern = 'Sample At Cell Boundaries',
+                Point1=[-1.0, 0.0, 0.0],
+                Point2=[+1.0, 0.0, 0.0],
+            )
 
-        # save data
-        target_csv = os.path.join(substep_folder, f'{dataset_name}-{extension[dataset]}-midline.csv')
-        SaveData(target_csv, proxy=plotOverLine1, ChooseArraysToWrite=1, PointDataArrays=['uh'])
-        df[dataset] = pd.read_csv(target_csv)
-        df[dataset] = df[dataset].drop(columns=['Points:1', 'Points:2'])
-        df[dataset] = df[dataset].rename(columns={'Points:0': 'x'})
-        df[dataset] = df[dataset][['x', 'uh']]
-        df[dataset] = df[dataset].dropna(subset=['uh']).drop_duplicates(subset=['x'])
-        df[dataset] = df[dataset].sort_values("x").reset_index(drop=True)
-        if dataset == slow_dataset:
-            dx = df[dataset]["x"].diff()
-            gap_indices = dx[dx > 0.1].index
-            assert(len(gap_indices) == 1)
-            gap_idx = gap_indices[0]
-    sides_left  = df[slow_dataset].iloc[:gap_idx].copy()
-    sides_right = df[slow_dataset].iloc[gap_idx:].copy()
-    x_left  = sides_left["x"].iloc[-1]
-    x_right = sides_right["x"].iloc[0]
-    nan_row_left = pd.DataFrame({'x': [x_left], 'uh': [np.nan]})
-    nan_row_right = pd.DataFrame({'x': [x_right], 'uh': [np.nan]})
-    df = pd.concat([sides_left, nan_row_left, df[micro_iters_dataset], nan_row_right, sides_right], ignore_index=True)
+            plotOverLine1.UpdatePipeline(time=time)
 
-    target_csv = os.path.join(substep_folder, f'{dataset_name}-midline.csv')
-    df.to_csv(target_csv, index=False, na_rep='NaN')
-    print(f"Midline data saved to {target_csv}")
+            # save data
+            target_csv = os.path.join(substep_folder, f'{dataset_name}-{extension[dataset]}-midline.csv')
+            SaveData(target_csv, proxy=plotOverLine1, ChooseArraysToWrite=1, PointDataArrays=['uh'])
+            df[dataset] = pd.read_csv(target_csv)
+            df[dataset] = df[dataset].drop(columns=['Points:1', 'Points:2'])
+            df[dataset] = df[dataset].rename(columns={'Points:0': 'x'})
+            df[dataset] = df[dataset][['x', 'uh']]
+            df[dataset] = df[dataset].dropna(subset=['uh']).drop_duplicates(subset=['x'])
+            df[dataset] = df[dataset].sort_values("x").reset_index(drop=True)
+            if dataset == slow_dataset:
+                dx = df[dataset]["x"].diff()
+                gap_indices = dx[dx > 0.1].index
+                assert(len(gap_indices) == 1)
+                gap_idx = gap_indices[0]
+        if mode == "ss":
+            sides_left  = df[slow_dataset].iloc[:gap_idx].copy()
+            sides_right = df[slow_dataset].iloc[gap_idx:].copy()
+            x_left  = sides_left["x"].iloc[-1]
+            x_right = sides_right["x"].iloc[0]
+            nan_row_left = pd.DataFrame({'x': [x_left], 'uh': [np.nan]})
+            nan_row_right = pd.DataFrame({'x': [x_right], 'uh': [np.nan]})
+            df = pd.concat([sides_left, nan_row_left, df[micro_iters_dataset], nan_row_right, sides_right], ignore_index=True)
+        else:
+            df = df[micro_iters_dataset]
+
+        csvname = f'{dataset_name}-midline-t{time:g}'
+        csvname = csvname.replace(".", "_") + ".csv"
+        target_csv = os.path.join(substep_folder, csvname)
+        df.to_csv(target_csv, index=False, na_rep='NaN')
+        print(f"Midline data saved to {target_csv}")
 
 def wrong_interpolation_csvs(substep_folder, predictor_bp):
     paraview.simple._DisableFirstRenderCameraReset()
@@ -150,8 +167,8 @@ def wrong_interpolation_csvs(substep_folder, predictor_bp):
     # create a new 'PVD Reader'
     micro_iters_dataset = PVDReader(registrationName='micro_iters.pvd', FileName= micro_iters_pvd)
 
-    predictor_ds = ADIOS2VTXReader(registrationName='sms_predictor.bp', FileName=predictor_bp)
-    predictor_ds = RemoveGhostInformation(Input=predictor_ds)
+    predictor_ds_raw = ADIOS2VTXReader(registrationName='sms_predictor.bp', FileName=predictor_bp)
+    predictor_ds = RemoveGhostInformation(Input=predictor_ds_raw)
 
     threshold1 = Threshold(Input=micro_iters_dataset)
     threshold1.Set(
@@ -209,17 +226,19 @@ def wrong_interpolation_csvs(substep_folder, predictor_bp):
         if np.isclose(t, 0.0) or np.isclose(t, 1.0):
             continue
         write_csv(active_plot, t, ['uh'], sol=True)
-        write_csv(predictor_plot, t, ['uh'], sol=False)
-
+        tpred = predictor_ds_raw.TimestepValues[np.argmin([abs(tp - t) for tp in predictor_ds_raw.TimestepValues])]
+        write_csv(predictor_plot, tpred, ['uh'], sol=False)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('data')
-    parser.add_argument('data_bis', default=None)
-    args = parser.parse_args()
-    if args.data_bis is not None:
-        wrong_interpolation_csvs(args.data, args.data_bis)
-    elif args.data.endswith('.pvd'):
-        extract_midline_smsbp(args.data)
-    else:
-        extract_midline_sspvd(args.data)
+    parser.add_argument('-d', '--data', required=True, help='Path to the dataset file (PVD or BP)')
+    parser.add_argument('-b', '--data-bis', default=None, help='Path to the second dataset file (for wrong interpolation CSVs)')
+    parser.add_argument('-t', '--time', default=[1.0])
+    arguments = parser.parse_args()
+
+    if arguments.data_bis is not None:
+        wrong_interpolation_csvs(arguments.data, arguments.data_bis)
+    elif arguments.data.endswith('.bp'):
+        extract_midline_smsbp(arguments.data)
+    elif "substeps_tstep" in arguments.data:
+        extract_midline_sspvd(arguments.data, times=arguments.time)

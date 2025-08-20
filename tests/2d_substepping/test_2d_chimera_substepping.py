@@ -16,14 +16,15 @@ from line_profiler import LineProfiler
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-def run_staggered_RR(params, writepos=True):
+def run_staggered_RR(params, descriptor="", writepos=True):
     write_gcode(params)
     radius = params["source_terms"][0]["radius"]
     big_mesh = get_mesh(params, radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(big_mesh, macro_params, name=f"big_chimera_ss_RR")
+    descriptor = "chimera_ss_robin_" + descriptor
+    ps = Problem(big_mesh, macro_params, name=descriptor)
     els_per_radius = macro_params["moving_domain_params"]["els_per_radius"]
     pm = build_moving_problem(ps, els_per_radius)
     initial_condition_fun = get_initial_condition(params)
@@ -51,7 +52,7 @@ def run_staggered_RR(params, writepos=True):
             ps.writepos(extension="vtx")
     return ps
 
-def run_hodge(params, writepos=True):
+def run_hodge(params, descriptor="", writepos=True):
     write_gcode(params)
     els_per_radius = params["els_per_radius"]
     radius = params["source_terms"][0]["radius"]
@@ -59,7 +60,8 @@ def run_hodge(params, writepos=True):
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(big_mesh, macro_params, name=f"big_chimera_sms")
+    descriptor = f"chimera_sms_" + descriptor
+    ps = Problem(big_mesh, macro_params, name=descriptor)
     els_per_radius = macro_params["moving_domain_params"]["els_per_radius"]
     pm = build_moving_problem(ps, els_per_radius)
     initial_condition_fun = get_initial_condition(params)

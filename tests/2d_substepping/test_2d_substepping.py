@@ -139,6 +139,7 @@ def run_semi_monolithic(params, descriptor="", writepos=True):
         ps2 = ps.copy(name=f"{descriptor}_theoretical_predictor")
         micro_dt = ps.dimensionalize_mhs_timestep(ps.source.path.tracks[0], params["substepping_parameters"]["micro_adim_dt"])
         macro_dt = ps.dimensionalize_mhs_timestep(ps.source.path.tracks[0], params["substepping_parameters"]["macro_adim_dt"])
+        num_substeps = np.rint(macro_dt / micro_dt).astype(int)
         ps2.set_dt(micro_dt)
         ps2.set_forms()
         ps2.compile_forms()
@@ -154,12 +155,16 @@ def run_semi_monolithic(params, descriptor="", writepos=True):
             writer = io.VTXWriter(ps2.domain.comm,
                                   f"post_substep#{itime_step}_{ps2.name}.bp",
                                   output=[ps2.u, ps2.u_prev])
+            isubstep_pred = 0
             while (np.round(ps.time + dt_s - ps2.time, 6) > 0):
+                isubstep_pred += 1
                 ps2.pre_iterate()
                 ps2.instantiate_forms()
                 ps2.pre_assemble()
                 ps2.non_linear_solve()
                 ps2.post_iterate()
+                if isubstep_pred == (num_substeps - 1):
+                    ps.input_parameters["substepping_parameters"]["predictor"]["force_last_substep"] = ps2.u.copy()
                 t = np.round((ps2.time - ps.time) / dt_s, 6)
                 writer.write(np.round(t, 7))
             writer.close()
@@ -203,8 +208,8 @@ def run_reference(params, descriptor="", writepos=True):
         ps.pre_assemble()
         ps.non_linear_solve()
         ps.post_iterate()
-        if writepos and (abs(ps.time / macro_dt - np.rint(ps.time / macro_dt)) < 1e-7):
-            ps.writepos(extension="vtx")
+        #if writepos and (abs(ps.time / macro_dt - np.rint(ps.time / macro_dt)) < 1e-7):
+        #    ps.writepos(extension="vtx")
     return ps
 
 def test_staggered_robin_substepper():

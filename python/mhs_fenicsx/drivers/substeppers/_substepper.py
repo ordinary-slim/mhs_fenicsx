@@ -254,6 +254,8 @@ class MHSSubstepper(ABC):
             self.prepare_micro_step()
             self.micro_pre_iterate()
             self.micro_step()
+            if not(self.is_substepping()):
+                self.pf.u.x.array[:] = self.ps.input_parameters["substepping_parameters"]["predictor"]["force_last_substep"].x.array[:]
             self.writepos(case="micro")
             self.micro_post_iterate()
 
@@ -459,7 +461,6 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 
     def monolithic_step(self):
         (ps, pf) = (self.ps, self.pf)
-
         pf.pre_iterate()
         ps.pre_iterate(forced_time_derivative=True)
 

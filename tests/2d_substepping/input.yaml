@@ -111,7 +111,7 @@ domain_width: 2.0
 width_path_fraction: 0.8
 domain_height: 0.4
 height_path_fraction: 0.8
-els_per_radius: &els_per_radius 16
+els_per_radius: &els_per_radius 8
 straight_line : True
 
 max_timesteps: -1
@@ -143,7 +143,7 @@ substepping_parameters: {
     source_term : 2,
     nnlinear : True,
   },
-  writepos: True,
+  writepos: False,
   only_writepos_macro: False,
   chimera_always_on: False,
   chimera_driver: {

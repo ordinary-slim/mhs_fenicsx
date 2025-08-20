@@ -150,8 +150,8 @@ def wrong_interpolation_csvs(substep_folder, predictor_bp):
     # create a new 'PVD Reader'
     micro_iters_dataset = PVDReader(registrationName='micro_iters.pvd', FileName= micro_iters_pvd)
 
-    predictor_ds = ADIOS2VTXReader(registrationName='sms_predictor.bp', FileName=predictor_bp)
-    predictor_ds = RemoveGhostInformation(Input=predictor_ds)
+    predictor_ds_raw = ADIOS2VTXReader(registrationName='sms_predictor.bp', FileName=predictor_bp)
+    predictor_ds = RemoveGhostInformation(Input=predictor_ds_raw)
 
     threshold1 = Threshold(Input=micro_iters_dataset)
     threshold1.Set(
@@ -209,17 +209,18 @@ def wrong_interpolation_csvs(substep_folder, predictor_bp):
         if np.isclose(t, 0.0) or np.isclose(t, 1.0):
             continue
         write_csv(active_plot, t, ['uh'], sol=True)
-        write_csv(predictor_plot, t, ['uh'], sol=False)
+        tpred = predictor_ds_raw.TimestepValues[np.argmin([abs(tp - t) for tp in predictor_ds_raw.TimestepValues])]
+        write_csv(predictor_plot, tpred, ['uh'], sol=False)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('data')
-    parser.add_argument('data_bis', default=None)
-    args = parser.parse_args()
-    if args.data_bis is not None:
-        wrong_interpolation_csvs(args.data, args.data_bis)
-    elif args.data.endswith('.pvd'):
-        extract_midline_smsbp(args.data)
+    parser.add_argument('-d', '--data', required=True, help='Path to the dataset file (either .pvd or .bp)')
+    parser.add_argument('-b', '--bis', default=None)
+    arguments = parser.parse_args()
+    if arguments.bis is not None:
+        wrong_interpolation_csvs(arguments.data, arguments.bis)
+    elif arguments.data.endswith('.pvd'):
+        extract_midline_smspvd(arguments.data)
     else:
-        extract_midline_sspvd(args.data)
+        extract_midline_smsbp(arguments.data)

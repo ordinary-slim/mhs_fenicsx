@@ -111,12 +111,12 @@ domain_width: 2.0
 width_path_fraction: 0.8
 domain_height: 0.4
 height_path_fraction: 0.8
-els_per_radius: &els_per_radius 16
+els_per_radius: &els_per_radius 4
 straight_line : True
 
-max_timesteps: -1
+max_timesteps: 2
 dt : 1.0
-driver_type: "dn"
+driver_type: "robin"
 aitken_relaxation: True
 initial_condition: False
 quadrature_metadata: {}
@@ -127,9 +127,9 @@ max_ls_iters: 5
 post_freq : 8
 
 substepping_parameters: {
-  micro_adim_dt: 0.25,
+  micro_adim_dt: 0.5,
   macro_adim_dt: 8.0,
-  max_staggered_iters: 12,
+  max_staggered_iters: 1,
   adim_lens: {
     back_pad : 3,
     front_pad : 3,
@@ -144,7 +144,7 @@ substepping_parameters: {
     nnlinear : True,
   },
   writepos: True,
-  only_writepos_macro: True,
+  only_writepos_macro: False,
   chimera_always_on: False,
   chimera_driver: {
     type: "monolithic",
@@ -154,9 +154,10 @@ substepping_parameters: {
   chimera_steadiness_workflow: {
     enabled: True,
     adim_dt_increment : 0.5,
-    max_adim_dt: 0.5,
+    max_adim_dt: 2.0,
     threshold: 0.05,
     min_steps_at_dt: 2,
+    reuse_last_dt : True,
   }
 }
 

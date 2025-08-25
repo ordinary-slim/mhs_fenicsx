@@ -63,12 +63,14 @@ class ChimeraSubstepper(ABC):
         self.micro_post_iterate = micro_post_iterate
         # Steadiness workflow
         self.steadiness_workflow_params = self.params["chimera_steadiness_workflow"]
-        self.steadiness_threshold = self.steadiness_workflow_params["threshold"] \
-            if "threshold" in self.steadiness_workflow_params else 0.05
-        self.min_steps_at_dt = int(self.steadiness_workflow_params["min_steps_at_dt"]) \
-            if "min_steps_at_dt" in self.steadiness_workflow_params else 1
+        self.steadiness_threshold = self.steadiness_workflow_params.get("threshold", 0.15)
+        self.min_steps_at_dt = int(self.steadiness_workflow_params.get("min_steps_at_dt", 1))
         self.steadiness_metric = L2Differ(self.pm)
         self.steadiness_measurements = []
+        # On new substepping cycle, reuse last dt of previous cycle
+        self.reuse_previous_dt = self.steadiness_workflow_params.get(
+            "reuse_last_dt", False)
+        self.last_dt = np.float64(-1.0)
 
     def chimera_post_step_without_substepping(self):
         (pf, pm) = self.pf, self.pm
@@ -80,6 +82,7 @@ class ChimeraSubstepper(ABC):
         super(type(self), self).prepare_micro_step()
         next_track = self.pf.source.path.get_track(pf.time)
         self.direction_change = False
+        self.unsteady_reset = False
         self.rotation_angle = 0.0
         if not(next_track == pf.source.path.current_track):
             d0 = self.current_orientation
@@ -91,7 +94,38 @@ class ChimeraSubstepper(ABC):
 
         if self.direction_change:
             pm.in_plane_rotation(pf.source.x, self.rotation_angle)
+            self.unsteady_reset = True
 
+        if self.unsteady_reset:
+            self.steadiness_measurements.clear()
+            self.chimera_on = self.chimera_always_on
+        else:
+            self.is_steady = self.is_steady_enough()
+            if (self.is_steady) and not(self.chimera_on):
+                self.chimera_on = True
+                self.is_steady = False
+
+        self.chimera_set_timesteps()
+
+    def chimera_set_timesteps(self):
+        (pf, pm) = self.pf, self.pm
+        next_track = self.pf.source.path.get_track(pf.time)
+
+        dt = pf.dt.value
+        if self.unsteady_reset:
+            # Reset timestep to finest
+            dt = pf.dimensionalize_mhs_timestep(next_track, self.params["micro_adim_dt"])
+        else:
+            increasing_dt = self.params["chimera_steadiness_workflow"]["enabled"]
+            if increasing_dt:
+                if np.isclose(self.fraction_macro_step, 0.0) and self.reuse_previous_dt \
+                     and (self.last_dt > 0.0):
+                    dt = self.last_dt
+                if self.is_steady:
+                    increment = pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["adim_dt_increment"])
+                    dt = min(pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["max_adim_dt"]), dt + increment)
+
+        # Compute max allowed dt
         max_dt_substep = self.t1_macro_step - pf.time
         if isinstance(self, MHSSemiMonolithicSubstepper):
             # Leave room for monolithic step
@@ -100,64 +134,57 @@ class ChimeraSubstepper(ABC):
         max_dt = min(max_dt_track, max_dt_substep)
         assert(max_dt > 0.0)
 
-        def set_dt(dt : float):
-            dt = min(dt, max_dt)
-            for p in [pf, pm]:
-                p.set_dt(dt)
-
-        increasing_dt = self.params["chimera_steadiness_workflow"]["enabled"]
-        # STEADINESS WORKFLOW
-        # Unsteady reset
-        if self.direction_change:
-            self.steadiness_measurements.clear()
-            if not(self.chimera_always_on):
-                self.chimera_on = False
-            if increasing_dt:
-                set_dt(pf.dimensionalize_mhs_timestep(next_track, self.params["micro_adim_dt"]))
+        if dt > max_dt:
+            dt = max_dt
         else:
-            if self.is_steady_enough():
-                if not(self.chimera_on):
-                    self.chimera_on = True
-                else:
-                    if increasing_dt:
-                        current_dt = pm.dt.value
-                        increment = pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["adim_dt_increment"])
-                        dt = min(pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["max_adim_dt"]), current_dt + increment)
-                        set_dt(dt)
+            # Don't save dt as last_dt if cut by max_dt
+            self.last_dt = np.float64(dt)
 
-        if pf.dt.value > (max_dt + 1e-7):
-            set_dt(max_dt)
+        for p in [pf, pm]:
+            p.set_dt(dt)
 
     def is_steady_enough(self):
         if self.params["chimera_steadiness_workflow"]["enabled"]:
             yes = (len(self.steadiness_measurements) > self.min_steps_at_dt) and \
                     (((self.steadiness_measurements[-1] - self.steadiness_measurements[-2]) / self.steadiness_measurements[-2]) < self.steadiness_threshold)
+            print(f"Steadiness measurements: {self.steadiness_measurements}, is steady? {yes}")
             if yes:
                 self.steadiness_measurements.clear()
             return yes
         else:
             next_track = self.pf.source.path.get_track(self.pf.time)
-            return (((self.pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) >= 0.15)
+            return (((self.pf.time - next_track.t0) / (next_track.t1 - next_track.t0)) >= self.steadiness_threshold)
 
     def chimera_micro_pre_iterate(self, forced_time_derivative=False, compute_robin_coupling_data=True):
         # TODO: Move this to Chimera driver?
         (pf, pm) = self.pf, self.pm
+        pm_interp_done = False
         prev_pm_active_nodes_mask = pm.active_nodes_func.x.array.copy()
         shape_moving_problem(pm)
         pm.intersect_problem(pf, finalize=False)
         pm.update_active_dofs()
-        newly_activated_dofs = np.logical_and(pm.active_nodes_func.x.array,
-                                              np.logical_not(prev_pm_active_nodes_mask)).nonzero()[0]
+
+        # Advance pf in time, straightforward
+        pf.pre_iterate(forced_time_derivative=forced_time_derivative, verbose=False)
+
+        # If rotation, interpolate all possible DOFs of pm, otherwise only newly activated DOFs
+        if self.direction_change:
+            newly_activated_dofs = pm.ext_nodal_activation[pf].nonzero()[0]
+            newly_activated_dofs = newly_activated_dofs[:np.searchsorted(newly_activated_dofs, pm.domain.topology.index_map(0).size_local)]
+        else:
+            newly_activated_dofs = np.logical_and(pm.active_nodes_func.x.array,
+                                                  np.logical_not(prev_pm_active_nodes_mask)).nonzero()[0]
+
         num_dofs_to_interpolate = pm.domain.comm.allreduce(newly_activated_dofs.size)
         if num_dofs_to_interpolate > 0:
             pm.interpolate(pf, dofs_to_interpolate=newly_activated_dofs)
-        pf.pre_iterate(forced_time_derivative=forced_time_derivative, verbose=False)
-        if self.direction_change:
-            if self.chimera_on:
-                pm.interpolate(pf, dofs_to_interpolate=newly_activated_dofs)
-            pm.pre_iterate(forced_time_derivative=False, verbose=False)
-        else:
-            pm.pre_iterate(forced_time_derivative=forced_time_derivative,verbose=False)
+            pm_interp_done = True
+
+        # Advance pm in time, updating u_prev only if interpolation was done
+        # We could also always update u_prev
+        pm.pre_iterate(forced_time_derivative=(forced_time_derivative and not(pm_interp_done)),
+                       verbose=False)
+
         self.fast_subproblem_els = pf.active_els.copy()# This can be removed
         pm.intersect_problem(pf, finalize=False)
 

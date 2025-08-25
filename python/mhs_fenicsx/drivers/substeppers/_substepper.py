@@ -97,7 +97,6 @@ class MHSSubstepper(ABC):
         self.t1_macro_step = ps.time + ps.dt.value
         self.initial_active_els = self.ps.active_els_func.x.array.nonzero()[0]
         self.initial_restriction = self.ps.restriction
-        self.fraction_macro_step = 0
         for p in plist:
             p.clear_gamma_data()
         # Store this and use it for deactivation?
@@ -119,6 +118,7 @@ class MHSSubstepper(ABC):
     @abstractmethod
     def pre_loop(self):
         self.macro_iter = 0
+        self.fraction_macro_step = 0.0
         self.prev_iter = {p:p.iter for p in self.plist}
         self.u_prev = {p:p.u.copy() for p in self.plist}
         self.material_id_prev = {p:p.material_id.copy() for p in self.plist}
@@ -329,7 +329,6 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
     def pre_loop(self, prepare_fast_problem=True):
         super().pre_loop()
         (ps,pf) = (self.ps,self.pf)
-        self.num_micro_steps = np.rint(ps.dt.value / pf.dt.value).astype(np.int32)
         # Prepare fast problem
         self.set_dirichlet_fast()
         self.initialize_post()
@@ -687,8 +686,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
             self.iterate = self.iterate_substepped_dn
         else:
             raise ValueError("Unknown staggered driver type.")
-        for u in self.u_prev.values():
-            u.name = "u_prev_driver"
+
         (p,p_ext) = (pf,ps)
         self.ext_flux_tn = {p:fem.Function(p.dg0_vec,name="ext_flux_tn")}
         p_ext.compute_gradient()

@@ -1,4 +1,5 @@
 # BEG_ESSENTIAL
+time_integration_scheme: bdf2
 isSteady: False
 radius : &radius 0.05
 half_radius : &half_radius 0.025
@@ -28,11 +29,6 @@ material_metal : {
   density : 4.3E-06, # kg / mm3
   conductivity : 5.0E-03, # W / mm / K
   specific_heat : 700, # J / kg / K
-  #phase_change : {
-  #  latent_heat : 350.0E+03,
-  #  solidus_temperature : &solidus_temperature 1600.0,
-  #  liquidus_temperature : 1650.0
-  #}
 }
 smoothing_cte_phase_change : 0.5
 #convection_coeff : 1.0E-00
@@ -111,12 +107,12 @@ domain_width: 2.0
 width_path_fraction: 0.8
 domain_height: 0.4
 height_path_fraction: 0.8
-els_per_radius: &els_per_radius 16
+els_per_radius: &els_per_radius 4
 straight_line : True
 
 max_timesteps: -1
 dt : 1.0
-driver_type: "dn"
+driver_type: "robin"
 aitken_relaxation: True
 initial_condition: False
 quadrature_metadata: {}
@@ -127,9 +123,9 @@ max_ls_iters: 5
 post_freq : 8
 
 substepping_parameters: {
-  micro_adim_dt: 0.25,
+  micro_adim_dt: 0.5,
   macro_adim_dt: 8.0,
-  max_staggered_iters: 12,
+  max_staggered_iters: 1,
   adim_lens: {
     back_pad : 3,
     front_pad : 3,

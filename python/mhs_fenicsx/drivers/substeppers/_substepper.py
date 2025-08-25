@@ -120,10 +120,13 @@ class MHSSubstepper(ABC):
     def pre_loop(self):
         self.macro_iter = 0
         self.prev_iter = {p:p.iter for p in self.plist}
-        self.u_prev = {p:p.u.copy() for p in self.plist}
+        self.u_prev = {p : p.u.copy() for p in self.plist}
+        self.u_prev2 = {p : p.u_prev.copy() for p in self.plist}
         self.material_id_prev = {p:p.material_id.copy() for p in self.plist}
         for u in self.u_prev.values():
             u.name = "u_prev_driver"
+        for u in self.u_prev2.values():
+            u.name = "u_prev2_driver"
         self.initialize_post()
 
     def initialize_post(self):
@@ -144,6 +147,7 @@ class MHSSubstepper(ABC):
             p.time = self.t0_macro_step
             p.iter = self.prev_iter[p]
             p.u_prev.x.array[:] = self.u_prev[p].x.array[:]
+            p.u_prev2.x.array[:] = self.u_prev2[p].x.array[:]
             p.material_id.x.array[:] = self.material_id_prev[p].x.array[:]
 
     def find_subproblem_els(self):
@@ -584,7 +588,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
             p, p_ext = (ps, pf)
         time = max((self.macro_iter-1) + self.fraction_macro_step, 0.0)
         funs = [p.u,p.gamma_nodes[p_ext], p.source.fem_function, p.active_els_func, p.grad_u,
-                p.u_prev, self.u_prev[p], p.material_id]
+                p.u_prev, p.u_prev2, self.u_prev2[p], p.material_id]
         for fun_dic in [sd.ext_flux,sd.net_ext_flux,sd.ext_sol,
                         sd.prev_ext_flux,sd.prev_ext_sol]:
             try:
@@ -633,6 +637,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
 
         rr_driver.instantiate_forms(ps)
         rr_driver.update_robin(ps)
+
         ps.pre_iterate(forced_time_derivative=True)
         ps.non_linear_solve()
 
@@ -687,8 +692,6 @@ class MHSStaggeredSubstepper(MHSSubstepper):
             self.iterate = self.iterate_substepped_dn
         else:
             raise ValueError("Unknown staggered driver type.")
-        for u in self.u_prev.values():
-            u.name = "u_prev_driver"
         (p,p_ext) = (pf,ps)
         self.ext_flux_tn = {p:fem.Function(p.dg0_vec,name="ext_flux_tn")}
         p_ext.compute_gradient()

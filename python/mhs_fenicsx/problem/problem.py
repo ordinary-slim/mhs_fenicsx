@@ -65,7 +65,9 @@ class Problem:
         self.initialize_activation(finalize=finalize_activation)
 
         self.u   = fem.Function(self.v, name="uh")   # Solution
+        self.ti_scheme = parameters.get("time_integration_scheme", "bdf1")
         self.u_prev = fem.Function(self.v, name="uh_n") # Previous solution
+        self.u_prev2 = fem.Function(self.v, name="uh_nm1")
         self.u_av = fem.Function(self.dg0, name="u_av") # Average @ cells
         self.grad_u = fem.Function(self.dg0_vec,name="grad")
         self.is_grad_computed = False
@@ -207,6 +209,7 @@ class Problem:
         except TypeError:
             self.u.interpolate(expression)
         self.u_prev.x.array[:] = self.u.x.array[:]
+        self.u_prev2.x.array[:] = self.u.x.array[:]
 
     def set_rhs( self, rhs ):
         self.rhs = rhs
@@ -331,6 +334,7 @@ class Problem:
         self.time += self.dt.value
 
         if not(forced_time_derivative):
+            self.u_prev2.x.array[:] = self.u_prev.x.array
             self.u_prev.x.array[:] = self.u.x.array
 
     def in_plane_rotation(self, center : npt.NDArray, radians : float):
@@ -728,62 +732,23 @@ class Problem:
             if self.phase_change:
                 advection_coefficient += mat.rho.ufl(u) * mat.L.ufl(u) * dliquid_fraction(u)
             if not(self.is_steady):
-                if self.phase_change:
-                    # Celentano (source-based method)
-                    if self.latent_heat_treatment == "celentano":
-                        a_ufl.append(mat.rho.ufl(u) * mat.L.ufl(u) * \
-                                (liquid_fraction(u) - liquid_fraction(self.u_prev))/self.dt_func * \
-                                v * dx(itag))
-                    # Apparent heat capacity
-                    elif self.latent_heat_treatment == "capp":
-                        time_derivative_coefficient += mat.rho.ufl(u) * mat.L.ufl(u) * dliquid_fraction(u)
-                    else:
-                        raise ValueError(f"Unknown latent heat treatment {self.latent_heat_treatment}!")
                 # Main time derivative term
-                a_ufl.append(time_derivative_coefficient * \
-                        (u - self.u_prev)/self.dt_func * \
-                        v * dx(itag))
+                if ti_scheme == "bdf1":
+                    a_ufl.append(time_derivative_coefficient * \
+                            (u - self.u_prev)/self.dt_func * \
+                            v * dx(itag))
+                elif ti_scheme == "bdf2":
+                    a_ufl.append(time_derivative_coefficient * \
+                            (1.5*u - 2*self.u_prev + 0.5*self.u_prev2)/self.dt_func * \
+                            v * dx(itag))
+                else:
+                    raise ValueError(f"Time integration scheme {ti_scheme} not recognized.")
 
             # Translational advection
             has_advection = (np.linalg.norm(self.advection_speed.value) > 1e-7)
             if has_advection:
                 advection_norm = ufl.sqrt(ufl.dot(self.advection_speed, self.advection_speed))
                 a_ufl.append(advection_coefficient*ufl.dot(self.advection_speed,ufl.grad(u))*v*dx(itag))
-                # Translational advection stabilization
-                if self.is_supg:
-                    assert(self.advected_el_size is not None)
-                    supg_coeff = self.advected_el_size**2 / (2 * self.advected_el_size * \
-                            advection_coefficient * advection_norm + \
-                             4 * mat.k.ufl(u)) * self.scale_stabilization
-                    if not(self.is_steady):
-                        a_ufl.append(supg_coeff * time_derivative_coefficient * \
-                                (u - self.u_prev)/self.dt_func * \
-                                advection_coefficient * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(itag))
-                        if self.phase_change:
-                            a_ufl.append(supg_coeff * mat.rho.ufl(u) * mat.L.ufl(u) * \
-                                    (liquid_fraction(u) - liquid_fraction(self.u_prev))/self.dt_func * \
-                                    advection_coefficient * ufl.dot(self.advection_speed,ufl.grad(v)) * dx(itag))
-                    a_ufl.append(supg_coeff * advection_coefficient * \
-                            ufl.dot(self.advection_speed,ufl.grad(u)) * \
-                            advection_coefficient * \
-                            ufl.dot(self.advection_speed,ufl.grad(v)) * dx(itag))
-                    l_ufl.append(supg_coeff * \
-                            self.absorptivity[mat] * \
-                            self.source.fem_function * \
-                            advection_coefficient * \
-                            ufl.dot(self.advection_speed,ufl.grad(v)) * dx(itag))
-
-            # Rotational advection
-            # WARNING: Stabilziation not implemented
-            has_rotational_advection = np.linalg.norm(self.angular_advection_speed.value)
-            if has_rotational_advection:
-                x = ufl.SpatialCoordinate(self.domain)
-                if self.dim < 3:
-                    pointwise_advection_speed = (self.angular_advection_speed)*ufl.perp(x-self.rotation_center)
-                else:
-                    pointwise_advection_speed = ufl.cross(self.angular_advection_speed,x-self.rotation_center)
-                a_ufl.append(advection_coefficient*ufl.dot(pointwise_advection_speed,ufl.grad(u))*v*dx(itag))
-
             # BOUNDARY
             ds = ufl.Measure('ds', metadata=self.quadrature_metadata)
             # CONVECTION

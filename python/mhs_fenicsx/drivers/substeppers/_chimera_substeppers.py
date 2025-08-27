@@ -147,7 +147,6 @@ class ChimeraSubstepper(ABC):
         if self.params["chimera_steadiness_workflow"]["enabled"]:
             yes = (len(self.steadiness_measurements) > self.min_steps_at_dt) and \
                     (((self.steadiness_measurements[-1] - self.steadiness_measurements[-2]) / self.steadiness_measurements[-2]) < self.steadiness_threshold)
-            print(f"Steadiness measurements: {self.steadiness_measurements}, is steady? {yes}")
             if yes:
                 self.steadiness_measurements.clear()
             return yes

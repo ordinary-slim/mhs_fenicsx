@@ -280,7 +280,6 @@ class MHSSubstepper(ABC):
         pass
 
     def post_loop(self):
-        #TODO: Change this!
         (ps,pf) = (self.ps,self.pf)
         self.ps.set_activation(self.initial_active_els)
         # Update material composition

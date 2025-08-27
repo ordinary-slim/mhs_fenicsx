@@ -28,6 +28,12 @@ def get_pm(ps):
                                 shift=np.array([0.0, hr/2, 0.0]),
                                 )
 
+def get_dof_ratio(pf, ps):
+    nlocdofs = {p: p.domain.topology.index_map(0).size_local for p in [pf, ps]}
+    nactivelocdofs = {p: p.active_nodes_func.x.array[:nlocdofs[p]].sum() for p in [pf, ps]}
+    nactivedofs = {p: p.domain.comm.allreduce(nactivelocdofs[p]) for p in [pf, ps]}
+    return nactivedofs[pf] / nactivedofs[ps]
+
 def get_max_timesteps(params):
     mt = params.get("max_timesteps", 1e9)
     mt = mt if mt >= 0 else 1e9
@@ -177,6 +183,9 @@ def run_staggered(params, descriptor=""):
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
         itime_step += 1
         substeppin_driver.do_timestep()
+        fast_slow_dof_ratio = get_dof_ratio(pf, ps)
+        if rank == 0:
+            print(f"fast-slow dof ratio = {fast_slow_dof_ratio}", flush=True)
         if writepos:
             ps.writepos(extension="vtx", extra_funcs=[ps.u_av])
     return ps

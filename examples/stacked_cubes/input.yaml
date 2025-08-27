@@ -15,9 +15,9 @@ num_layers        : 2
 num_buffer_layers : 4
 
 dt               : 1.0     # placeholder
-max_timesteps    : 5
+max_timesteps    : -1
 isSteady         : False
-writepos: False
+writepos: True
 
 source_terms :
   - type            : gaussian3d
@@ -140,6 +140,7 @@ substepping_parameters: {
   micro_adim_dt: 0.5,
   macro_adim_dt: 5.0,
   dwelling_adim_dt : 0.5,
+  final_dwelling_adim_dt: 0.1,
   cooling_adim_dt: 1.0,
   max_staggered_iters: 1,
   adim_lens: {

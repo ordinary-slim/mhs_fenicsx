@@ -133,6 +133,7 @@ def run_reference(params, descriptor=""):
     macro_adim_dt_print = params["substepping_parameters"]["macro_adim_dt"]
     adim_dt_cooling = params["substepping_parameters"]["cooling_adim_dt"]
     adim_dt_dwelling = params["substepping_parameters"]["dwelling_adim_dt"]
+    final_adim_dt_dwelling = params["substepping_parameters"]["final_dwelling_adim_dt"]
     itime_step = 0
     max_timesteps = get_max_timesteps(params)
     while (not(ps.is_path_over()) and itime_step < max_timesteps):
@@ -148,7 +149,10 @@ def run_reference(params, descriptor=""):
             if track.type == TrackType.COOLING:
                 adim_dt = adim_dt_cooling
             else:
-                adim_dt = adim_dt_dwelling
+                if track == ps.source.path.tracks[-1]:
+                    adim_dt = final_adim_dt_dwelling
+                else:
+                    adim_dt = adim_dt_dwelling
             ps.set_dt(ps.dimensionalize_waiting_timestep(track, adim_dt))
             itime_step += 1
 

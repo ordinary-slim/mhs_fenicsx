@@ -65,7 +65,10 @@ class MHSSubstepper(ABC):
                 if track.type == TrackType.COOLING:
                     adim_dt = self.params["cooling_adim_dt"]
                 else:
-                    adim_dt = self.params["dwelling_adim_dt"]
+                    if track == ps.source.path.tracks[-1]:
+                        adim_dt = self.params.get("final_dwelling_adim_dt", 0.1)
+                    else:
+                        adim_dt = self.params.get("dwelling_adim_dt", 0.5)
                 p.set_dt(p.dimensionalize_waiting_timestep(track, adim_dt))
             self.step_without_substepping()
 

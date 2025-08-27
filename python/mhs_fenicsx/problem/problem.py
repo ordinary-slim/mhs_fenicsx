@@ -289,7 +289,9 @@ class Problem:
     def dimensionalize_mhs_timestep(self, track : Track, adim_dt : float):
         return float(adim_dt * self.source.R / track.speed)
 
-    def adimensionalize_mhs_timestep(self, track : Track):
+    def adimensionalize_mhs_timestep(self, track : Track, dt : float = None):
+        if dt is None:
+            dt = self.dt.value
         return self.dt.value * track.speed / self.source.R
     
     def dimensionalize_waiting_timestep(self, track : Track, adim_dt : float):

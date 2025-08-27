@@ -105,25 +105,13 @@ class ChimeraSubstepper(ABC):
                 self.chimera_on = True
                 self.is_steady = False
 
-        self.chimera_set_timesteps()
+        self.chimera_decide_timesteps()
 
-    def chimera_set_timesteps(self):
+    def chimera_decide_timesteps(self):
         (pf, pm) = self.pf, self.pm
         next_track = self.pf.source.path.get_track(pf.time)
 
         dt = pf.dt.value
-        if self.unsteady_reset:
-            # Reset timestep to finest
-            dt = pf.dimensionalize_mhs_timestep(next_track, self.params["micro_adim_dt"])
-        else:
-            increasing_dt = self.params["chimera_steadiness_workflow"]["enabled"]
-            if increasing_dt:
-                if np.isclose(self.fraction_macro_step, 0.0) and self.reuse_previous_dt \
-                     and (self.last_dt > 0.0):
-                    dt = self.last_dt
-                if self.is_steady:
-                    increment = pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["adim_dt_increment"])
-                    dt = min(pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["max_adim_dt"]), dt + increment)
 
         # Compute max allowed dt
         max_dt_substep = self.t1_macro_step - pf.time
@@ -133,6 +121,26 @@ class ChimeraSubstepper(ABC):
         max_dt_track = next_track.t1 - pf.time
         max_dt = min(max_dt_track, max_dt_substep)
         assert(max_dt > 0.0)
+
+        if self.unsteady_reset:
+            # Reset timestep to finest
+            dt = pf.dimensionalize_mhs_timestep(next_track, self.params["micro_adim_dt"])
+        else:
+            increasing_dt = self.params["chimera_steadiness_workflow"]["enabled"]
+            if increasing_dt:
+                if np.isclose(self.fraction_macro_step, 0.0) and self.reuse_previous_dt \
+                     and (self.last_dt > 0.0):
+                    dt = self.last_dt
+                    # Ensure we don't skip over elements in the first step
+                    max_adim_dt0 = (self.params["adim_lens"]["back_pad"] - 1.0)
+                    max_dt0 = pm.dimensionalize_mhs_timestep(next_track, max_adim_dt0)
+                    max_dt = min(max_dt, max_dt0)
+                    # WARNING: There is no protection against this in the second step
+                    # and further. One should check the adim back len of pm and compare
+                    # it against its time-step
+                if self.is_steady:
+                    increment = pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["adim_dt_increment"])
+                    dt = min(pf.dimensionalize_mhs_timestep(next_track, self.params["chimera_steadiness_workflow"]["max_adim_dt"]), dt + increment)
 
         if dt > max_dt:
             dt = max_dt

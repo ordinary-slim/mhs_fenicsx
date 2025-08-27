@@ -209,6 +209,9 @@ def run_hodge(params, descriptor=""):
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
         itime_step += 1
         substeppin_driver.do_timestep()
+        fast_slow_dof_ratio = get_dof_ratio(pf, ps)
+        if rank == 0:
+            print(f"fast-slow dof ratio = {fast_slow_dof_ratio}", flush=True)
         if writepos:
             ps.writepos(extension="vtx", extra_funcs=[ps.u_prev])
     return ps

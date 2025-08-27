@@ -19,7 +19,6 @@ def interpolate_solution_to_inactive(p:Problem, p_ext:Problem, cells1 = None, fi
     if finalize:
         p.post_modify_solution(cells=p.ext_colliding_els[p_ext])
 
-
 def shape_moving_problem(pm: Problem):
     mdparams = pm.input_parameters["moving_domain_params"]
     if not(mdparams["shape"]):

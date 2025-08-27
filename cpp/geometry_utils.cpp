@@ -60,7 +60,7 @@ std::vector<std::int32_t> mesh_collision(
     std::int32_t cell_small = ent_pairs[2*ipair+1];
     extract_cell_geometry(cell_geo_small, cell_small, nnodes_per_el_small, dofmap_small, x_geo_small);
     extract_cell_geometry(cell_geo_big, cell_big, nnodes_per_el_big, dofmap_big, x_geo_big);
-    std::array<T, 3> d = dolfinx::geometry::compute_distance_gjk<T>(cell_geo_small, cell_geo_big);
+    std::array<T, 3> d = dolfinx::geometry::compute_distance_gjk<T, T>(cell_geo_small, cell_geo_big);
     T d2 = std::reduce(d.begin(), d.end(), T(0), [](auto d, auto e) { return d + e * e; });
     if (d2 < tol) {
       big_colliding_cells.push_back(cell_big);

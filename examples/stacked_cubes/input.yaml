@@ -1,22 +1,23 @@
-# GEOMETRY  (all lengths now in millimetres)
-radius            : &radius 0.1       # mm
-half_radius       : &half_radius 0.05 # mm
-substrate_depth   : 1.0          # mm
-width             : 1.0          # mm
-adim_pad_width: 3 # * radius
-fine_el_size      : 0.05        # mm
-coarse_el_size    : 0.4         # mm
-layer_thickness   : &layer_thickness 0.05 # mm
+# GEOMETRY  (all lengths in millimetres)
+radius            : &radius 0.1
+half_radius       : &half_radius 0.05
+substrate_depth   : 2.0
+width             : 1.0
+adim_pad_width: 5 # * radius
+fine_el_size      : 0.05
+coarse_el_size    : 0.4
+layer_thickness   : &layer_thickness 0.05
 hatch_spacing     : *layer_thickness
 pre_recoating_dwell_time : 9.0 # s
 post_recoating_dwell_time : 1.0 # s
 final_dwelling_time : 5.0 # s
-num_layers        : 20
+num_layers        : 2
 num_buffer_layers : 4
 
 dt               : 1.0     # placeholder
-max_timesteps    : -1
+max_timesteps    : 5
 isSteady         : False
+writepos: False
 
 source_terms :
   - type            : gaussian3d
@@ -89,7 +90,7 @@ petsc_opts_moving: {
   "ksp_atol" : 1e-10,
   "ksp_rtol" : 1e-10,
   "pc_type" : "hypre",
-  #"snes_linesearch_type" : "basic",
+  "snes_linesearch_type" : "basic",
   "snes_rtol" : 1e-8,
   "snes_atol" : 1e-8,
 }
@@ -137,14 +138,14 @@ petsc_opts_macro_chimera: {
 # SUBSTEPPING PARAMETERS
 substepping_parameters: {
   micro_adim_dt: 0.5,
-  macro_adim_dt: 10.0,
+  macro_adim_dt: 5.0,
   dwelling_adim_dt : 0.5,
   cooling_adim_dt: 1.0,
   max_staggered_iters: 1,
   adim_lens: {
     back_pad : 3,
-    front_pad : 4,
-    side_pad : 4,
+    front_pad : 3.5,
+    side_pad : 3.5,
     top_pad : 1,
     bot_pad : 3,
   },
@@ -153,6 +154,7 @@ substepping_parameters: {
     source_term : 0,
   },
   writepos: False,
+  only_writepos_macro: False,
   chimera_always_on: True,
   chimera_driver: {
     type: "staggered",
@@ -162,7 +164,8 @@ substepping_parameters: {
   chimera_steadiness_workflow: {
     enabled: True,
     adim_dt_increment: 0.5,
-    max_adim_dt: &max_adim_dt 2.0
+    max_adim_dt: &max_adim_dt 2.0,
+    reuse_last_dt : True,
   },
 }
 # CHIMERA PARAMS
@@ -170,10 +173,10 @@ supg: 1
 scale_stabilization: 2.0
 moving_domain_params : {
   shape : True,
-  els_per_radius : 2,
+  els_per_radius : -1, # placeholder
   max_adim_dt : *max_adim_dt,
-  adim_front_len : 3,
-  adim_side_len : 3,
+  adim_front_len : 2.5,
+  adim_side_len : 2.5,
   adim_bot_len : 2.5,
   adim_top_len : 0.0,
 }

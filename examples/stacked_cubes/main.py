@@ -21,8 +21,9 @@ def chimera_get_adim_back_len(fine_adim_dt: float = 0.5, adim_dt: float = 2):
 def get_pm(ps):
     params = ps.input_parameters
     hr = float(params["half_radius"])
+    els_per_radius = 2*(hr / params["fine_el_size"])
     return build_moving_problem(ps,
-                                params["moving_domain_params"]["els_per_radius"],
+                                els_per_radius,
                                 #custom_get_adim_back_len=get_adim_back_len,
                                 shift=np.array([0.0, hr/2, 0.0]),
                                 )
@@ -96,6 +97,21 @@ def deactivate_below_surface(p):
     p.set_activation(substrate_els, finalize=True)
     p.update_material_at_cells(substrate_els, p.materials[1])
 
+def do_timestep(p):
+    p.pre_iterate()
+    p.instantiate_forms()
+    p.pre_assemble()
+    p.non_linear_solve()
+    p.post_iterate()
+
+def do_printing_timestep(p):
+    ''' Wrapper for profiling '''
+    do_timestep(p)
+
+def do_cooling_timestep(p):
+    ''' Wrapper for profiling '''
+    do_timestep(p)
+
 def run_reference(params, descriptor=""):
     writepos = params.get("writepos", True)
     domain = create_stacked_cubes_mesh(params)
@@ -116,21 +132,21 @@ def run_reference(params, descriptor=""):
     while (not(ps.is_path_over()) and itime_step < max_timesteps):
         track = ps.source.path.get_track(ps.time)
         if track.type == TrackType.PRINTING:
+            # Set timestep
             ps.set_dt(ps.dimensionalize_mhs_timestep(track, adim_dt_print))
             ps.cap_timestep()
             itime_step += ps.adimensionalize_mhs_timestep(ps.source.path.current_track) / macro_adim_dt_print
+
+            do_printing_timestep(ps)
         else:
-            if track.type == TrackTrackType.COOLING:
+            if track.type == TrackType.COOLING:
                 adim_dt = adim_dt_cooling
             else:
                 adim_dt = adim_dt_dwelling
             ps.set_dt(ps.dimensionalize_waiting_timestep(track, adim_dt))
             itime_step += 1
-        ps.pre_iterate()
-        ps.instantiate_forms()
-        ps.pre_assemble()
-        ps.non_linear_solve()
-        ps.post_iterate()
+
+            do_cooling_timestep(ps)
 
         itime_step = np.round(itime_step, 5)
         if writepos and (itime_step % 1 == 0):
@@ -269,39 +285,44 @@ def run_chimera_hodge(params, descriptor=""):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-r', '--run-ref', action='store_true')
+    parser.add_argument('-r', '-ref', '--run-ref', action='store_true')
     parser.add_argument('-ss','--run-stagg-sub', action='store_true')
     parser.add_argument('-sms','--run-hodge', action='store_true')
     parser.add_argument('-css','--run-chimera-stagg', action='store_true')
     parser.add_argument('-csms','--run-chimera-hodge', action='store_true')
     parser.add_argument('-d','--descriptor', default="")
+    parser.add_argument('-i','--input-file', default="input.yaml")
     lp = LineProfiler()
     lp.add_module(Problem)
     args = parser.parse_args()
-    params_file = "input.yaml"
+    params_file = args.input_file
+    desc = args.descriptor
     with open(params_file, 'r') as f:
         params = yaml.safe_load(f)
     write_gcode(params)
     profiling_file = ""
-    if args.descriptor and args.descriptor[0] != "_":
-        args.descriptor = "_" + args.descriptor
+    if desc and desc[0] != "_":
+        desc = "_" + desc
     if args.run_ref:
+        lp.add_function(do_timestep)
+        lp.add_function(do_printing_timestep)
+        lp.add_function(do_cooling_timestep)
         lp_wrapper = lp(run_reference)
-        lp_wrapper(params, descriptor = args.descriptor)
-        profiling_file = f"profiling_ref_{rank}.txt"
+        lp_wrapper(params, descriptor = desc)
+        profiling_file = f"profiling_ref_{desc}_{rank}.txt"
     if args.run_stagg_sub:
         lp.add_module(MHSSubstepper)
         lp.add_module(MHSStaggeredSubstepper)
         lp.add_module(StaggeredInterpRRDriver)
         lp_wrapper = lp(run_staggered)
-        lp_wrapper(params, descriptor = args.descriptor)
-        profiling_file = f"profiling_ss_{rank}.txt"
+        lp_wrapper(params, descriptor = desc)
+        profiling_file = f"profiling_ss_{desc}_{rank}.txt"
     if args.run_hodge:
         lp.add_module(MHSSubstepper)
         lp.add_module(MHSSemiMonolithicSubstepper)
         lp_wrapper = lp(run_hodge)
-        lp_wrapper(params, descriptor = args.descriptor)
-        profiling_file = f"profiling_sms_{rank}.txt"
+        lp_wrapper(params, descriptor = desc)
+        profiling_file = f"profiling_sms_{desc}_{rank}.txt"
     if args.run_chimera_stagg:
         lp.add_module(MHSStaggeredChimeraSubstepper)
         lp.add_module(MHSStaggeredSubstepper)
@@ -311,8 +332,8 @@ if __name__ == "__main__":
         lp.add_module(StaggeredRRDriver)
         lp.add_module(ChimeraSubstepper)
         lp_wrapper = lp(run_staggered_chimera_rr)
-        lp_wrapper(params, descriptor = args.descriptor)
-        profiling_file = f"profiling_chimera_rss_{rank}.txt"
+        lp_wrapper(params, descriptor = desc)
+        profiling_file = f"profiling_css_{desc}_{rank}.txt"
     if args.run_chimera_hodge:
         lp.add_module(MHSSubstepper)
         lp.add_module(MHSSemiMonolithicChimeraSubstepper)
@@ -321,8 +342,8 @@ if __name__ == "__main__":
         lp.add_module(StaggeredRRDriver)
         lp.add_module(ChimeraSubstepper)
         lp_wrapper = lp(run_chimera_hodge)
-        lp_wrapper(params, descriptor = args.descriptor)
-        profiling_file = f"profiling_chimera_hodge_{rank}.txt"
+        lp_wrapper(params, descriptor = desc)
+        profiling_file = f"profiling_csms_{desc}_{rank}.txt"
     if profiling_file:
         with open(profiling_file, 'w') as pf:
             lp.print_stats(stream=pf)

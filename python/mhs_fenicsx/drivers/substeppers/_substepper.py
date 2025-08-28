@@ -103,7 +103,7 @@ class MHSSubstepper(ABC):
         for p in plist:
             p.clear_gamma_data()
         # Store this and use it for deactivation?
-        self.fast_els = self.find_subproblem_els()
+        self.find_subproblem_els()
         pf.set_activation(self.fast_els)
         pf.set_linear_solver(pf.input_parameters["petsc_opts_micro"])
         # Subtract fast
@@ -176,7 +176,7 @@ class MHSSubstepper(ABC):
         width = 2*adim_side_pad*hs_radius
         top_pad = adim_top_pad * hs_radius
         bot_pad = adim_bot_pad * hs_radius
-        subproblem_els_mask = np.zeros((ps.cell_map.size_local + ps.cell_map.num_ghosts), dtype=np.bool_)
+        self.fast_els_mask = np.zeros((ps.cell_map.size_local + ps.cell_map.num_ghosts), dtype=np.bool_)
         for track in tracks:
             p0 = track.get_position(self.t0_macro_step, bound=True)
             p1 = track.get_position(self.t1_macro_step, bound=True)
@@ -188,9 +188,9 @@ class MHSSubstepper(ABC):
             obb_mesh = obb.get_dolfinx_mesh()
             #subproblem_els = mhs_fenicsx.geometry.mesh_collision(ps.domain,obb_mesh,bb_tree_mesh_big=ps.bb_tree)
             colliding_els = mesh_collision(ps.domain._cpp_object,obb_mesh._cpp_object,bb_tree_big=ps.bb_tree._cpp_object)
-            subproblem_els_mask[colliding_els] = np.True_
-            subproblem_els_mask = np.logical_and(ps.active_els_func.x.array[:], subproblem_els_mask)
-        return subproblem_els_mask.nonzero()[0]
+            self.fast_els_mask[colliding_els] = np.True_
+            self.fast_els_mask = np.logical_and(ps.active_els_func.x.array[:], self.fast_els_mask)
+        self.fast_els = self.fast_els_mask.nonzero()[0]
 
     def predictor_step(self, writepos=False):
         if rank == 0:

@@ -5,7 +5,7 @@ from mhs_fenicsx.problem import Problem, HeatSource
 from mhs_fenicsx.problem.helpers import interpolate_cg1
 from mhs_fenicsx.geometry import OBB
 
-def interpolate_solution_to_inactive(p:Problem, p_ext:Problem, cells1 = None, finalize=True):
+def interpolate_solution_to_inactive(p:Problem, p_ext:Problem, cells0=None, cells1 = None, finalize=True):
     local_ext_inactive_dofs = np.logical_and((p.active_nodes_func.x.array == 0), p.ext_nodal_activation[p_ext]).nonzero()[0]
     local_ext_inactive_dofs = local_ext_inactive_dofs[:np.searchsorted(local_ext_inactive_dofs, p.domain.topology.index_map(0).size_local)]
     if cells1 is None:
@@ -16,8 +16,10 @@ def interpolate_solution_to_inactive(p:Problem, p_ext:Problem, cells1 = None, fi
                     local_ext_inactive_dofs,
                     p.dof_coords[local_ext_inactive_dofs],
                     1e-6)
+    if cells0 is None:
+        cells0 = p.ext_colliding_els[p_ext]
     if finalize:
-        p.post_modify_solution(cells=p.ext_colliding_els[p_ext])
+        p.post_modify_solution(cells=cells0)
 
 def shape_moving_problem(pm: Problem):
     mdparams = pm.input_parameters["moving_domain_params"]

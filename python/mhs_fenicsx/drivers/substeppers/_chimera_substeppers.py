@@ -204,6 +204,10 @@ class ChimeraSubstepper(ABC):
         for p, p_ext in ([pf, pm], [pm, pf]):
             p.find_gamma(p_ext, compute_robin_coupling_data=compute_robin_coupling_data)
 
+        self.pf_cells_in_pm = None
+        if self.chimera_on:
+            self.pf_cells_in_pm = pf.ext_colliding_els[pm][self.fast_els_mask[pf.ext_colliding_els[pm]]]
+
     def chimera_micro_post_iterate(self):
         (pf, pm) = self.pf, self.pm
         pf.set_activation(self.fast_subproblem_els, finalize=False)
@@ -284,7 +288,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
             self.instantiate_forms(pm)
             pm.pre_assemble()
             cd.non_linear_solve()
-            interpolate_solution_to_inactive(pf, pm)
+            interpolate_solution_to_inactive(pf, pm, cells0=self.pf_cells_in_pm)
         else:
             pf.non_linear_solve()
             pm.interpolate(pf)
@@ -353,7 +357,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
             self.instantiate_forms(pm)
             pm.pre_assemble()
             cd.non_linear_solve()
-            interpolate_solution_to_inactive(pf,pm)
+            interpolate_solution_to_inactive(pf, pm, cells0=self.pf_cells_in_pm)
         else:
             pf.non_linear_solve()
             pm.interpolate(pf)
@@ -362,7 +366,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         (ps, pf, pm) = (self.ps, self.pf, self.pm)
         self.chimera_driver.update_solution(sol_vector)
         if interpolate:
-            interpolate_solution_to_inactive(pf, pm)
+            interpolate_solution_to_inactive(pf, pm, cells0=self.pf_cells_in_pm)
         ps.u.x.array[:] = pf.u.x.array[:]
 
     def assemble_jacobian(

@@ -246,7 +246,7 @@ class MHSSubstepper(ABC):
         # Set variables pf
         pf.u.x.array[:] = ps.u.x.array[:]
         pf.is_grad_computed = False
-        pf.material_id.x.array[:] = pf.material_id.x.array[:]
+        pf.material_id.x.array[:] = ps.material_id.x.array[:]
         # TODO: Update pm
 
     def micro_steps(self):

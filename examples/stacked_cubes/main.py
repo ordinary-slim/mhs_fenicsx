@@ -16,7 +16,10 @@ rank = comm.Get_rank()
 
 def chimera_get_adim_back_len(fine_adim_dt: float = 0.5, adim_dt: float = 2):
     ''' Back length of moving domain'''
-    return 4.0
+    back_len = np.round(4*(1 + 1.5*adim_dt + (adim_dt**2.3)*fine_adim_dt)) / 4
+    if rank == 0:
+        print(f"adim dt = {adim_dt}, Back length = {back_len}", flush=True)
+    return back_len
 
 def get_pm(ps):
     params = ps.input_parameters
@@ -24,7 +27,7 @@ def get_pm(ps):
     els_per_radius = 2*(hr / params["fine_el_size"])
     return build_moving_problem(ps,
                                 els_per_radius,
-                                #custom_get_adim_back_len=get_adim_back_len,
+                                custom_get_adim_back_len=chimera_get_adim_back_len,
                                 shift=np.array([0.0, hr/2, 0.0]),
                                 )
 
@@ -33,6 +36,24 @@ def get_dof_ratio(pf, ps):
     nactivelocdofs = {p: p.active_nodes_func.x.array[:nlocdofs[p]].sum() for p in [pf, ps]}
     nactivedofs = {p: p.domain.comm.allreduce(nactivelocdofs[p]) for p in [pf, ps]}
     return nactivedofs[pf] / nactivedofs[ps]
+
+class Logger:
+    def __init__(self):
+        self.dof_ratios = []
+        self.num_micro_iters = []
+
+    def add_data(self, substepper):
+        (pf, ps) = (substepper.pf, substepper.ps)
+        if pf.source.path.current_track.type == TrackType.PRINTING:
+            self.dof_ratios.append(get_dof_ratio(pf, ps))
+            self.num_micro_iters.append(substepper.micro_iter)
+
+    def __str__(self):
+        if not self.dof_ratios:
+            return "Logger: no data collected"
+        mean_ratio = np.mean(self.dof_ratios)
+        mean_num_micro_iters = np.mean(self.num_micro_iters)
+        return f"Logger: mean DOF ratio = {mean_ratio:.3f}, mean num. micro-iters = {mean_num_micro_iters} (from {len(self.dof_ratios)} time-steps)"
 
 def get_max_timesteps(params):
     mt = params.get("max_timesteps", 1e9)
@@ -184,14 +205,15 @@ def run_staggered(params, descriptor=""):
 
     max_timesteps = get_max_timesteps(params)
     itime_step = 0
+    logger = Logger()
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
         itime_step += 1
         substeppin_driver.do_timestep()
-        fast_slow_dof_ratio = get_dof_ratio(pf, ps)
-        if rank == 0:
-            print(f"fast-slow dof ratio = {fast_slow_dof_ratio}", flush=True)
+        logger.add_data(substeppin_driver)
         if writepos:
             ps.writepos(extension="vtx", extra_funcs=[ps.u_av])
+    if rank == 0:
+        print(logger, flush=True)
     return ps
 
 def run_hodge(params, descriptor=""):
@@ -213,9 +235,6 @@ def run_hodge(params, descriptor=""):
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
         itime_step += 1
         substeppin_driver.do_timestep()
-        fast_slow_dof_ratio = get_dof_ratio(pf, ps)
-        if rank == 0:
-            print(f"fast-slow dof ratio = {fast_slow_dof_ratio}", flush=True)
         if writepos:
             ps.writepos(extension="vtx", extra_funcs=[ps.u_prev])
     return ps
@@ -248,21 +267,25 @@ def run_staggered_chimera_rr(params, descriptor=""):
         StaggeredInterpRRDriver,
         ps, pm,
         staggered_relaxation_factors=[1.0, 1.0],)
+    pf = substeppin_driver.pf
 
     staggered_driver = substeppin_driver.staggered_driver
     staggered_driver.set_dirichlet_coefficients(
         params["fine_el_size"], get_k(ps))
 
     itime_step = 0
+    logger = Logger()
     max_timesteps = get_max_timesteps(params)
     while ((itime_step < max_timesteps) and not(ps.is_path_over())):
         itime_step += 1
         substeppin_driver.do_timestep()
+        logger.add_data(substeppin_driver)
         if writepos:
             ps.writepos(extension="vtx")
-    if is_staggered:
-        if rank == 0:
+    if rank == 0:
+        if is_staggered:
             print(f"Average staggered iter: {substeppin_driver.chimera_driver.get_average_staggered_iter()}")
+        print(logger, flush=True)
     return ps
 
 def run_chimera_hodge(params, descriptor=""):

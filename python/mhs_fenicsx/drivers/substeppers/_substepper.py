@@ -50,7 +50,7 @@ class MHSSubstepper(ABC):
         self.t0_macro_step = ps.time
         track = ps.source.path.get_track(self.t0_macro_step)
         for i in range(len(self.plist)-1):
-            assert(abs(self.plist[i+1].time - self.plist[0].time) < 1e-9) # all problems are at the same time
+            assert(abs(self.plist[i+1].time - self.plist[0].time) < 1e-9), f"Times are not equal across problems! {[(p.name, p.time) for p in self.plist]}"
         if track.type == TrackType.PRINTING:
             if rank == 0:
                 print("Step WITH substepping STARTS...", flush=True)

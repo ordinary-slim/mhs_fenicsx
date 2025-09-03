@@ -87,8 +87,12 @@ class ChimeraSubstepper(ABC):
         if not(next_track == pf.source.path.current_track):
             d0 = self.current_orientation
             d1 = next_track.get_direction()
-            self.rotation_angle = np.arccos(d0.dot(d1))
+            inplane_cross = d0[0]*d1[1] - d0[1]*d1[0]
+            inplane_dot = np.dot(d0[:2], d1[:2])
+            self.rotation_angle = np.atan2(inplane_cross, inplane_dot)
             if (abs(self.rotation_angle) > 1e-9):
+                if rank == 0:
+                    print(f"Previous orientation : {d0}, next orientation : {d1}, rotation angle : {self.rotation_angle}", flush=True)
                 self.direction_change = True
             self.current_orientation = d1
 
@@ -320,9 +324,11 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
                 continue
         p_funs += extra_funs
         p.compute_gradient()
-        self.writers[p].write_function(p_funs,t=time)
-        if case=="micro":
-            self.writers[pm].write_function(get_funs(pm),t=time)
+        pass_writepos = self.only_writepos_macro and not(((time>0) and np.round(time, 7).is_integer()))
+        if not(pass_writepos):
+            self.writers[p].write_function(p_funs,t=time)
+            if case=="micro":
+                self.writers[pm].write_function(get_funs(pm),t=time)
 
 class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSubstepper):
     def __init__(self,slow_problem:Problem, moving_problem : Problem,
@@ -502,8 +508,10 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         get_funs = lambda p : [p.u, p.source.fem_function,p.active_els_func,p.grad_u,
                 p.u_prev,self.u_prev[p], p.material_id, p.u_av] + list(p.gamma_nodes.values())
 
-        for p in Ps:
-            p.compute_gradient()
-            self.writers[p].write_function(get_funs(p),t=time)
-        if not(case=="predictor"):
-            self.writers[self.pm].write_function(get_funs(self.pm),t=time)
+        pass_writepos = self.only_writepos_macro and not(((time>0) and np.round(time, 7).is_integer()))
+        if not(pass_writepos):
+            for p in Ps:
+                p.compute_gradient()
+                self.writers[p].write_function(get_funs(p),t=time)
+            if not(case=="predictor"):
+                self.writers[self.pm].write_function(get_funs(self.pm),t=time)

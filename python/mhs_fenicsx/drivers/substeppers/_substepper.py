@@ -463,6 +463,8 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
 
         pf.pre_iterate()
         ps.pre_iterate(forced_time_derivative=True)
+        self.micro_iter += 1
+        self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
 
         self.set_gamma_slow_to_fast()
 
@@ -477,10 +479,17 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         # SOLVE
         snes = PETSc.SNES().create(ps.domain.comm)
         snes.setTolerances(max_it=self.max_nr_iters)
-        ksp_opts = PETSc.Options()
-        for k,v in ps.snes_opts.items():
-            ksp_opts[k] = v
+        petsc_opts = PETSc.Options()
+        input_opts = ps.snes_opts
+        if "petsc_opts_mono_hodge" in ps.input_parameters:
+            input_opts = ps.input_parameters["petsc_opts_mono_hodge"]
+        for k,v in input_opts.items():
+            petsc_opts[k] = v
         snes.getKSP().setFromOptions()
+        snes.setFromOptions()
+        # Delete options objects after using it
+        [petsc_opts.__delitem__(k) for k in petsc_opts.getAll().keys()] # Clear options data-base
+        petsc_opts.destroy()
         snes.setObjective(self.obj)
         snes.setFunction(self.assemble_residual, self.R)
         snes.setJacobian(self.assemble_jacobian, J=self.A, P=None)
@@ -492,14 +501,10 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         for ds in lin_algebra_objects:
             ds.destroy()
 
-        # POST-ITERATE
-        ps.post_iterate()
-        pf.post_iterate()
+        # Restore state
         ps.set_dt(ps.dt.value)
         pf.dirichlet_bcs = [self.fast_dirichlet_tcon]
 
-        self.micro_iter += 1
-        self.fraction_macro_step = (pf.time-self.t0_macro_step)/(self.t1_macro_step-self.t0_macro_step)
         if self.do_writepos:
             self.writepos()
 

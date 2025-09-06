@@ -13,9 +13,9 @@ sed -i "s/\<staggered\>/monolithic/" $MONOLITHIC_INPUT_FILE
 echo $jobName
 source /data0/home/mslimani/bin/FEniCSx/load_setup_functions.sh
 setup_fenicsx_env
-# mpirun -n ${numProcs} python3 main.py -r -i $INPUT_FILE -d $descriptor >> $printFile
-# mpirun -n ${numProcs} python3 main.py -ss -i $INPUT_FILE -d $descriptor >> $printFile
-# mpirun -n ${numProcs} python3 main.py -css -d mono_${descriptor}_mono -i $MONOLITHIC_INPUT_FILE >> $printFile
+mpirun -n ${numProcs} python3 main.py -r -i $INPUT_FILE -d $descriptor >> $printFile
+mpirun -n ${numProcs} python3 main.py -ss -i $INPUT_FILE -d $descriptor >> $printFile
+mpirun -n ${numProcs} python3 main.py -css -d mono_${descriptor}_mono -i $MONOLITHIC_INPUT_FILE >> $printFile
 mpirun -n ${numProcs} python3 main.py -css -d stag_${descriptor} -i $INPUT_FILE >> $printFile
-# mpirun -n ${numProcs} python3 main.py -sms -i $INPUT_FILE -d $descriptor >> $printFile
+mpirun -n ${numProcs} python3 main.py -sms -i $INPUT_FILE -d $descriptor >> $printFile
 find . -maxdepth 1 -name '*profiling*.txt' -exec mv -t "$PROFILINGS_DIR" {} +

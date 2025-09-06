@@ -21,7 +21,7 @@ def main(folder):
             if re.match(r'^Function: do_printing_timestep', line):
                 # Time is two lines above
                 time_line = lines[idx - 2]
-                time_string = re.search(r'(\d+\.\d+)', time_line).group(1)
+                time_string = re.search(r'(\d+(\.\d+)?)', time_line).group(1)
                 ref_time = float(time_string)
                 break
         if ref_time is None:

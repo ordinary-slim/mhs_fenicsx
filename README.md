@@ -1,55 +1,51 @@
-From this directory, run:
+# mhs_fenicsx
 
-```
-# Build nanobind module
+`mhs_fenicsx` is a FEniCSx extension for thermal modeling of Moving Heat Source (MHS) problems,
+with a particular focus on Laser Powder Bed Fusion (LPBF).
+
+While support for higher level discretizations is reduced (default is P1 / Q1 elements, Backward-Euler),
+this repository implements specialized functionality, including:
+
+- **Multi-time-step methods** (*TODO: add preprint link here*)
+- **Moving subdomain methods**, see [Slimani et al. 2024](https://www.sciencedirect.com/science/article/pii/S0168874X2400132X)
+- **Monolithic and staggered multi-mesh domain decomposition**
+
+Supported physics:
+- Heat diffusion
+- Latent heat effects (both enthalpy-based and apparent heat capacity treatments)
+- Convective and radiative heat transfer
+- Thermal dependency of all parameters, including absorptivity
+
+Available heat source profiles:
+- Gaussian
+- Gusarov
+- Lumped volumetric source
+
+Additive Manufacturing (AM) simulations are performed by starting from a mesh
+representing the final build and **restricting the computational domain** to a subset
+of active elements at each time step. Degrees of freedom (DOF) deactivation is handled
+through the [`multiphenicsx`](https://github.com/multiphenics/multiphenicsx) extension.
+
+## Dependencies
+
+- **dolfinx** (C++ and python modules)
+
+- **multiphenicsx** (C++ and python modules)
+
+**Note:** The C++ module of `multiphenicsx` is not installed when using the main branch.
+You must install [this fork](https://github.com/ordinary-slim/multiphenicsx).
+
+## Docker
+
+*TODO: Add Docker instructions here*
+
+## Build instructions
+
+``` bash
+# Nanobind (c++) module
 cmake -B build-dir -S ./cpp/
 cmake --build build-dir
 cmake --install build-dir
+# python module
 python3 -m pip -v install -e python --config-settings=build-dir="build" --no-build-isolation
 ```
-
-CHECKPOINTS
-===========
-
-- [x] Monolithic Chimera
-- [x] Square track case
-- [x] 3D
-- [x] 2D AM
-- [x] 3D AM
-- [x] Lumped heat source PREDICTOR (high priority)
-- [ ] 2 staggered iterations at most
-- [x] Phase change
-- [x] Melting of powder into bulk
-- [x] Temperature dependent parameters
-- [x] 5 tests
-- [x] 10 tests
-- [x] Chimera inside of substepper (difficult)
-- [x] Coupling of Hodge
-- [x] Try out no submesh
-
-NOTES
-=====
-
-- If collision is expensive in `extract_subproblem`, remove narrow check
-
-
-TODO
-====
-
-- [x] Move monolithic driver to outside of time-stepping
-- [x] Add test for get_active_dofs_external! (low priority)
-- [x] (VERY IMPORTANT) Update SUPG with phase change
-- [x] On delete of substepper, set activation to physical (high priority)
-- [x] Stop storing ext_conductivity (low priority)
-- [ ] Unify extract_cell_geo of get_active_dofs_external and geometry_utils (low priority)
-- [ ] h for Robin's gamma not computed explicitly
-- [ ] (IMPORTANT) Substepper + Dirichlet conditions
-- [ ] In substepper, update physical domain restriction where relevant
-- [x] Material rework to subdomains
-- [x] Store material properties as functions of Temperature
-- [ ] Move Chimera problem to initial position in pre_loop of substepper
-- [ ] Mesh independent forms in monolithic robin driver
-- [x] Set explicit linear solve in SNES where it matters
-- [ ] In micro_pre_iterate, abort if end of path and set t1_macro and ps.dt to diff values
-- [ ] Set form subdomain data of staggered drivers together with one of Problem! Hook or something
-- [ ] Set back pad of micro iters to Chimera back

@@ -35,6 +35,8 @@ through the [`multiphenicsx`](https://github.com/multiphenics/multiphenicsx) ext
 **Note:** The C++ module of `multiphenicsx` is not installed when using the main branch.
 You must install [this fork](https://github.com/ordinary-slim/multiphenicsx).
 
+Detailed build instructions are reproducible from the Dockerfile.
+
 ## Docker
 
 A pre-built Docker image for linux/amd64 is available.
@@ -59,4 +61,29 @@ cmake --build build-dir
 cmake --install build-dir
 # python module
 python3 -m pip -v install -e python --config-settings=build-dir="build" --no-build-isolation
+```
+
+## Citations
+
+If you found this library useful in academic or industry work, we appreciate your support if you consider:
+
+1. Starring the project on Github
+2. Citing the relevant paper(s):
+
+[Substepped and advected subdomain methods for part-scale LPBF modeling (*PREPRINT*)](http://dx.doi.org/10.2139/ssrn.5529518)
+
+[A Chimera method for thermal part-scale metal additive manufacturing simulation](https://doi.org/10.1016/j.finel.2024.104238)
+
+``` bibtex
+@article{slimani2024,
+title = {A {C}himera method for thermal part-scale metal additive manufacturing simulation},
+journal = {Finite Elements in Analysis and Design},
+volume = {241},
+pages = {104238},
+year = {2024},
+issn = {0168-874X},
+doi = {https://doi.org/10.1016/j.finel.2024.104238},
+url = {https://www.sciencedirect.com/science/article/pii/S0168874X2400132X},
+author = {Mehdi Slimani and Miguel Cervera and Michele Chiumenti}
+}
 ```

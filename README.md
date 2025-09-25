@@ -6,7 +6,7 @@ with a particular focus on Laser Powder Bed Fusion (LPBF).
 While support for higher level discretizations is reduced (default is P1 / Q1 elements, Backward-Euler),
 this repository implements specialized functionality, including:
 
-- **Multi-time-step methods** (*TODO: add preprint link here*)
+- **Multi-time-step methods** see [Slimani et al. 2025 (freely accessible preprint)](http://dx.doi.org/10.2139/ssrn.5529518)
 - **Moving subdomain methods**, see [Slimani et al. 2024](https://www.sciencedirect.com/science/article/pii/S0168874X2400132X)
 - **Monolithic and staggered multi-mesh domain decomposition**
 

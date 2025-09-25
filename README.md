@@ -37,7 +37,18 @@ You must install [this fork](https://github.com/ordinary-slim/multiphenicsx).
 
 ## Docker
 
-*TODO: Add Docker instructions here*
+A pre-built Docker image for linux/amd64 is available.
+The recommended workflow is to clone this repository locally and launch a
+container inside it:
+
+``` bash
+docker pull ordinaryslim/mhs_fenicsx:latest
+git clone https://github.com/ordinary-slim/mhs_fenicsx
+docker run --rm --network=host --shm-size=512m -ti -v $(realpath mhs_fenicsx):/root/shared/ -w /root/shared --entrypoint /bin/bash ordinaryslim/mhs_fenicsx:latest
+```
+
+Once inside the container, you can run the provided examples and tests immediately.
+Result files will appear directly in your cloned repository folder on the host.
 
 ## Build instructions
 

@@ -52,6 +52,39 @@ docker run --rm --network=host --shm-size=512m -ti -v $(realpath mhs_fenicsx):/r
 Once inside the container, you can run the provided examples and tests immediately.
 Result files will appear directly in your cloned repository folder on the host.
 
+## Reproducibility
+
+The numerical examples from
+[Slimani et al. (2025) (*freely accessible preprint*)](http://dx.doi.org/10.2139/ssrn.5529518)
+correspond to the following folders:
+
+1. _2D square track_ → `tests/2d_substepping/`
+2. _AMB2018-02_ → `examples/amb2018_02/`
+3. _3D LPBF_ → `examples/3d_lpbf_cube/`
+
+Each folder includes a dedicated `README` file with instructions
+for running the simulation.
+
+## Postprocessing
+
+Simulations results are written to `vtx` or `vtk` files,
+which can be opened in Paraview.
+For `vtx` files, Paraview ≥ 5.13 is recommended to correctly visualize
+element-wise fields (e.g. `active_elements`, `material_id`).
+
+Postprocessing options can be controlled from the `input.yaml` file or directly in the Python
+script. Available options include:
+
+- Write output at each substep in `vtk` format. Enable via:
+``` yaml
+substepping_parameters:
+  writepos: True
+```
+- Write additional solution fields. In the Python script, pass extra functions to writepos:
+``` python3
+p.writepos(extra_funcs=[additional_functions])
+```
+
 ## Build instructions
 
 ``` bash
@@ -70,7 +103,7 @@ If you found this library useful in academic or industry work, we appreciate you
 1. Starring the project on Github
 2. Citing the relevant paper(s):
 
-[Substepped and advected subdomain methods for part-scale LPBF modeling (*PREPRINT*)](http://dx.doi.org/10.2139/ssrn.5529518)
+[Substepped and advected subdomain methods for part-scale LPBF modeling (*freely accessible preprint*)](http://dx.doi.org/10.2139/ssrn.5529518)
 
 [A Chimera method for thermal part-scale metal additive manufacturing simulation](https://doi.org/10.1016/j.finel.2024.104238)
 

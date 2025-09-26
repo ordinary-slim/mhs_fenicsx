@@ -107,14 +107,14 @@ petsc_opts_macro_chimera: {
   "ksp_type" : "gmres",
   "pc_type" : "fieldsplit",
 }
-domain_width: 2.0
+domain_width: 1.0
 width_path_fraction: 0.8
-domain_height: 0.4
+domain_height: 1.0
 height_path_fraction: 0.8
 els_per_radius: &els_per_radius 4
-straight_line : True
+straight_line : False
 
-max_timesteps: 2
+max_timesteps: -1
 dt : 1.0
 driver_type: "robin"
 aitken_relaxation: True

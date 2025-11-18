@@ -57,8 +57,7 @@ class Logger:
 
 def get_max_timesteps(params):
     mt = params.get("max_timesteps", 1e9)
-    mt = mt if mt >= 0 else 1e9
-    return mt
+    return mt if mt >= 0 else 1e9
 
 def get_gamma_coeffs(p):
     el_size = p.input_parameters["fine_el_size"]

@@ -9,67 +9,85 @@ from mhs_fenicsx.drivers.substeppers import MHSSubstepper, MHSStaggeredSubsteppe
 from mhs_fenicsx.drivers import MonolithicRRDriver, DomainDecompositionDriver, StaggeredInterpRRDriver
 from mhs_fenicsx.chimera import build_moving_problem
 from mhs_fenicsx.problem.helpers import assert_pointwise_vals, print_vals
+from mesh import create_stacked_squares_mesh
 
 def write_gcode(params):
     dim = params["dim"]
     if dim != 2:
         raise KeyError('not ready for dim not 2')
-    (L, H) = (params["domain_width"], params["domain_height"])
+    (L, H, P, R) = (params["domain_width"], params["domain_height"], params["adim_pad_width"], params["radius"])
     t = params["printer"]["layer_thickness"]
-    num_layers = np.rint(H / t).astype(np.int32)
-    num_layers = 2
+    num_layers = params["num_layers"]
     speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
-    hlenx = + L / 2.0
+    interlayer_dwelling_time = params["interlayer_dwelling_time"]
+    interlayer_recoating_time = params["interlayer_recoating_time"]
+    hlenx = + (L + R*P) / 2.0
     gcode_lines = []
     gcode_lines.append(f"G0 X{-hlenx} Y0.0 F{speed}")
     E = 0.0
     for layer in range(num_layers):
         gcode_lines.append(f"G0 Y{t*(layer+1):2.2f}")
-        gcode_lines.append(f"G4 P0.5")
-        gcode_lines.append(f"G4 P0.5 R1")
+        gcode_lines.append(f"G4 P{interlayer_dwelling_time}")
+        gcode_lines.append(f"G4 P{interlayer_recoating_time} R1")
         E += 0.1
         gcode_lines.append(f"G1 X{np.power(-1, layer)*hlenx} E{E:2.2f}")
     with open(params["source_terms"][0]["path"],'w') as f:
         f.writelines("\n".join(gcode_lines))
 
-def get_mesh(params, els_per_radius, radius, dim):
-    el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)
-    (Lx, Ly) = (params["domain_width"], params["domain_height"])
-    Lz = params["domain_depth"] if "domain_depth" in params else 1.0
-    box = [-Lx/2.0, -Ly/2.0, 0.0, +Lx/2.0, +Ly/2.0, Lz]
-    nx = np.round((box[3]-box[0]) * el_density).astype(np.int32)
-    ny = np.round((box[4]-box[1]) * el_density).astype(np.int32)
-    nz = np.round((box[5]-box[2]) * el_density).astype(np.int32)
-    if dim==2:
-        box[1], box[4] = 0.0, +Ly
-        return mesh.create_rectangle(MPI.COMM_WORLD,
-               [box[:2], box[3:5]],
-               [nx, ny],
-               mesh.CellType.quadrilateral,
-               )
+def define_ps(params, els_per_radius, radius, dim, name="2d_lpbf"):
+    if params["substrate_height"] > 0.0:
+        dim = 2
+        domain = create_stacked_squares_mesh(params)
+        cell_map = domain.topology.index_map(dim)
+        num_cells = cell_map.size_local + cell_map.num_ghosts
+        midpoints_cells = mesh.compute_midpoints(domain, dim, np.arange(num_cells))
+        substrate_els = (midpoints_cells[:, dim-1] <= 0.0).nonzero()[0]
     else:
-        return mesh.create_box(MPI.COMM_WORLD,
-               [box[:3], box[3:]],
-               [nx, ny, nz],
-               mesh.CellType.hexahedron,
-               )
+        el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)
+        (Lx, Ly) = (params["domain_width"], params["domain_height"])
+        Lz = params["domain_depth"] if "domain_depth" in params else 1.0
+        box = [-Lx/2.0, -Ly/2.0, 0.0, +Lx/2.0, +Ly/2.0, Lz]
+        nx = np.round((box[3]-box[0]) * el_density).astype(np.int32)
+        ny = np.round((box[4]-box[1]) * el_density).astype(np.int32)
+        nz = np.round((box[5]-box[2]) * el_density).astype(np.int32)
+        if dim==2:
+            box[1], box[4] = 0.0, +Ly
+            domain = mesh.create_rectangle(MPI.COMM_WORLD,
+                   [box[:2], box[3:5]],
+                   [nx, ny],
+                   mesh.CellType.quadrilateral,
+                   )
+        else:
+            domain = mesh.create_box(MPI.COMM_WORLD,
+                   [box[:3], box[3:]],
+                   [nx, ny, nz],
+                   mesh.CellType.hexahedron,
+                   )
+        substrate_els = np.array([] ,dtype=np.int32)
+    p = Problem(domain, params, finalize_activation=False, name=name)
+    # Deactivate below surface
+    p.set_activation(substrate_els, finalize=True)
+    p.update_material_at_cells(substrate_els, p.materials[1])
+    p.set_initial_condition(  params["environment_temperature"] )
+    return p
 
 def get_dt(adim_dt, radius, speed):
     return adim_dt * (radius / speed)
 
+def get_max_timesteps(params):
+    mtsps = params["max_timesteps"]
+    return mtsps if mtsps > 1 else 1.0e+09
+
 def run_reference(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
     speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
-    domain = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
     print_dt = get_dt(params["substepping_parameters"]["micro_adim_dt"], radius, speed)
     macro_params["dt"] = print_dt
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(domain, macro_params, finalize_activation=False, name="2dlpbf")
-    ps.set_activation(np.array([] ,dtype=np.int32))
 
-    ps.set_initial_condition(  params["environment_temperature"] )
+    ps = define_ps(macro_params, params["els_per_radius"], radius, 2, name="2d_lpbf_ref")
 
     ps.set_forms()
     ps.compile_forms()
@@ -89,20 +107,17 @@ def run_reference(params, writepos=True):
         ps.non_linear_solve()
         ps.post_iterate()
         if writepos:
-            ps.writepos(extra_funcs=[ps.u_av])
+            ps.writepos(extension="vtx", extra_funcs=[ps.u_av])
     return ps
 
 def run_staggered(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
-    domain = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(domain, macro_params, finalize_activation=False, name="2dlpbf")
-    ps.set_activation(np.array([] ,dtype=np.int32))
-    ps.set_initial_condition(  params["environment_temperature"] )
+    ps = define_ps(macro_params, params["els_per_radius"], radius, 2, name="2d_lpbf_ss")
 
-    max_timesteps = params["max_timesteps"]
+    max_timesteps = get_max_timesteps(params)
 
     substeppin_driver = MHSStaggeredSubstepper(StaggeredInterpRRDriver,
                                                ps,
@@ -119,20 +134,17 @@ def run_staggered(params, writepos=True):
         itime_step += 1
         substeppin_driver.do_timestep()
         if writepos:
-            ps.writepos(extra_funcs=[ps.u_prev])
+            ps.writepos(extension="vtx", extra_funcs=[ps.u_prev])
     return ps
 
 def run_hodge(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
-    domain = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(domain, macro_params, finalize_activation=False, name="2dlpbf")
-    ps.set_activation(np.array([] ,dtype=np.int32))
-    ps.set_initial_condition(  params["environment_temperature"] )
+    ps = define_ps(macro_params, params["els_per_radius"], radius, 2, name="2d_lpbf_sms")
 
-    max_timesteps = params["max_timesteps"]
+    max_timesteps = get_max_timesteps(params)
     substeppin_driver = MHSSemiMonolithicSubstepper(ps,)
     (ps, pf) = (substeppin_driver.ps, substeppin_driver.pf)
 
@@ -142,22 +154,19 @@ def run_hodge(params, writepos=True):
         substeppin_driver.do_timestep()
         if writepos:
             for p in [ps,pf]:
-                p.writepos(extra_funcs=[p.u_prev])
+                p.writepos(extension="vtx", extra_funcs=[p.u_prev])
     return ps
 
 def run_chimera_staggered(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
-    domain = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(domain, macro_params, finalize_activation=False, name="2dlpbf")
+    ps = define_ps(macro_params, params["els_per_radius"], radius, 2, name="2d_lpbf_css")
     pm = build_moving_problem(ps, params["els_per_radius"])
-    ps.set_activation(np.array([] ,dtype=np.int32))
-    for p in [pm, ps]:
-        p.set_initial_condition(  params["environment_temperature"] )
+    pm.set_initial_condition(  params["environment_temperature"] )
 
-    max_timesteps = params["max_timesteps"]
+    max_timesteps = get_max_timesteps(params)
 
     class MyMHSStaggeredChimeraSubstepper(MHSStaggeredChimeraSubstepper):
         def is_steady_enough(self):
@@ -181,22 +190,19 @@ def run_chimera_staggered(params, writepos=True):
         itime_step += 1
         substeppin_driver.do_timestep()
         if writepos:
-            ps.writepos(extra_funcs=[ps.u_prev, ps.u_av])
+            ps.writepos(extension="vtx", extra_funcs=[ps.u_prev, ps.u_av])
     return ps
 
 def run_chimera_hodge(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
-    domain = get_mesh(params, params["els_per_radius"], radius, 2)
 
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
-    ps = Problem(domain, macro_params, finalize_activation=False, name="2dlpbf")
+    ps = define_ps(macro_params, params["els_per_radius"], radius, 2, name="2d_lpbf_css")
     pm = build_moving_problem(ps, params["els_per_radius"])
-    ps.set_activation(np.array([] ,dtype=np.int32))
-    for p in [pm, ps]:
-        p.set_initial_condition(  params["environment_temperature"] )
+    pm.set_initial_condition(  params["environment_temperature"] )
 
-    max_timesteps = params["max_timesteps"]
+    max_timesteps = get_max_timesteps(params)
 
     substeppin_driver = MHSSemiMonolithicChimeraSubstepper(ps, pm,)
     pf = substeppin_driver.pf
@@ -206,7 +212,7 @@ def run_chimera_hodge(params, writepos=True):
         substeppin_driver.do_timestep()
         if writepos:
             for p in [ps,pf]:
-                p.writepos(extra_funcs=[p.u_prev])
+                p.writepos(extension="vtx", extra_funcs=[p.u_prev])
     return ps
 
 def test_2dlpbf_ref():

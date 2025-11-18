@@ -1,11 +1,16 @@
 dim : 2
-domain_length : 1
 domain_width : 1
 domain_height : 0.5
+adim_pad_width : 0.0
+els_per_radius: 4
+substrate_height : 0.0
+interlayer_dwelling_time : 0.5
+interlayer_recoating_time : 0.5
 # BEG_ESSENTIAL
 isSteady: False
 radius : &radius 0.1
 half_radius : &half_radius 0.05
+num_layers: 2
 source_terms :
   - initial_position : &p0 [-5.0, 0.0, 0.0]
     initial_speed : &speed [500.0, 0.0, 0]
@@ -75,7 +80,6 @@ petsc_opts_macro_chimera: {
   "ksp_rtol" : 1e-13,
   "pc_type" : "fieldsplit",
 }
-els_per_radius: 4
 
 max_timesteps: 20
 dt : 1.0 #placeholder

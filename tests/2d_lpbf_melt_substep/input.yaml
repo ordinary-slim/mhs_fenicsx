@@ -1,7 +1,14 @@
 dim : 2
-domain_length : 1
-domain_width : 1
+domain_width : 2
 domain_height : 0.5
+substrate_height : 1.0
+adim_pad_width : 5.0
+els_per_radius: 4
+substrate_els_per_radius : 0.5
+num_layers : 2
+num_buffer_layers : 4
+interlayer_dwelling_time : 2.0
+interlayer_recoating_time : 1.0
 # BEG_ESSENTIAL
 isSteady: False
 radius : &radius 0.1
@@ -10,7 +17,7 @@ source_terms :
   - initial_position : &p0 [-5.0, 0.0, 0.0]
     initial_speed : &speed [500.0, 0.0, 0]
     radius : *radius
-    power : &power 650
+    power : &power 900
     path: &path "Path.gcode"
   - type : lumped
     initial_position : *p0
@@ -45,7 +52,7 @@ material_metal : {
 }
 convection_coeff : 0.1
 radiation_coeff: 1.0E-10
-smoothing_cte_phase_change : 1.0
+smoothing_cte_phase_change : 0.5
 environment_temperature : &environment_temperature 25
 # END_ESSENTIAL
 petsc_opts_micro: {
@@ -58,9 +65,12 @@ petsc_opts_micro: {
 petsc_opts_macro: {
   "ksp_error_if_not_converged" : "true",
   "ksp_type" : "gmres",
-  "ksp_atol" : 1e-13,
-  "ksp_rtol" : 1e-13,
-  "pc_type" : "jacobi",
+  "ksp_atol" : 1e-10,
+  "ksp_rtol" : 1e-10,
+  "pc_type" : "hypre",
+  "snes_linesearch_type" : "basic",
+  "snes_rtol" : 1e-8,
+  "snes_atol" : 1e-8,
 }
 petsc_opts_mono_robin: {
   "ksp_error_if_not_converged" : "true",
@@ -76,9 +86,8 @@ petsc_opts_macro_chimera: {
   "ksp_rtol" : 1e-13,
   "pc_type" : "fieldsplit",
 }
-els_per_radius: 8
 
-max_timesteps: 20
+max_timesteps: -1
 dt : 1.0 #placeholder
 
 driver_type: "robin"
@@ -98,15 +107,15 @@ printer: {
 
 substepping_parameters: {
   micro_adim_dt: 0.5,
-  macro_adim_dt: 7.5,
+  macro_adim_dt: 5.0,
   cooling_adim_dt: 0.5,
+  dwelling_adim_dt: 0.5,
   max_staggered_iters: 1,
   predictor: {
     enabled :  True,
     source_term : 1,
   },
-  writepos: True,
-  mono_robin_gamma_quadrature_degree : 2,
+  writepos: False,
   chimera_always_on: False,
   chimera_driver: {
     type: "monolithic",
@@ -125,4 +134,7 @@ moving_domain_params : {
   adim_side_len : 2,
   adim_bot_len : 2,
   adim_top_len : 2,
+}
+gamma_quadrature: {
+  degree: 2,
 }

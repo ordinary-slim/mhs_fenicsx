@@ -163,7 +163,7 @@ def run_chimera_staggered(params, writepos=True):
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     ps = define_ps(macro_params, params["els_per_radius"], radius, 2, name="2d_lpbf_css")
-    pm = build_moving_problem(ps, params["els_per_radius"])
+    pm = build_moving_problem(ps, params["moving_els_per_radius"])
     pm.set_initial_condition(  params["environment_temperature"] )
 
     max_timesteps = get_max_timesteps(params)
@@ -199,7 +199,7 @@ def run_chimera_hodge(params, writepos=True):
     macro_params = params.copy()
     macro_params["petsc_opts"] = macro_params["petsc_opts_macro"]
     ps = define_ps(macro_params, params["els_per_radius"], radius, 2, name="2d_lpbf_css")
-    pm = build_moving_problem(ps, params["els_per_radius"])
+    pm = build_moving_problem(ps, params["moving_els_per_radius"])
     pm.set_initial_condition(  params["environment_temperature"] )
 
     max_timesteps = get_max_timesteps(params)

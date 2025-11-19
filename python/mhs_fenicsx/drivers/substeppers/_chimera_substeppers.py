@@ -277,10 +277,10 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
         cd = self.chimera_driver
 
         f = self.fraction_macro_step
-        sd.net_ext_sol[pf].x.array[:] = (1-f)*self.ext_sol_tn[pf].x.array[:] + \
-                f*self.ext_sol_array_tnp1[:]
+        sd.net_ext_sol[pf].x.array[:] = (1-f)*self.u_prev[ps].x.array[:] + \
+                f*self.net_ext_sol_array_tnp1[:]
         sd.net_ext_flux[pf].x.array[:] = (1-f)*self.ext_flux_tn[pf].x.array[:] + \
-                f*self.ext_flux_array_tnp1[:]
+                f*self.net_ext_flux_array_tnp1[:]
 
         sd.instantiate_forms(pf)
         # Check gamma integration data is present
@@ -297,7 +297,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
             pf.non_linear_solve()
             pm.interpolate(pf)
 
-    def writepos(self,case="macro",extra_funs=[]):
+    def writepos_vtk(self,case="macro",extra_funs=[]):
         if not(self.do_writepos):
             return
         (ps,pf,pm) = (self.ps,self.pf,self.pm)
@@ -353,7 +353,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
 
         f = self.fraction_macro_step
         # Set Dirichlet condition
-        self.fast_dirichlet_tcon.g.x.array[self.gamma_dofs_fast] = \
+        self.dirichlet_fun_fast.x.array[self.gamma_dofs_fast] = \
                 (1-f)*ps.u_prev.x.array[self.gamma_dofs_fast] + \
                 f*ps.u.x.array[self.gamma_dofs_fast]
 
@@ -490,7 +490,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         if self.do_writepos:
             self.writepos()
 
-    def writepos(self,case="macro", extra_funs=[]):
+    def writepos_vtk(self,case="macro", extra_funs=[]):
         if not(self.do_writepos):
             return
         (pf, ps) = (self.pf, self.ps)

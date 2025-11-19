@@ -5,6 +5,7 @@ substrate_height : 1.0
 adim_pad_width : 5.0
 els_per_radius: 4
 substrate_els_per_radius : 0.5
+moving_els_per_radius : 8
 num_layers : 2
 num_buffer_layers : 4
 interlayer_dwelling_time : 2.0
@@ -115,7 +116,9 @@ substepping_parameters: {
     enabled :  True,
     source_term : 1,
   },
-  writepos: False,
+  writepos: True,
+  skip_predictor_writepos: True,
+  post_type: "vtx",
   chimera_always_on: False,
   chimera_driver: {
     type: "monolithic",

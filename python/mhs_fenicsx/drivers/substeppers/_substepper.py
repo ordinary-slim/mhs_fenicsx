@@ -30,7 +30,18 @@ class MHSSubstepper(ABC):
         self.plist = [self.ps, self.pf]
         self.fplist = [self.pf]
         ps, pf = self.ps, self.pf
+        self.cycle_counter = -1
         self.do_writepos = self.params["writepos"]
+        self.skip_predictor_writepos = self.params.get("skip_predictor_writepos", False)
+        post_type = self.params.get("post_type", "vtx")
+        if   post_type == "vtk":
+            self.initialize_post = self.initialize_post_vtk
+            self.writepos = self.writepos_vtk
+        elif post_type == "vtx":
+            self.initialize_post = self.initialize_post_vtx
+            self.writepos = self.writepos_vtx
+        else:
+            raise ValueError(f"Unknown post type {post_type}")
         self.only_writepos_macro = self.params.get("only_writepos_macro", False)
         self.writers = dict()
         self.max_nr_iters = max_nr_iters
@@ -80,6 +91,12 @@ class MHSSubstepper(ABC):
     def compile_forms(self):
         pass
 
+    @abstractmethod
+    def get_slow_fast_interpolation(self) -> fem.Function:
+        ''' Could be a parent class method/property but each
+        substepper is already doing something different here'''
+        pass
+
     def instantiate_forms(self, p):
         p.j_ufl, p.r_ufl = (self.j_ufl[p], self.r_ufl[p])
         p.j_compiled, p.r_compiled = (self.j_compiled[p], self.r_compiled[p])
@@ -95,7 +112,6 @@ class MHSSubstepper(ABC):
 
     def update_fast_problem(self):
         (ps, pf) = plist = (self.ps, self.pf)
-        self.result_folder = f"post_{self.name}_tstep#{self.ps.iter}"
         # TODO: Complete. Data to set activation in predictor_step
         self.t1_macro_step = ps.time + ps.dt.value
         self.initial_active_els = self.ps.active_els_func.x.array.nonzero()[0]
@@ -127,9 +143,8 @@ class MHSSubstepper(ABC):
         self.material_id_prev = {p:p.material_id.copy() for p in self.plist}
         for u in self.u_prev.values():
             u.name = "u_prev_driver"
-        self.initialize_post()
 
-    def initialize_post(self):
+    def initialize_post_vtk(self):
         if not(self.do_writepos):
             return
         self.close_post()
@@ -137,12 +152,43 @@ class MHSSubstepper(ABC):
         for p in self.plist:
             self.writers[p] = io.VTKFile(p.domain.comm, f"{self.result_folder}/{p.name}.pvd", "wb")
 
+    def initialize_post_vtx(self):
+        self.result_folder = f"post_{self.name}"
+        shutil.rmtree(self.result_folder, ignore_errors=True)
+        for p in self.plist:
+            output = [p.u, p.source.fem_function, p.active_nodes_func, p.active_els_func, p.material_id]
+            if p == self.ps:
+                output.append(self.get_slow_fast_interpolation())
+            self.writers[p] = io.VTXWriter(p.domain.comm,
+                                           f"{self.result_folder}/{p.name}.bp",
+                                           output=output)
+
     @abstractmethod
-    def writepos(self,case="macro",extra_funs=[]):
+    def writepos_vtk(self,case="macro",extra_funs=[]):
         pass
+
+    @abstractmethod
+    def choose_problems_writepos_vtx(self, case):
+        return []
+
+    def writepos_vtx(self,case="macro",extra_funs=[]):
+        if not(self.do_writepos) or (case == "predictor" and self.skip_predictor_writepos):
+            return
+        if not(self.writers):
+            self.initialize_post()
+        ps_to_write = self.choose_problems_writepos_vtx(case)
+        time = self.cycle_counter + self.fraction_macro_step
+        pass_writepos = (self.only_writepos_macro and not(((time>0) and np.round(time, 7).is_integer()))) and (len(ps_to_write)>0)
+        print(f"writepos_vtx called with case {case}, {100*self.fraction_macro_step:.2f}% of macro step, time={time}, pass_writepos={pass_writepos}, ps to write = {[p.name for p in ps_to_write]}", flush=True)
+        if not(pass_writepos):
+            if case == "macro":
+                self.get_slow_fast_interpolation().x.array[:] = self.ps.u.x.array[:]
+            for p in ps_to_write:
+                self.writers[p].write(time)
 
     def pre_iterate(self):
         self.macro_iter += 1
+        self.cycle_counter += 1
         for p in self.plist:
             p.time = self.t0_macro_step
             p.iter = self.prev_iter[p]
@@ -296,6 +342,7 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
                  compile_forms=True):
         super().__init__(slow_problem, max_nr_iters, max_ls_iters, compile_forms)
         self.max_staggered_iters = self.params["max_staggered_iters"]
+        self.dirichlet_fun_fast  = fem.Function(self.pf.v, name="dirichlet_con_fast")
 
     def do_substepped_timestep(self):
         self.update_fast_problem()
@@ -328,12 +375,14 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         self.r_mono_compiled = fem.compile_form(ps.domain.comm, self.r_mono_ufl,
                                       form_compiler_options={"scalar_type": np.float64})
 
+    def get_slow_fast_interpolation(self):
+        return self.dirichlet_fun_fast
+
     def pre_loop(self, prepare_fast_problem=True):
         super().pre_loop()
         (ps,pf) = (self.ps,self.pf)
         # Prepare fast problem
         self.set_dirichlet_fast()
-        self.initialize_post()
         if prepare_fast_problem:
             self.instantiate_forms(pf)
             pf.pre_assemble()
@@ -348,12 +397,11 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         - Called right before micro-steps
         - Interpolate macro tnp1 sol to Gamma nodes
         '''
-        (ps,pf) = (self.ps,self.pf)
+        (ps,pf) = (self.ps, self.pf)
         pf.clear_dirchlet_bcs()
-        dirichlet_fun_fast = fem.Function(pf.v, name="dirichlet_con_fast")
         self.gamma_dofs_fast = fem.locate_dofs_topological(pf.v, pf.dim-1, pf.gamma_facets[ps].find(1))
         # Set Gamma dirichlet
-        self.fast_dirichlet_tcon = fem.dirichletbc(dirichlet_fun_fast, self.gamma_dofs_fast)
+        self.fast_dirichlet_tcon = fem.dirichletbc(self.dirichlet_fun_fast, self.gamma_dofs_fast)
         pf.dirichlet_bcs.append(self.fast_dirichlet_tcon)
 
     def is_substepping(self):
@@ -363,11 +411,10 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         (ps,pf) = (self.ps,self.pf)
         pf.clear_subdomain_data()
         pf.instantiate_forms()
-        # Update Dirichlet BC pf here!
+        # Update Dirichlet right before using it
         f = self.fraction_macro_step
-        self.fast_dirichlet_tcon.g.x.array[self.gamma_dofs_fast] = \
-                (1-f)*ps.u_prev.x.array[self.gamma_dofs_fast] + \
-                f*ps.u.x.array[self.gamma_dofs_fast]
+        self.dirichlet_fun_fast.x.array[:] = (1-f)*ps.u_prev.x.array[:] + \
+            f*ps.u.x.array[:]
         pf.non_linear_solve()
 
     def set_gamma_slow_to_fast(self):
@@ -506,9 +553,9 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         pf.dirichlet_bcs = [self.fast_dirichlet_tcon]
 
         if self.do_writepos:
-            self.writepos()
+            self.writepos(case="macro")
 
-    def writepos(self,case="macro",extra_funs=[]):
+    def writepos_vtk(self,case="macro",extra_funs=[]):
         if not(self.do_writepos):
             return
         (pf, ps) = (self.pf, self.ps)
@@ -530,6 +577,12 @@ class MHSSemiMonolithicSubstepper(MHSSubstepper):
         if not(pass_writepos):
             self.writers[pf].write_function(funs,t=np.round(time, 8))
 
+    def choose_problems_writepos_vtx(self, case):
+        if case == "predictor":
+            return [self.ps]
+        else:
+            return self.plist
+
 class MHSStaggeredSubstepper(MHSSubstepper):
     def __init__(self,
                  staggered_driver_class : typing.Type[StaggeredInterpDDDriver],
@@ -541,6 +594,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         self.staggered_driver = staggered_driver_class(self.pf, self.ps,
                                                        max_staggered_iters=self.params["max_staggered_iters"],
                                                        initial_relaxation_factors=staggered_relaxation_factors)
+        self.ext_flux_tn = {self.pf : fem.Function(self.pf.dg0_vec,name="ext_flux_tn")}
 
     def do_substepped_timestep(self):
         (ps, pf) = (self.ps, self.pf)
@@ -575,7 +629,10 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         self.r_compiled[ps] = fem.compile_form(ps.domain.comm, self.r_ufl[ps],
                                       form_compiler_options={"scalar_type": np.float64})
 
-    def writepos(self,case="macro",extra_funs=[]):
+    def get_slow_fast_interpolation(self):
+        return self.staggered_driver.net_ext_sol[self.pf]
+
+    def writepos_vtk(self,case="macro",extra_funs=[]):
         if not(self.do_writepos):
             return
         (ps,pf) = (self.ps,self.pf)
@@ -589,7 +646,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         else:
             p, p_ext = (ps, pf)
         time = max((self.macro_iter-1) + self.fraction_macro_step, 0.0)
-        funs = [p.u,p.gamma_nodes[p_ext], p.source.fem_function, p.active_els_func, p.grad_u,
+        funs = [p.u, p.gamma_nodes[p_ext], p.source.fem_function, p.active_els_func, p.grad_u,
                 p.u_prev, self.u_prev[p], p.material_id]
         for fun_dic in [sd.ext_flux,sd.net_ext_flux,sd.ext_sol,
                         sd.prev_ext_flux,sd.prev_ext_sol]:
@@ -603,6 +660,17 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         if not(pass_writepos):
             self.writers[p].write_function(funs,t=np.round(time, 8))
 
+    def choose_problems_writepos_vtx(self, case):
+        if case == "predictor":
+            return [self.ps]
+        elif case == "micro":
+            if self.fraction_macro_step < 1.0:
+                return self.plist
+            else:
+                return self.fplist
+        elif case == "macro":
+            return [self.ps]
+
     def is_substepping(self):
         return (self.t1_macro_step - self.pf.time) > 1e-7
 
@@ -614,10 +682,10 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         sd.assert_tag(pf)
         if type(sd)==StaggeredInterpRRDriver:
             f = self.fraction_macro_step
-            sd.net_ext_sol[pf].x.array[:] = (1-f)*self.ext_sol_tn[pf].x.array[:] + \
-                    f*self.ext_sol_array_tnp1[:]
+            sd.net_ext_sol[pf].x.array[:] = (1-f)*self.u_prev[ps].x.array[:] + \
+                    f*self.net_ext_sol_array_tnp1[:]
             sd.net_ext_flux[pf].x.array[:] = (1-f)*self.ext_flux_tn[pf].x.array[:] + \
-                    f*self.ext_flux_array_tnp1[:]
+                    f*self.net_ext_flux_array_tnp1[:]
         elif type(sd)==StaggeredInterpDNDriver and sd.p_dirichlet==pf:
             sd.dirichlet_tcon.g.x.array[:] = (1-sd.relaxation_coeff[pf].value)*pf.u.x.array[:] + \
                                              sd.relaxation_coeff[pf].value*((1-self.fraction_macro_step)*\
@@ -661,9 +729,7 @@ class MHSStaggeredSubstepper(MHSSubstepper):
     def pre_iterate(self):
         super().pre_iterate()
         self.relaxation_coeff_pf = self.staggered_driver.relaxation_coeff[self.pf].value
-        # TODO: Undo pre-iterate of source
         # TODO: Undo pre-iterate of domain
-        # TODO: Undo post-iterate of problem
 
     def update_robin_fast(self):
         '''
@@ -673,8 +739,8 @@ class MHSStaggeredSubstepper(MHSSubstepper):
         pf = self.pf
         assert(type(sd)==StaggeredInterpRRDriver)
         sd.update_robin(pf)
-        self.ext_sol_array_tnp1 = sd.net_ext_sol[pf].x.array.copy()
-        self.ext_flux_array_tnp1 = sd.net_ext_flux[pf].x.array.copy()
+        self.net_ext_sol_array_tnp1 = sd.net_ext_sol[pf].x.array.copy()
+        self.net_ext_flux_array_tnp1 = sd.net_ext_flux[pf].x.array.copy()
 
     def post_iterate(self):
         (ps,pf) = (self.ps,self.pf)
@@ -695,18 +761,12 @@ class MHSStaggeredSubstepper(MHSSubstepper):
             raise ValueError("Unknown staggered driver type.")
 
         (p,p_ext) = (pf,ps)
-        self.ext_flux_tn = {p:fem.Function(p.dg0_vec,name="ext_flux_tn")}
         p_ext.compute_gradient()
         # TODO: Are these necessary? Can I get them from my own data?
         if type(sd)==StaggeredInterpRRDriver:
-            self.ext_sol_tn = {p:fem.Function(p.v,name="ext_sol_tn")}
             propagate_dg0_at_facets_same_mesh(p_ext, p_ext.grad_u, p, self.ext_flux_tn[p])
-            self.ext_sol_tn[p].x.array[:] = p_ext.u.x.array[:]
         elif type(sd)==StaggeredInterpDNDriver:
-            if sd.p_dirichlet==pf:
-                self.ext_sol_tn = {p:fem.Function(p.v,name="ext_sol_tn")}
-                self.ext_sol_tn[p].x.array[:] = p_ext.u.x.array[:]
-            else:
+            if sd.p_neumann==pf:
                 propagate_dg0_at_facets_same_mesh(p_ext, p_ext.grad_u, p, self.ext_flux_tn[p])
 
     def post_loop(self):

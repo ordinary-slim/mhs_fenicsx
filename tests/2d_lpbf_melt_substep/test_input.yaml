@@ -3,6 +3,7 @@ domain_width : 1
 domain_height : 0.5
 adim_pad_width : 0.0
 els_per_radius: 4
+moving_els_per_radius : 4
 substrate_height : 0.0
 interlayer_dwelling_time : 0.5
 interlayer_recoating_time : 0.5

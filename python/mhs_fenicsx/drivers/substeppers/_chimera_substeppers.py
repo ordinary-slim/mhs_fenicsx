@@ -296,6 +296,7 @@ class MHSStaggeredChimeraSubstepper(MHSStaggeredSubstepper, ChimeraSubstepper):
         else:
             pf.non_linear_solve()
             pm.interpolate(pf)
+            pm.active_els_func.x.array.fill(0.0) # for post
 
     def writepos_vtk(self,case="macro",extra_funs=[]):
         if not(self.do_writepos):
@@ -367,6 +368,7 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         else:
             pf.non_linear_solve()
             pm.interpolate(pf)
+            pm.active_els_func.x.array.fill(0.0) # for post
 
     def update_solution(self, sol_vector, interpolate=False):
         (ps, pf, pm) = (self.ps, self.pf, self.pm)

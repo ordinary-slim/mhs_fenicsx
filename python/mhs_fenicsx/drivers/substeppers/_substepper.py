@@ -179,7 +179,6 @@ class MHSSubstepper(ABC):
         ps_to_write = self.choose_problems_writepos_vtx(case)
         time = self.cycle_counter + self.fraction_macro_step
         pass_writepos = (self.only_writepos_macro and not(((time>0) and np.round(time, 7).is_integer()))) and (len(ps_to_write)>0)
-        print(f"writepos_vtx called with case {case}, {100*self.fraction_macro_step:.2f}% of macro step, time={time}, pass_writepos={pass_writepos}, ps to write = {[p.name for p in ps_to_write]}", flush=True)
         if not(pass_writepos):
             if case == "macro":
                 self.get_slow_fast_interpolation().x.array[:] = self.ps.u.x.array[:]

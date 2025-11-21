@@ -3,6 +3,7 @@ from mpi4py import MPI
 import os
 import argparse
 import math
+import subprocess
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -30,9 +31,11 @@ def initialize_display(problem_display):
     problem_display.Opacity = 1.0
     problem_display.EdgeOpacity = 0.7
 
+def is_macro_step(time):
+    return math.isclose(round(time), time, abs_tol=1e-6)
+
 def set_opacity_ps_display(display, time):
-    is_macro_step = math.isclose(round(time), time, abs_tol=1e-6)
-    if is_macro_step:
+    if is_macro_step(time):
         display.Opacity = 1.0
         display.EdgeOpacity = 0.7
     else:
@@ -50,7 +53,7 @@ def set_color_map(array_name):
     )
     fLUT.ApplyPreset('Rainbow Uniform', True)
 
-def get_screenshots(ps_file, pf_file, pm_file=None):
+def get_screenshots(ps_file, pf_file, pm_file=None, video=False):
     paraview.simple._DisableFirstRenderCameraReset()
 
     ps = ADIOS2VTXReader(registrationName='ps.bp', FileName=ps_file)
@@ -64,7 +67,7 @@ def get_screenshots(ps_file, pf_file, pm_file=None):
 
     # Create a render view and show both datasets
     view = GetActiveViewOrCreate('RenderView')
-    viewSize = 1425, 537
+    viewSize = 1424, 536
     view.Set(
         InteractionMode='2D',
         CameraPosition=[0.0029499615919066596, -0.4503383813138502, 10.05],
@@ -73,6 +76,11 @@ def get_screenshots(ps_file, pf_file, pm_file=None):
     )
     view.OrientationAxesVisibility = 0
     view.ViewSize = viewSize
+    # find settings proxy
+    colorPalette = GetSettingsProxy('ColorPalette')
+
+    # white bg
+    colorPalette.Background = [1.0, 1.0, 1.0]
 
     tplist = [threshold(p) for p in plist]
 
@@ -95,6 +103,8 @@ def get_screenshots(ps_file, pf_file, pm_file=None):
     # Common times
     common_times = sorted(t for t in ps.TimestepValues if (t in pf.TimestepValues) and (t in pm.TimestepValues if pm_file is not None else True))
 
+    screenshots = []
+
     for i, t in enumerate(common_times):
         # Update pipeline at time t
         for p in tplist:
@@ -105,14 +115,38 @@ def get_screenshots(ps_file, pf_file, pm_file=None):
 
         Render()
 
+        fname = os.path.join(out_dir, f"screenshot_{i:04d}.png")
+
         if rank == 0:
-            fname = os.path.join(out_dir, f"screenshot_{i:04d}.png")
             SaveScreenshot(
                 fname,
                 view,
-                TransparentBackground=1,
                 ImageResolution=viewSize,
             )
+        screenshots.append((fname, is_macro_step(t)))
+
+    if video and rank == 0:
+        output_video = f"2dlpbf_{dataset_name}.mp4"
+        screenshots_to_video(screenshots, output_video)
+
+def screenshots_to_video(screenshots, output_video):
+    # Write screenshots to list.txt file for ffmpeg
+    with open("list.txt", "w") as f:
+        for fname, is_macro in screenshots:
+            duration = 0.4 if is_macro else 0.1
+            f.write(f"file '{fname}'\n")
+            f.write(f"outpoint {duration}\n")
+        # Repeat last frame to ensure it stays on screen
+        f.write(f"file '{screenshots[-1][0]}'\n")
+    # Call ffmpeg through subprocess
+    subprocess.run([
+        "ffmpeg",
+        "-f", "concat",
+        "-i", "list.txt",
+        "-framerate", "1",
+        "-c:v", "libx264", "-c:a", "copy", "-shortest", "-r", "30", "-pix_fmt", "yuv420p",
+        output_video
+    ])
 
 if __name__ == "__main__":
     # Parse command-line arguments
@@ -120,6 +154,6 @@ if __name__ == "__main__":
     parser.add_argument('--ps-file', type=str, required=True, help='Path to the slow thermal data file.')
     parser.add_argument('--pf-file', type=str, required=True, help='Path to the fast thermal data file.')
     parser.add_argument('--pm-file', type=str, default=None, help='Path to the advected subdomain data file (optional).')
+    parser.add_argument('--video', action='store_true', help='Generate a video from the screenshots.')
     args = parser.parse_args()
-    get_screenshots(args.ps_file, args.pf_file, args.pm_file)
-
+    get_screenshots(args.ps_file, args.pf_file, args.pm_file, video=args.video)

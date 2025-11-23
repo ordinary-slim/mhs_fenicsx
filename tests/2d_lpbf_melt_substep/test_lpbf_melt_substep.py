@@ -76,7 +76,7 @@ def get_dt(adim_dt, radius, speed):
 
 def get_max_timesteps(params):
     mtsps = params["max_timesteps"]
-    return mtsps if mtsps > 1 else 1.0e+09
+    return mtsps if mtsps >= 1 else 1.0e+09
 
 def run_reference(params, writepos=True):
     radius = params["source_terms"][0]["radius"]
@@ -153,7 +153,7 @@ def run_hodge(params, writepos=True):
         itime_step += 1
         substeppin_driver.do_timestep()
         if writepos:
-            for p in [ps,pf]:
+            for p in [ps, pf]:
                 p.writepos(extension="vtx", extra_funcs=[p.u_prev])
     return ps
 
@@ -282,8 +282,7 @@ def test_staggered_chimera_substepper():
         [+0.4625, +0.0375, 0.0],
         [-0.5000,0.0000, 0.0]
         ])
-    vals = np.array([1577.75299862, 1651.87475776, 1175.1756622 ,  401.54335612,
-                     216.5882932])
+    vals = np.array([1579.13643095, 1654.02616998, 1171.80986061, 396.40805549, 214.39977372])
 
     mats = np.array([1., 2., 2., 1., 1.])
     assert_pointwise_vals(p, points, vals, f=p.u)
@@ -301,8 +300,7 @@ def test_hodge_chimera_substepper():
         [+0.4625, +0.0375, 0.0],
         [-0.5000,0.0000, 0.0]
         ])
-    vals = np.array([1577.75299873, 1651.87475785, 1175.17568643,  401.57314081,
-                     216.5882932])
+    vals = np.array([1579.13643094, 1654.02616998, 1171.80988354, 396.43237331, 214.39977372])
 
     mats = np.array([1., 2., 2., 1., 1.])
     assert_pointwise_vals(p, points, vals, f=p.u)
@@ -331,15 +329,13 @@ if __name__=="__main__":
         run_staggered(params)
     if args.run_hodge:
         run_hodge(params)
-    if args.run_hodge:
-        run_hodge(params)
     if args.run_test_hodge:
         test_hodge_substepper()
     if args.run_chimera_sub_sta:
         run_chimera_staggered(params)
-    if args.run_chimera_hodge:
-        run_chimera_hodge(params)
     if args.test_chimera_sub_sta:
         test_staggered_chimera_substepper()
+    if args.run_chimera_hodge:
+        run_chimera_hodge(params)
     if args.test_chimera_hodge:
         test_hodge_chimera_substepper()

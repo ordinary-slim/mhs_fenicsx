@@ -205,12 +205,11 @@ class ChimeraSubstepper(ABC):
 
         for p in [pf, pm]:
             p.finalize_activation()
-        for p, p_ext in ([pf, pm], [pm, pf]):
-            p.find_gamma(p_ext, compute_robin_coupling_data=compute_robin_coupling_data)
-
         self.pf_cells_in_pm = None
         if self.chimera_on:
             self.pf_cells_in_pm = pf.ext_colliding_els[pm][self.fast_els_mask[pf.ext_colliding_els[pm]]]
+            for p, p_ext in ([pf, pm], [pm, pf]):
+                p.find_gamma(p_ext, compute_robin_coupling_data=compute_robin_coupling_data)
 
     def chimera_micro_post_iterate(self):
         (pf, pm) = self.pf, self.pm
@@ -350,7 +349,8 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         (ps,pf,pm) = plist = (self.ps,self.pf,self.pm)
         cd = self.chimera_driver
 
-        assert(check_assumptions(ps, pf, pm))
+        if self.chimera_on:
+            assert(check_assumptions(ps, pf, pm))
 
         f = self.fraction_macro_step
         # Set Dirichlet condition
@@ -419,7 +419,8 @@ class MHSSemiMonolithicChimeraSubstepper(MHSSemiMonolithicSubstepper, ChimeraSub
         self.chimera_micro_pre_iterate(forced_time_derivative=((pf.time - self.t0_macro_step) < 1e-7),
                                        compute_robin_coupling_data=False)
 
-        assert(check_assumptions(ps, pf, pm))
+        if self.chimera_on:
+            assert(check_assumptions(ps, pf, pm))
 
         self.set_gamma_slow_to_fast()
 

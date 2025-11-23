@@ -145,6 +145,7 @@ class MHSSubstepper(ABC):
             u.name = "u_prev_driver"
 
     def initialize_post_vtk(self):
+        self.result_folder = f"post_{self.name}" # quick and dirty
         if not(self.do_writepos):
             return
         self.close_post()

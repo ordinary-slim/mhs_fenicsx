@@ -1,5 +1,5 @@
 dim : 2
-domain_width : 2
+path_width : 1.8
 domain_height : 0.5
 substrate_height : 1.0
 adim_pad_width : 5.0
@@ -16,9 +16,9 @@ radius : &radius 0.1
 half_radius : &half_radius 0.05
 source_terms :
   - initial_position : &p0 [-5.0, 0.0, 0.0]
-    initial_speed : &speed [500.0, 0.0, 0]
+    initial_speed : &speed [1000.0, 0.0, 0]
     radius : *radius
-    power : &power 1000
+    power : &power 2000
     path: &path "Path.gcode"
   - type : lumped
     initial_position : *p0
@@ -108,10 +108,17 @@ printer: {
 
 substepping_parameters: {
   micro_adim_dt: 0.5,
-  macro_adim_dt: 5.0,
+  macro_adim_dt: 6.0,
   cooling_adim_dt: 0.5,
   dwelling_adim_dt: 0.5,
   max_staggered_iters: 1,
+  adim_lens: {
+    back_pad : 3.5,
+    front_pad : 2,
+    side_pad : 3.0,
+    top_pad : 3.0,
+    bot_pad : 3.0,
+  },
   predictor: {
     enabled :  True,
     source_term : 1,
@@ -126,17 +133,20 @@ substepping_parameters: {
     gamma_coeff2 : 1.0,
   },
   chimera_steadiness_workflow: {
-    enabled: False,
+    enabled: True,
+    adim_dt_increment: 0.5,
+    max_adim_dt: &max_adim_dt 2.0,
+    reuse_last_dt : True,
   },
 }
 
 moving_domain_params : {
   shape : True,
-  max_adim_dt : 2,
+  max_adim_dt : *max_adim_dt,
   adim_front_len : 2,
   adim_side_len : 2,
-  adim_bot_len : 1.75,
-  adim_top_len : 2,
+  adim_bot_len : 1.5,
+  adim_top_len : 1.5,
 }
 gamma_quadrature: {
   degree: 2,

@@ -27,7 +27,7 @@ def create_stacked_squares_mesh(params):
         num_layers = params["num_layers"]
         num_buffer_layers = params["num_buffer_layers"]
         substrate_depth = params["substrate_height"]
-        L = params["domain_width"] + 2 * params["adim_pad_width"] * params["radius"]
+        L = params["path_width"] + 2 * params["adim_pad_width"] * params["radius"]
         part_height = layer_thickness * num_layers
         buffer_depth = layer_thickness * num_buffer_layers
 

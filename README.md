@@ -7,7 +7,13 @@ While support for higher level discretizations is reduced (default is P1 / Q1 el
 this repository implements specialized functionality, including:
 
 - **Multi-time-step methods** see [Slimani et al. 2025 (freely accessible preprint)](http://dx.doi.org/10.2139/ssrn.5529518)
+  
+<video width="620" height="270" src="https://github.com/user-attachments/assets/f32f9aaa-bfae-4910-ada8-83e982da50d0"></video>
+
 - **Moving subdomain methods**, see [Slimani et al. 2024](https://www.sciencedirect.com/science/article/pii/S0168874X2400132X)
+
+<video width="620" height="270" src="https://github.com/user-attachments/assets/ec3b9eaf-66c1-4665-86ae-4768559ed1a3"></video>
+
 - **Monolithic and staggered multi-mesh domain decomposition**
 
 Supported physics:

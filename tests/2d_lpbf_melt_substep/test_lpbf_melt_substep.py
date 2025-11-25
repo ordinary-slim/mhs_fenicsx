@@ -15,13 +15,13 @@ def write_gcode(params):
     dim = params["dim"]
     if dim != 2:
         raise KeyError('not ready for dim not 2')
-    (L, H, P, R) = (params["domain_width"], params["domain_height"], params["adim_pad_width"], params["radius"])
+    (L, H, P, R) = (params["path_width"], params["domain_height"], params["adim_pad_width"], params["radius"])
     t = params["printer"]["layer_thickness"]
     num_layers = params["num_layers"]
     speed = np.linalg.norm(np.array(params["source_terms"][0]["initial_speed"]))
     interlayer_dwelling_time = params["interlayer_dwelling_time"]
     interlayer_recoating_time = params["interlayer_recoating_time"]
-    hlenx = + (L + R*P) / 2.0
+    hlenx = + L / 2.0
     gcode_lines = []
     gcode_lines.append(f"G0 X{-hlenx} Y0.0 F{speed}")
     E = 0.0
@@ -44,7 +44,7 @@ def define_ps(params, els_per_radius, radius, dim, name="2d_lpbf"):
         substrate_els = (midpoints_cells[:, dim-1] <= 0.0).nonzero()[0]
     else:
         el_density = np.round((1.0 / radius) * els_per_radius).astype(np.int32)
-        (Lx, Ly) = (params["domain_width"], params["domain_height"])
+        (Lx, Ly) = (params["path_width"], params["domain_height"])
         Lz = params["domain_depth"] if "domain_depth" in params else 1.0
         box = [-Lx/2.0, -Ly/2.0, 0.0, +Lx/2.0, +Ly/2.0, Lz]
         nx = np.round((box[3]-box[0]) * el_density).astype(np.int32)

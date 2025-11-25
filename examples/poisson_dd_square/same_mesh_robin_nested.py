@@ -81,6 +81,8 @@ def run_same_mesh_robin_nested():
             if not(self.writers):
                 self.writers["vtk"] = io.VTKFile(self.domain.comm, f"post_nested/{self.name}.pvd", "w")
             self.writers["vtk"].write_function([self.u,self.active_els_fun]+extra_funs)
+            if rank==0:
+                print(f"Wrote solution for {self.name} subdomain to post_nested/{self.name}.pvd")
 
     cdim = domain.topology.dim
     fdim = cdim-1
@@ -154,7 +156,7 @@ def run_same_mesh_robin_nested():
     L = petsc4py.PETSc.Vec().createNest([p_left.L, p_right.L])
 
     # Solve
-    ulur = multiphenicsx.fem.petsc.create_vector_nest(l_cpp, restriction=restriction)
+    ulur = multiphenicsx.fem.petsc.create_vector(l_cpp, "nest", restriction=restriction)
     ksp = petsc4py.PETSc.KSP()
     ksp.create(domain.comm)
     ksp.setOperators(A)
@@ -179,11 +181,11 @@ def run_same_mesh_robin_nested():
     for mat in [L, A]:
         mat.destroy()
 
-    for p in [p_left,p_right]:
+    for p in [p_left, p_right]:
         p.writepos(extra_funs=[p.dir_bcs[0].g])
-
 
 if __name__=="__main__":
     lp = LineProfiler()
+    print(f"About to run same mesh Robin nested block matrix example.")
     lp_wrapper = lp(run_same_mesh_robin_nested)
     lp_wrapper()
